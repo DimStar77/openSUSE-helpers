@@ -3,7 +3,7 @@
 # branch2parent [--push] [--project <PROJECT>] [-m <MESSAGE>] [--parent PARENT>]
 #  --push:     Don't only check if there is a diff, but actually create a submitrequest
 #   -m   :     Message to be used when creating submit requests
-#  --project:  The 'branch' project to check
+#  --project:  The 'branch' project to check. If omited, guess the project based on current directory checkout
 #  --parent:   If specified, verify packages against the specified target project
 
 while [ ! -z "$1" ]; do
@@ -30,7 +30,12 @@ done
 
 
 if [ "x${PRJNAME}" == "x" ]; then
-	PRJNAME=$(cat .osc/_project)
+	if [ -f .osc/_project ]; then
+		PRJNAME=$(cat .osc/_project)
+	else
+		echo "Could not identify which project to check. you are likely not in a project checkout directory"
+		exit 1
+	fi
 fi
 for pkg in $(osc ls ${PRJNAME}); do
 	if [ -z "${PARENT}" ]; then
