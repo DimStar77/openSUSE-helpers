@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# branch2parent [--push] [--project <PROJECT>] [-m <MESSAGE>] [--parent PARENT>]
+#  --push:     Don't only check if there is a diff, but actually create a submitrequest
+#   -m   :     Message to be used when creating submit requests
+#  --project:  The 'branch' project to check
+#  --parent:   If specified, verify packages against the specified target project
+
 while [ ! -z "$1" ]; do
 case $1 in
 	"--push")
