@@ -1,0 +1,74 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+  <script type="text/javascript" src="jquery-2.1.3.min.js"></script>
+  <script type="text/javascript">
+  window.onload = function () {
+    var dataPoints1 = [];
+    var dataPoints2 = [];
+
+    $.get("data.txt", function(data) {
+      var allLines = data.split('\n');
+      if(allLines.length > 0) {
+        for(var i=0; i< allLines.length; i++) {
+          items = allLines[i].split(':');
+          if (items[0] && items[1] && items[2]) {
+            dataPoints1.push({x: new Date(items[0]), y: parseInt(items[1])});
+            dataPoints2.push({x: new Date(items[0]), y: parseInt(items[2])});
+          }
+        }
+      }
+
+      var chart = new CanvasJS.Chart("chartContainer", {
+
+        title:{
+          text: "Trend of AppStream metadata provided in openSUSE Tumbleweed"              
+        },
+
+        animationEnabled: true,
+        zoomEnabled: true,
+
+        axisX:{
+          valueFormatString: "YYYY-MM-DD" ,
+          interval: 1,
+          labelAngle: -30,
+//          intervalType: "month"
+
+        },
+        axisY: {
+          title: "# of applications"
+        },
+
+        data: [
+          { type: "area",
+            showInLegend: true,
+            legendMarkerType: "circle",
+            legendText: "Total # of Applications",
+            color: "rgba(85, 155, 255, 1)",
+            dataPoints: dataPoints1
+          },
+
+          { type: "area",
+            showInLegend: true,
+            legendMarkerType: "circle",
+            legendText: "Applications with Descriptions",
+            color: "rgba(46, 240, 25, 1)",
+            dataPoints: dataPoints2
+          }
+
+        ]
+
+     });
+
+     chart.render();
+  });
+}
+  </script>
+  <script type="text/javascript" src="/canvasjs.js"></script>
+</head>
+<body>
+  <div id="chartContainer" style="height: 300px; width: 100%;">
+  </div>
+</body>
+</html>
+
