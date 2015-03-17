@@ -1,10 +1,24 @@
+# Copyright (C) 2015 SUSE Linux Products GmbH
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
 from __future__ import print_function
 
 from osc import cmdln
 from osc.core import http_GET
 from xml.etree import cElementTree as ET
-import json
-
 
 @cmdln.option('--push',action='store_true',
               help="Push changed packages to their parents")
@@ -88,6 +102,4 @@ class oscapi:
 
         data = '<request type="submit"><submit><source project="{project}" package="{package}"/><target project="{target}" package="{package}"  /></submit><state name="new"/><description>Scripted push of project {project}</description></request>'.format(project=project, package=package, target=target)
         f = http_POST(url, data=data)
-
-
 
