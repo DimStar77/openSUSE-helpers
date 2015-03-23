@@ -1,6 +1,17 @@
 <!DOCTYPE HTML>
 <html>
 <head>
+
+      <meta charset="utf-8">
+      <meta http-equiv="X-UA-Compatible" content="IE=edge">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <meta name="description" content="Trend-Analysis of AppStream metadata quality in openSUSE">
+      <meta name="keywords" content="openSUSE, AppStream, Metadata">
+      <meta name="author" content="openSUSE contributors">
+
+      <!-- Bootstrap core CSS -->
+      <link href="/packed/bootstrap.css" rel="stylesheet">
+
   <script type="text/javascript" src="jquery-2.1.3.min.js"></script>
   <script type="text/javascript">
   window.onload = function () {
@@ -32,7 +43,6 @@
           valueFormatString: "YYYY-MM-DD" ,
           interval: 1,
           labelAngle: -30,
-//          intervalType: "month"
 
         },
         axisY: {
@@ -67,8 +77,66 @@
   <script type="text/javascript" src="/canvasjs.js"></script>
 </head>
 <body>
+
+     <nav class='container-fluid navbar navbar-default navbar-static-top'>
+	  <div class='navbar-inner'>
+	      <div class='container'>
+		  <div class="navbar-header">
+		      <a class="navbar-brand" href="#">
+			  <img alt="Brand" src="/images/header-logo.png" />
+		      </a>
+		  </div>
+		  <div class='collapse navbar-collapse'>
+		      <ul class='nav navbar-nav' id='global-navigation'>
+			  <li id='item-downloads'><a href="http://en.opensuse.org/openSUSE:Browse#Downloads">Downloads</a></li>
+			  <li id='item-support'><a href="http://en.opensuse.org/openSUSE:Browse#Support">Support</a></li>
+			  <li id='item-community'><a href="http://en.opensuse.org/openSUSE:Browse#Community">Community</a></li>
+			  <li id='item-development'><a href="http://en.opensuse.org/openSUSE:Browse#Development">Development</a></li>
+		      </ul>
+		  </div>
+	      </div>
+	  </div>
+      </nav>
+
+      <div class='container'>
+	  <div class='row' id='subheader'>
+	      <div class='col-md-7'>
+		  <div id="breadcrump" class="grid_10 alpha"><a href="/"><img alt="Home" src="/images/home_grey.png"><b>AppStream trend</b></a></div>
+	      </div>
+	      <div class='col-md-5 text-right'>
+	      </div>
+	  </div>
+
+<div class="jumbotron">
+    <div class="container">
+	<div class="col-md-10">
+	     <h1>AppStream metadata trend</h1>
+	     <p>Get an overview of how many applications openSUSE shows in any AppStream related software center (e.g. GNOME software)</p>
+
+	</div>
+
+	<div class="col-md-2 hidden-sm hidden-xs">
+		<div class="text-right" id="sponsorbox">
+		    <a href="http://www.suse.com" title="SUSE">
+			<img alt="sponsor_suse" class="icons-sponsor_suse" src="images/suse.png" />
+		    </a>
+		</div>
+		<div class="text-muted text-center">Sponsor</div>
+	</div>
+    </div>
+</div>
+
   <div id="chartContainer" style="height: 300px; width: 100%;">
   </div>
+
+      <footer class='footer'>
+	  <div class='container'>
+	      <div id='footer-content'>
+
+              </div>
+	  </div>
+      </footer>
+
 </body>
 </html>
 
