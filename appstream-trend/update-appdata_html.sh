@@ -5,4 +5,4 @@ pushd $(dirname $0)
 APPDATA="http://download.opensuse.org/tumbleweed/repo/oss/suse/setup/descr/appdata.html"
 
 curl $APPDATA > appdata.html
-git commit appdata.html -m "appdata.html: $(date +%Y-%m-%d)"
+git commit appdata.html -m "appdata.html: $1"
