@@ -17,8 +17,6 @@
 from __future__ import print_function
 
 from osc import cmdln
-from osc.core import http_GET
-from xml.etree import cElementTree as ET
 
 @cmdln.option('--push',action='store_true',
               help="Push changed packages to their parents")
@@ -95,11 +93,15 @@ class oscapi:
         for root in collection.findall('request'):
             return root.get('id')
 
+    def get_rev(self, project, package):
+        return 0
+
     def create(self, project, package, target):
+        currev = get_source_rev(self.apiurl, project, package)['rev']
         print ("Creating a request from {project}/{package}".format(project=project,package=package))
         query = {'cmd'    : 'create' }
         url = makeurl(self.apiurl, ['request'], query=query)
 
-        data = '<request type="submit"><submit><source project="{project}" package="{package}"/><target project="{target}" package="{package}"  /></submit><state name="new"/><description>Scripted push of project {project}</description></request>'.format(project=project, package=package, target=target)
+        data = '<request type="submit"><submit><source project="{project}" package="{package}" rev="{rev}"/><target project="{target}" package="{package}"  /></submit><state name="new"/><description>Scripted push of project {project}</description></request>'.format(project=project, package=package, target=target, rev=currev)
         f = http_POST(url, data=data)
 
