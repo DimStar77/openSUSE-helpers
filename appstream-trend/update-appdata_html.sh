@@ -6,3 +6,4 @@ APPDATA="http://download.opensuse.org/tumbleweed/repo/oss/suse/setup/descr/appda
 
 curl $APPDATA > appdata.html
 git commit appdata.html -m "appdata.html: $1"
+git commit data.txt -m "data.txt: $1"
