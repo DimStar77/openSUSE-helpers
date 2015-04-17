@@ -24,7 +24,7 @@ def do_pcheck(self, subcmd, opts, project):
     """${cmd_name}: Show changed packages (packages that have a diff)
 
     Examples:
-    osc cpkgs <prj>        # shows changed packages etc. for <prj>
+    osc pcheck <prj>        # shows changed packages etc. for <prj>
 
     --push      Create submit requests for packages with a diff (if none exists yet)
 
