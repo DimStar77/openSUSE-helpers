@@ -66,7 +66,7 @@ EMAIL1 = u"""
 Dear %s
 
 Please be informed that the package '%s' in openSUSE Tumbleweed has
-not have a successful build since %s (See project openSUSE:Factory).
+not had a successful build since %s (See project openSUSE:Factory).
 
 This can be due to an error in your package directly or could be caused
 by a package you depend on to build. In any case, please do your utmost to
