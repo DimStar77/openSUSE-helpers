@@ -4,12 +4,12 @@ import urllib2
 import re
 
 CONTENT="http://download.opensuse.org/tumbleweed/repo/oss/content"
-APPDATA="http://download.opensuse.org/tumbleweed/repo/oss/suse/setup/descr/appdata.html"
+APPDATA="appdata.html"
 
 CNT = urllib2.urlopen(CONTENT).read()
 DISTRO = re.findall("DISTRO.*", CNT)
 
-APPCNT = urllib2.urlopen(APPDATA).read()
+APPCNT = open(APPDATA, 'r').read()
 DATA = re.findall('<tr><td class="alt">Descriptions</td><td>(\d+)/(\d+)</td><td class="thin">.*</td></tr>', APPCNT)
 
 V1 = (DISTRO[0].split(':')[4]).split(',')[0]
