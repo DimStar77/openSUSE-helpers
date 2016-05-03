@@ -58,7 +58,7 @@ getVisibility(what)
 function
 statusReset(class_name, val)
 {
-	var class_names = [ 'description', 'screenshots', 'keywords', 'gnome', 'kde', 'xfce' ];
+	var class_names = [ 'description', 'screenshots', 'keywords', 'gnome', 'kde', 'xfce', 'addon' ];
 	for (var i = 0; i < class_names.length; i++) {
 		document.getElementById('button-' + class_names[i] + '-with').disabled = false;
 		document.getElementById('button-' + class_names[i] + '-without').disabled = false;
@@ -102,12 +102,15 @@ statusHideFilter(class_name, val)
 <body>
 <h1>Executive Summary</h1>
 <table class="summary">
-<tr><td class="alt">Descriptions</td><td>290/291</td><td class="thin">99.7%</td></tr>
 <tr><td class="alt">Keywords</td><td>142/291</td><td class="thin">48.8%</td></tr>
 <tr><td class="alt">Screenshots</td><td>277/291</td><td class="thin">95.2%</td></tr>
-<tr><td class="alt">GNOME AppData</td><td>114/158</td><td class="thin">72.2%</td></tr>
-<tr><td class="alt">KDE AppData</td><td>62/62</td><td class="thin">100.0%</td></tr>
-<tr><td class="alt">XFCE AppData</td><td>5/5</td><td class="thin">100.0%</td></tr>
+<tr><td class="alt"><i>SearchProvider</i></td><td>15</td><td class="thin">5.2%</td></tr>
+<tr><td class="alt"><i>UserDocs</i></td><td>86</td><td class="thin">29.6%</td></tr>
+<tr><td class="alt"><i>AppMenu</i></td><td>59</td><td class="thin">20.3%</td></tr>
+<tr><td class="alt"><i>ModernToolkit</i></td><td>219</td><td class="thin">75.3%</td></tr>
+<tr><td class="alt"><i>Notifications</i></td><td>19</td><td class="thin">6.5%</td></tr>
+<tr><td class="alt"><i>HighContrast</i></td><td>53</td><td class="thin">18.2%</td></tr>
+<tr><td class="alt"><i>HiDpiIcon</i></td><td>249</td><td class="thin">85.6%</td></tr>
 <tr><td class="alt">MetaInfo</td><td>63</td><td class="thin"></td></tr>
 </table>
 <br/>
@@ -144,13 +147,19 @@ statusHideFilter(class_name, val)
 <td><button id="button-xfce-without" onclick="statusHideFilter('xfce', true);">&#x2715;</button></td>
 </tr>
 <tr>
+<tr>
+<td class="alt">Hide Addons</td>
+<td><button id="button-addon-with" onclick="statusHideFilter('addon', false);">&#10003;</button></td>
+<td><button id="button-addon-without" onclick="statusHideFilter('addon', true);">&#x2715;</button></td>
+</tr>
+<tr>
 <td colspan="3"><button id="button-reset" onclick="statusReset('description');">Reset Filters</button></td>
 </tr>
 </table>
 <h1>Applications</h1>
 <div id="apps">
-<div id="app-Armagetron" class="screenshots description">
-<a name="Armagetron"/><h2>Armagetron</h2>
+<div id="app-Armagetron.desktop" class="screenshots description">
+<a name="Armagetron.desktop"/><h2>Armagetron.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Armagetron</td></tr>
@@ -162,10 +171,10 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-GPaste@gnome-shell-extensions.gnome.org" class="description">
-<a name="GPaste@gnome-shell-extensions.gnome.org"/><h2>GPaste@gnome-shell-extensions.gnome.org</h2>
+<div id="app-GPaste@gnome-shell-extensions.gnome.org.shell-extension" class="description">
+<a name="GPaste@gnome-shell-extensions.gnome.org.shell-extension"/><h2>GPaste@gnome-shell-extensions.gnome.org.shell-extension</h2>
 <table class="app">
-<tr><td class="alt">Type</td><td><code>unknown</code></td></tr>
+<tr><td class="alt">Type</td><td><code>shell-extension</code></td></tr>
 <tr><td class="alt">Name</td><td>GPaste</td></tr>
 <tr><td class="alt">Comment</td><td>GNOME Shell Extension</td></tr>
 <tr><td class="alt">Description</td><td><p>Clipboard management system</p></td></tr>
@@ -175,8 +184,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-PTBatcherGUI" class="screenshots description">
-<a name="PTBatcherGUI"/><h2>PTBatcherGUI</h2>
+<div id="app-PTBatcherGUI.desktop" class="screenshots description">
+<a name="PTBatcherGUI.desktop"/><h2>PTBatcherGUI.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Hugin Batch Processor</td></tr>
@@ -188,8 +197,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-RemoteBox" class="screenshots description">
-<a name="RemoteBox"/><h2>RemoteBox</h2>
+<div id="app-RemoteBox.desktop" class="screenshots description">
+<a name="RemoteBox.desktop"/><h2>RemoteBox.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>RemoteBox: VirtualBox Client</td></tr>
@@ -201,8 +210,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-YaST" class="screenshots description">
-<a name="YaST"/><h2>YaST</h2>
+<div id="app-YaST.desktop" class="screenshots description">
+<a name="YaST.desktop"/><h2>YaST.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>YaST</td></tr>
@@ -214,8 +223,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-abiword" class="screenshots description">
-<a name="abiword"/><h2>abiword</h2>
+<div id="app-abiword.desktop" class="screenshots description">
+<a name="abiword.desktop"/><h2>abiword.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>AbiWord</td></tr>
@@ -228,8 +237,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-almanah" class="screenshots description keywords gnome">
-<a name="almanah"/><h2>almanah</h2>
+<div id="app-almanah.desktop" class="screenshots description keywords gnome">
+<a name="almanah.desktop"/><h2>almanah.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Almanah Diary</td></tr>
@@ -244,10 +253,10 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-alternate-tab@gnome-shell-extensions.gcampax.github.com" class="description">
-<a name="alternate-tab@gnome-shell-extensions.gcampax.github.com"/><h2>alternate-tab@gnome-shell-extensions.gcampax.github.com</h2>
+<div id="app-alternate-tab@gnome-shell-extensions.gcampax.github.com.shell-extension" class="description">
+<a name="alternate-tab@gnome-shell-extensions.gcampax.github.com.shell-extension"/><h2>alternate-tab@gnome-shell-extensions.gcampax.github.com.shell-extension</h2>
 <table class="app">
-<tr><td class="alt">Type</td><td><code>unknown</code></td></tr>
+<tr><td class="alt">Type</td><td><code>shell-extension</code></td></tr>
 <tr><td class="alt">Name</td><td>AlternateTab</td></tr>
 <tr><td class="alt">Comment</td><td>GNOME Shell Extension</td></tr>
 <tr><td class="alt">Description</td><td><p>Substitute Alt-Tab with a window based switcher that does not group by application. This extension is part of Classic Mode and is officially supported by GNOME. Please do not report bugs using the form below, use GNOME Bugzilla instead.</p></td></tr>
@@ -257,8 +266,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-anjuta" class="screenshots description keywords gnome">
-<a name="anjuta"/><h2>anjuta</h2>
+<div id="app-anjuta.desktop" class="screenshots description keywords gnome">
+<a name="anjuta.desktop"/><h2>anjuta.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Anjuta</td></tr>
@@ -273,10 +282,10 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-apps-menu@gnome-shell-extensions.gcampax.github.com" class="description">
-<a name="apps-menu@gnome-shell-extensions.gcampax.github.com"/><h2>apps-menu@gnome-shell-extensions.gcampax.github.com</h2>
+<div id="app-apps-menu@gnome-shell-extensions.gcampax.github.com.shell-extension" class="description">
+<a name="apps-menu@gnome-shell-extensions.gcampax.github.com.shell-extension"/><h2>apps-menu@gnome-shell-extensions.gcampax.github.com.shell-extension</h2>
 <table class="app">
-<tr><td class="alt">Type</td><td><code>unknown</code></td></tr>
+<tr><td class="alt">Type</td><td><code>shell-extension</code></td></tr>
 <tr><td class="alt">Name</td><td>Applications Menu</td></tr>
 <tr><td class="alt">Comment</td><td>GNOME Shell Extension</td></tr>
 <tr><td class="alt">Description</td><td><p>Add a category-based menu for applications. This extension is part of Classic Mode and is officially supported by GNOME. Please do not report bugs using the form below, use GNOME Bugzilla instead.</p></td></tr>
@@ -286,8 +295,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-atomix" class="screenshots description keywords gnome">
-<a name="atomix"/><h2>atomix</h2>
+<div id="app-atomix.desktop" class="screenshots description keywords gnome">
+<a name="atomix.desktop"/><h2>atomix.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Atomix</td></tr>
@@ -302,8 +311,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-atril" class="screenshots description keywords">
-<a name="atril"/><h2>atril</h2>
+<div id="app-atril.desktop" class="screenshots description keywords">
+<a name="atril.desktop"/><h2>atril.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Atril Document Viewer</td></tr>
@@ -318,8 +327,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-audacity" class="screenshots description">
-<a name="audacity"/><h2>audacity</h2>
+<div id="app-audacity.desktop" class="screenshots description">
+<a name="audacity.desktop"/><h2>audacity.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Audacity</td></tr>
@@ -332,8 +341,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-balsa" class="description">
-<a name="balsa"/><h2>balsa</h2>
+<div id="app-balsa.desktop" class="description">
+<a name="balsa.desktop"/><h2>balsa.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Balsa</td></tr>
@@ -346,8 +355,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-banshee" class="screenshots description gnome">
-<a name="banshee"/><h2>banshee</h2>
+<div id="app-banshee.desktop" class="screenshots description gnome">
+<a name="banshee.desktop"/><h2>banshee.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Banshee</td></tr>
@@ -360,8 +369,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-base" class="screenshots description keywords">
-<a name="base"/><h2>base</h2>
+<div id="app-base.desktop" class="screenshots description keywords">
+<a name="base.desktop"/><h2>base.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>LibreOffice Base</td></tr>
@@ -375,8 +384,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-blobwars" class="screenshots description">
-<a name="blobwars"/><h2>blobwars</h2>
+<div id="app-blobwars.desktop" class="screenshots description">
+<a name="blobwars.desktop"/><h2>blobwars.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Blob Wars : Metal Blob Solid</td></tr>
@@ -388,8 +397,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-bluefish" class="screenshots description keywords">
-<a name="bluefish"/><h2>bluefish</h2>
+<div id="app-bluefish.desktop" class="screenshots description keywords">
+<a name="bluefish.desktop"/><h2>bluefish.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Bluefish</td></tr>
@@ -403,8 +412,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-brasero" class="screenshots description keywords gnome">
-<a name="brasero"/><h2>brasero</h2>
+<div id="app-brasero.desktop" class="screenshots description keywords gnome">
+<a name="brasero.desktop"/><h2>brasero.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Brasero</td></tr>
@@ -419,8 +428,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-bustle" class="screenshots description keywords">
-<a name="bustle"/><h2>bustle</h2>
+<div id="app-bustle.desktop" class="screenshots description keywords">
+<a name="bustle.desktop"/><h2>bustle.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Bustle</td></tr>
@@ -434,8 +443,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-buzztrax" class="screenshots description">
-<a name="buzztrax"/><h2>buzztrax</h2>
+<div id="app-buzztrax.desktop" class="screenshots description">
+<a name="buzztrax.desktop"/><h2>buzztrax.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Buzztrax Music Editor</td></tr>
@@ -448,8 +457,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-ca.desrt.dconf-editor" class="screenshots description keywords gnome">
-<a name="ca.desrt.dconf-editor"/><h2>ca.desrt.dconf-editor</h2>
+<div id="app-ca.desrt.dconf-editor.desktop" class="screenshots description keywords gnome">
+<a name="ca.desrt.dconf-editor.desktop"/><h2>ca.desrt.dconf-editor.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Dconf Editor</td></tr>
@@ -464,8 +473,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-calc" class="screenshots description keywords">
-<a name="calc"/><h2>calc</h2>
+<div id="app-calc.desktop" class="screenshots description keywords">
+<a name="calc.desktop"/><h2>calc.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>LibreOffice Calc</td></tr>
@@ -479,8 +488,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-calibrate_lens_gui" class="screenshots description">
-<a name="calibrate_lens_gui"/><h2>calibrate_lens_gui</h2>
+<div id="app-calibrate_lens_gui.desktop" class="screenshots description">
+<a name="calibrate_lens_gui.desktop"/><h2>calibrate_lens_gui.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Hugin Calibrate Lens</td></tr>
@@ -492,8 +501,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-cardpeek" class="screenshots description">
-<a name="cardpeek"/><h2>cardpeek</h2>
+<div id="app-cardpeek.desktop" class="screenshots description">
+<a name="cardpeek.desktop"/><h2>cardpeek.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Power Statistics</td></tr>
@@ -506,8 +515,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-ccsm" class="description">
-<a name="ccsm"/><h2>ccsm</h2>
+<div id="app-ccsm.desktop" class="description">
+<a name="ccsm.desktop"/><h2>ccsm.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>CompizConfig Settings Manager</td></tr>
@@ -520,8 +529,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-cherrytree" class="screenshots description keywords">
-<a name="cherrytree"/><h2>cherrytree</h2>
+<div id="app-cherrytree.desktop" class="screenshots description keywords">
+<a name="cherrytree.desktop"/><h2>cherrytree.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>CherryTree</td></tr>
@@ -535,8 +544,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-chocolate-doom" class="screenshots description keywords">
-<a name="chocolate-doom"/><h2>chocolate-doom</h2>
+<div id="app-chocolate-doom.desktop" class="screenshots description keywords">
+<a name="chocolate-doom.desktop"/><h2>chocolate-doom.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Chocolate Doom</td></tr>
@@ -549,8 +558,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-chocolate-heretic" class="screenshots description keywords">
-<a name="chocolate-heretic"/><h2>chocolate-heretic</h2>
+<div id="app-chocolate-heretic.desktop" class="screenshots description keywords">
+<a name="chocolate-heretic.desktop"/><h2>chocolate-heretic.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Chocolate Heretic</td></tr>
@@ -563,8 +572,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-chocolate-hexen" class="screenshots description keywords">
-<a name="chocolate-hexen"/><h2>chocolate-hexen</h2>
+<div id="app-chocolate-hexen.desktop" class="screenshots description keywords">
+<a name="chocolate-hexen.desktop"/><h2>chocolate-hexen.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Chocolate Hexen</td></tr>
@@ -577,8 +586,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-chocolate-strife" class="screenshots description keywords">
-<a name="chocolate-strife"/><h2>chocolate-strife</h2>
+<div id="app-chocolate-strife.desktop" class="screenshots description keywords">
+<a name="chocolate-strife.desktop"/><h2>chocolate-strife.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Chocolate Strife</td></tr>
@@ -591,8 +600,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-choqok" class="screenshots description kde">
-<a name="choqok"/><h2>choqok</h2>
+<div id="app-choqok.desktop" class="screenshots description kde">
+<a name="choqok.desktop"/><h2>choqok.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Choqok</td></tr>
@@ -606,8 +615,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-clementine" class="screenshots description">
-<a name="clementine"/><h2>clementine</h2>
+<div id="app-clementine.desktop" class="screenshots description">
+<a name="clementine.desktop"/><h2>clementine.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Clementine Music Player</td></tr>
@@ -620,8 +629,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-converseen" class="screenshots description">
-<a name="converseen"/><h2>converseen</h2>
+<div id="app-converseen.desktop" class="screenshots description">
+<a name="converseen.desktop"/><h2>converseen.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Converseen</td></tr>
@@ -634,8 +643,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-d-feet" class="screenshots description keywords gnome">
-<a name="d-feet"/><h2>d-feet</h2>
+<div id="app-d-feet.desktop" class="screenshots description keywords gnome">
+<a name="d-feet.desktop"/><h2>d-feet.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>D-Feet D-Bus Debugger</td></tr>
@@ -650,8 +659,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-darktable" class="screenshots description keywords">
-<a name="darktable"/><h2>darktable</h2>
+<div id="app-darktable.desktop" class="screenshots description keywords">
+<a name="darktable.desktop"/><h2>darktable.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>darktable</td></tr>
@@ -665,8 +674,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-datovka" class="screenshots description">
-<a name="datovka"/><h2>datovka</h2>
+<div id="app-datovka.desktop" class="screenshots description">
+<a name="datovka.desktop"/><h2>datovka.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Datovka</td></tr>
@@ -679,8 +688,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-dia" class="screenshots description gnome">
-<a name="dia"/><h2>dia</h2>
+<div id="app-dia.desktop" class="screenshots description gnome">
+<a name="dia.desktop"/><h2>dia.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Dia</td></tr>
@@ -694,8 +703,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-dianara" class="screenshots description keywords">
-<a name="dianara"/><h2>dianara</h2>
+<div id="app-dianara.desktop" class="screenshots description keywords">
+<a name="dianara.desktop"/><h2>dianara.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Dianara</td></tr>
@@ -708,11 +717,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-digiKam-ImagePlugin_Color" class="">
+<div id="app-digiKam-ImagePlugin_Color" class="addon">
 <a name="digiKam-ImagePlugin_Color"/><h2>digiKam-ImagePlugin_Color</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#digikam">digikam</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#digikam.desktop">digikam</a></td></tr>
 <tr><td class="alt">Name</td><td>ImagePlugin-Color</td></tr>
 <tr><td class="alt">Comment</td><td>A tool to correct colors of image</td></tr>
 <tr><td class="alt">Package</td><td><code>digikam-plugin-color</code></td></tr>
@@ -720,11 +729,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-digiKam-ImagePlugin_Decorate" class="">
+<div id="app-digiKam-ImagePlugin_Decorate" class="addon">
 <a name="digiKam-ImagePlugin_Decorate"/><h2>digiKam-ImagePlugin_Decorate</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#digikam">digikam</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#digikam.desktop">digikam</a></td></tr>
 <tr><td class="alt">Name</td><td>ImagePlugin-Decorate</td></tr>
 <tr><td class="alt">Comment</td><td>A tool to decorate an image</td></tr>
 <tr><td class="alt">Package</td><td><code>digikam-plugin-decorate</code></td></tr>
@@ -732,11 +741,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-digiKam-ImagePlugin_Enhance" class="">
+<div id="app-digiKam-ImagePlugin_Enhance" class="addon">
 <a name="digiKam-ImagePlugin_Enhance"/><h2>digiKam-ImagePlugin_Enhance</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#digikam">digikam</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#digikam.desktop">digikam</a></td></tr>
 <tr><td class="alt">Name</td><td>ImagePlugin-Enhance</td></tr>
 <tr><td class="alt">Comment</td><td>digiKam plugin to enhance photographs</td></tr>
 <tr><td class="alt">Package</td><td><code>digikam-plugin-enhance</code></td></tr>
@@ -744,11 +753,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-digiKam-ImagePlugin_FxFilters" class="">
+<div id="app-digiKam-ImagePlugin_FxFilters" class="addon">
 <a name="digiKam-ImagePlugin_FxFilters"/><h2>digiKam-ImagePlugin_FxFilters</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#digikam">digikam</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#digikam.desktop">digikam</a></td></tr>
 <tr><td class="alt">Name</td><td>ImagePlugin-FxFilters</td></tr>
 <tr><td class="alt">Comment</td><td>Special effect filters plugin for digiKam</td></tr>
 <tr><td class="alt">Package</td><td><code>digikam-plugin-fxfilters</code></td></tr>
@@ -756,11 +765,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-digiKam-ImagePlugin_Transform" class="">
+<div id="app-digiKam-ImagePlugin_Transform" class="addon">
 <a name="digiKam-ImagePlugin_Transform"/><h2>digiKam-ImagePlugin_Transform</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#digikam">digikam</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#digikam.desktop">digikam</a></td></tr>
 <tr><td class="alt">Name</td><td>ImagePlugin-Transform</td></tr>
 <tr><td class="alt">Comment</td><td>A tool to transform image geometry</td></tr>
 <tr><td class="alt">Package</td><td><code>digikam-plugin-transform</code></td></tr>
@@ -768,8 +777,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-digikam" class="screenshots description kde">
-<a name="digikam"/><h2>digikam</h2>
+<div id="app-digikam.desktop" class="screenshots description kde">
+<a name="digikam.desktop"/><h2>digikam.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>digiKam</td></tr>
@@ -783,8 +792,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-displaycal" class="screenshots description">
-<a name="displaycal"/><h2>displaycal</h2>
+<div id="app-displaycal.desktop" class="screenshots description">
+<a name="displaycal.desktop"/><h2>displaycal.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>DisplayCAL</td></tr>
@@ -797,8 +806,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-draw" class="screenshots description keywords">
-<a name="draw"/><h2>draw</h2>
+<div id="app-draw.desktop" class="screenshots description keywords">
+<a name="draw.desktop"/><h2>draw.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>LibreOffice Draw</td></tr>
@@ -812,11 +821,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-easytag-nautilus" class="gnome">
+<div id="app-easytag-nautilus" class="gnome addon">
 <a name="easytag-nautilus"/><h2>easytag-nautilus</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#org.gnome.Nautilus">org.gnome.Nautilus</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#org.gnome.Nautilus.desktop">org.gnome.Nautilus</a></td></tr>
 <tr><td class="alt">Name</td><td>Open with EasyTAG</td></tr>
 <tr><td class="alt">Comment</td><td>Open directories and audio files with EasyTAG using the context menu</td></tr>
 <tr><td class="alt">Package</td><td><code>nautilus-plugin-easytag</code></td></tr>
@@ -825,8 +834,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-easytag" class="screenshots description keywords gnome">
-<a name="easytag"/><h2>easytag</h2>
+<div id="app-easytag.desktop" class="screenshots description keywords gnome">
+<a name="easytag.desktop"/><h2>easytag.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>EasyTAG</td></tr>
@@ -841,8 +850,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-edgar" class="screenshots description">
-<a name="edgar"/><h2>edgar</h2>
+<div id="app-edgar.desktop" class="screenshots description">
+<a name="edgar.desktop"/><h2>edgar.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>The Legend of Edgar</td></tr>
@@ -854,8 +863,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-empathy" class="screenshots description keywords gnome">
-<a name="empathy"/><h2>empathy</h2>
+<div id="app-empathy.desktop" class="screenshots description keywords gnome">
+<a name="empathy.desktop"/><h2>empathy.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Empathy</td></tr>
@@ -870,8 +879,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-engrampa" class="screenshots description keywords">
-<a name="engrampa"/><h2>engrampa</h2>
+<div id="app-engrampa.desktop" class="screenshots description keywords">
+<a name="engrampa.desktop"/><h2>engrampa.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Engrampa Archive Manager</td></tr>
@@ -886,8 +895,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-entangle" class="screenshots description keywords">
-<a name="entangle"/><h2>entangle</h2>
+<div id="app-entangle.desktop" class="screenshots description keywords">
+<a name="entangle.desktop"/><h2>entangle.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Entangle</td></tr>
@@ -901,11 +910,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-eog-exif-display" class="gnome">
+<div id="app-eog-exif-display" class="gnome addon">
 <a name="eog-exif-display"/><h2>eog-exif-display</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#eog">eog</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#eog.desktop">eog</a></td></tr>
 <tr><td class="alt">Name</td><td>Exif Display</td></tr>
 <tr><td class="alt">Comment</td><td>Displays Exif tags in the side panel and optionally the statusbar</td></tr>
 <tr><td class="alt">Package</td><td><code>eog-plugin-exif-display</code></td></tr>
@@ -914,11 +923,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-eog-export-to-folder" class="gnome">
+<div id="app-eog-export-to-folder" class="gnome addon">
 <a name="eog-export-to-folder"/><h2>eog-export-to-folder</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#eog">eog</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#eog.desktop">eog</a></td></tr>
 <tr><td class="alt">Name</td><td>Export to Folder</td></tr>
 <tr><td class="alt">Comment</td><td>Export the current image to a separate directory</td></tr>
 <tr><td class="alt">Package</td><td><code>eog-plugin-export-to-folder</code></td></tr>
@@ -927,11 +936,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-eog-fit-to-width" class="gnome">
+<div id="app-eog-fit-to-width" class="gnome addon">
 <a name="eog-fit-to-width"/><h2>eog-fit-to-width</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#eog">eog</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#eog.desktop">eog</a></td></tr>
 <tr><td class="alt">Name</td><td>Zoom to Fit Image Width</td></tr>
 <tr><td class="alt">Comment</td><td>Adjusts the zoom to have the image's width fit into the window</td></tr>
 <tr><td class="alt">Package</td><td><code>eog-plugin-fit-to-width</code></td></tr>
@@ -940,11 +949,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-eog-fullscreenbg" class="gnome">
+<div id="app-eog-fullscreenbg" class="gnome addon">
 <a name="eog-fullscreenbg"/><h2>eog-fullscreenbg</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#eog">eog</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#eog.desktop">eog</a></td></tr>
 <tr><td class="alt">Name</td><td>Fullscreen Background</td></tr>
 <tr><td class="alt">Comment</td><td>Enables changing background in fullscreen mode</td></tr>
 <tr><td class="alt">Package</td><td><code>eog-plugin-fullscreenbg</code></td></tr>
@@ -953,11 +962,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-eog-hide-titlebar" class="gnome">
+<div id="app-eog-hide-titlebar" class="gnome addon">
 <a name="eog-hide-titlebar"/><h2>eog-hide-titlebar</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#eog">eog</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#eog.desktop">eog</a></td></tr>
 <tr><td class="alt">Name</td><td>Hide Titlebar</td></tr>
 <tr><td class="alt">Comment</td><td>Hides the titlebar of maximized windows</td></tr>
 <tr><td class="alt">Package</td><td><code>eog-plugin-hide-titlebar</code></td></tr>
@@ -966,11 +975,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-eog-light-theme" class="gnome">
+<div id="app-eog-light-theme" class="gnome addon">
 <a name="eog-light-theme"/><h2>eog-light-theme</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#eog">eog</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#eog.desktop">eog</a></td></tr>
 <tr><td class="alt">Name</td><td>Disable Dark Theme</td></tr>
 <tr><td class="alt">Comment</td><td>Disables dark theme</td></tr>
 <tr><td class="alt">Package</td><td><code>eog-plugin-light-theme</code></td></tr>
@@ -979,11 +988,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-eog-map" class="gnome">
+<div id="app-eog-map" class="gnome addon">
 <a name="eog-map"/><h2>eog-map</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#eog">eog</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#eog.desktop">eog</a></td></tr>
 <tr><td class="alt">Name</td><td>Map</td></tr>
 <tr><td class="alt">Comment</td><td>Displays on a map in the side panel where the picture was taken</td></tr>
 <tr><td class="alt">Package</td><td><code>eog-plugin-map</code></td></tr>
@@ -992,11 +1001,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-eog-maximize-windows" class="gnome">
+<div id="app-eog-maximize-windows" class="gnome addon">
 <a name="eog-maximize-windows"/><h2>eog-maximize-windows</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#eog">eog</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#eog.desktop">eog</a></td></tr>
 <tr><td class="alt">Name</td><td>Maximize Windows</td></tr>
 <tr><td class="alt">Comment</td><td>New windows will open maximized</td></tr>
 <tr><td class="alt">Package</td><td><code>eog-plugin-maximize-windows</code></td></tr>
@@ -1005,11 +1014,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-eog-postasa" class="gnome">
+<div id="app-eog-postasa" class="gnome addon">
 <a name="eog-postasa"/><h2>eog-postasa</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#eog">eog</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#eog.desktop">eog</a></td></tr>
 <tr><td class="alt">Name</td><td>Picasa Web Uploader</td></tr>
 <tr><td class="alt">Comment</td><td>Supports uploading photos to Google Picasa Web</td></tr>
 <tr><td class="alt">Package</td><td><code>eog-plugin-postasa</code></td></tr>
@@ -1018,11 +1027,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-eog-pythonconsole" class="gnome">
+<div id="app-eog-pythonconsole" class="gnome addon">
 <a name="eog-pythonconsole"/><h2>eog-pythonconsole</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#eog">eog</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#eog.desktop">eog</a></td></tr>
 <tr><td class="alt">Name</td><td>Python Console</td></tr>
 <tr><td class="alt">Comment</td><td>Adds a Python console</td></tr>
 <tr><td class="alt">Package</td><td><code>eog-plugin-pythonconsole</code></td></tr>
@@ -1031,11 +1040,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-eog-send-by-mail" class="gnome">
+<div id="app-eog-send-by-mail" class="gnome addon">
 <a name="eog-send-by-mail"/><h2>eog-send-by-mail</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#eog">eog</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#eog.desktop">eog</a></td></tr>
 <tr><td class="alt">Name</td><td>Send by Mail</td></tr>
 <tr><td class="alt">Comment</td><td>Sends an image attached to a new mail</td></tr>
 <tr><td class="alt">Package</td><td><code>eog-plugin-send-by-mail</code></td></tr>
@@ -1044,11 +1053,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-eog-slideshowshuffle" class="gnome">
+<div id="app-eog-slideshowshuffle" class="gnome addon">
 <a name="eog-slideshowshuffle"/><h2>eog-slideshowshuffle</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#eog">eog</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#eog.desktop">eog</a></td></tr>
 <tr><td class="alt">Name</td><td>Slideshow Shuffle</td></tr>
 <tr><td class="alt">Comment</td><td>Shuffles the photos in slideshow mode</td></tr>
 <tr><td class="alt">Package</td><td><code>eog-plugin-slideshowshuffle</code></td></tr>
@@ -1057,8 +1066,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-eog" class="screenshots description keywords gnome">
-<a name="eog"/><h2>eog</h2>
+<div id="app-eog.desktop" class="screenshots description keywords gnome">
+<a name="eog.desktop"/><h2>eog.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Eye of GNOME</td></tr>
@@ -1074,8 +1083,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-eom" class="screenshots description keywords">
-<a name="eom"/><h2>eom</h2>
+<div id="app-eom.desktop" class="screenshots description keywords">
+<a name="eom.desktop"/><h2>eom.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Eye of MATE</td></tr>
@@ -1090,8 +1099,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-epiphany" class="screenshots description keywords gnome">
-<a name="epiphany"/><h2>epiphany</h2>
+<div id="app-epiphany.desktop" class="screenshots description keywords gnome">
+<a name="epiphany.desktop"/><h2>epiphany.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Web</td></tr>
@@ -1106,8 +1115,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-eric5" class="screenshots description">
-<a name="eric5"/><h2>eric5</h2>
+<div id="app-eric5.desktop" class="screenshots description">
+<a name="eric5.desktop"/><h2>eric5.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>eric5</td></tr>
@@ -1120,11 +1129,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-evince-comicsdocument" class="gnome">
+<div id="app-evince-comicsdocument" class="gnome addon">
 <a name="evince-comicsdocument"/><h2>evince-comicsdocument</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#evince">evince</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#evince.desktop">evince</a></td></tr>
 <tr><td class="alt">Name</td><td>Comic Books</td></tr>
 <tr><td class="alt">Comment</td><td>Adds support for reading comic books</td></tr>
 <tr><td class="alt">Package</td><td><code>evince-plugin-comicsdocument</code></td></tr>
@@ -1133,11 +1142,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-evince-djvudocument" class="gnome">
+<div id="app-evince-djvudocument" class="gnome addon">
 <a name="evince-djvudocument"/><h2>evince-djvudocument</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#evince">evince</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#evince.desktop">evince</a></td></tr>
 <tr><td class="alt">Name</td><td>DjVu Documents</td></tr>
 <tr><td class="alt">Comment</td><td>Adds support for reading DjVu documents</td></tr>
 <tr><td class="alt">Package</td><td><code>evince-plugin-djvudocument</code></td></tr>
@@ -1146,11 +1155,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-evince-dvidocument" class="gnome">
+<div id="app-evince-dvidocument" class="gnome addon">
 <a name="evince-dvidocument"/><h2>evince-dvidocument</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#evince">evince</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#evince.desktop">evince</a></td></tr>
 <tr><td class="alt">Name</td><td>DVI Documents</td></tr>
 <tr><td class="alt">Comment</td><td>Adds support for reading DVI documents</td></tr>
 <tr><td class="alt">Package</td><td><code>evince-plugin-dvidocument</code></td></tr>
@@ -1159,11 +1168,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-evince-pdfocument" class="gnome">
+<div id="app-evince-pdfocument" class="gnome addon">
 <a name="evince-pdfocument"/><h2>evince-pdfocument</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#evince">evince</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#evince.desktop">evince</a></td></tr>
 <tr><td class="alt">Name</td><td>PDF Documents</td></tr>
 <tr><td class="alt">Comment</td><td>Adds support for reading PDF Documents</td></tr>
 <tr><td class="alt">Package</td><td><code>evince-plugin-pdfdocument</code></td></tr>
@@ -1172,11 +1181,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-evince-psdocument" class="gnome">
+<div id="app-evince-psdocument" class="gnome addon">
 <a name="evince-psdocument"/><h2>evince-psdocument</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#evince">evince</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#evince.desktop">evince</a></td></tr>
 <tr><td class="alt">Name</td><td>PostScript Documents</td></tr>
 <tr><td class="alt">Comment</td><td>Adds support for reading PostScript documents</td></tr>
 <tr><td class="alt">Package</td><td><code>evince-plugin-psdocument</code></td></tr>
@@ -1185,11 +1194,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-evince-tiffdocument" class="gnome">
+<div id="app-evince-tiffdocument" class="gnome addon">
 <a name="evince-tiffdocument"/><h2>evince-tiffdocument</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#evince">evince</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#evince.desktop">evince</a></td></tr>
 <tr><td class="alt">Name</td><td>TIFF Documents</td></tr>
 <tr><td class="alt">Comment</td><td>Adds support for reading TIFF documents</td></tr>
 <tr><td class="alt">Package</td><td><code>evince-plugin-tiffdocument</code></td></tr>
@@ -1198,11 +1207,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-evince-xpsdocument" class="gnome">
+<div id="app-evince-xpsdocument" class="gnome addon">
 <a name="evince-xpsdocument"/><h2>evince-xpsdocument</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#evince">evince</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#evince.desktop">evince</a></td></tr>
 <tr><td class="alt">Name</td><td>XPS Documents</td></tr>
 <tr><td class="alt">Comment</td><td>Adds support for reading XPS documents</td></tr>
 <tr><td class="alt">Package</td><td><code>evince-plugin-xpsdocument</code></td></tr>
@@ -1211,8 +1220,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-evince" class="description keywords gnome">
-<a name="evince"/><h2>evince</h2>
+<div id="app-evince.desktop" class="description keywords gnome">
+<a name="evince.desktop"/><h2>evince.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Evince</td></tr>
@@ -1227,11 +1236,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-evolution-bogofilter" class="gnome">
+<div id="app-evolution-bogofilter" class="gnome addon">
 <a name="evolution-bogofilter"/><h2>evolution-bogofilter</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#evolution">evolution</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#evolution.desktop">evolution</a></td></tr>
 <tr><td class="alt">Name</td><td>Bogofilter</td></tr>
 <tr><td class="alt">Comment</td><td>Junk filter using Bogofilter</td></tr>
 <tr><td class="alt">Package</td><td><code>evolution-plugin-bogofilter</code></td></tr>
@@ -1240,11 +1249,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-evolution-ews" class="gnome">
+<div id="app-evolution-ews" class="gnome addon">
 <a name="evolution-ews"/><h2>evolution-ews</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#evolution">evolution</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#evolution.desktop">evolution</a></td></tr>
 <tr><td class="alt">Name</td><td>Exchange Web Services</td></tr>
 <tr><td class="alt">Comment</td><td>For accessing Exchange servers using Web Services</td></tr>
 <tr><td class="alt">Package</td><td><code>evolution-ews</code></td></tr>
@@ -1253,11 +1262,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-evolution-pst" class="gnome">
+<div id="app-evolution-pst" class="gnome addon">
 <a name="evolution-pst"/><h2>evolution-pst</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#evolution">evolution</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#evolution.desktop">evolution</a></td></tr>
 <tr><td class="alt">Name</td><td>Outlook PST import</td></tr>
 <tr><td class="alt">Comment</td><td>Import Outlook messages from PST file</td></tr>
 <tr><td class="alt">Package</td><td><code>evolution-plugin-pst-import</code></td></tr>
@@ -1266,11 +1275,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-evolution-rss" class="">
+<div id="app-evolution-rss" class="addon">
 <a name="evolution-rss"/><h2>evolution-rss</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#evolution">evolution</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#evolution.desktop">evolution</a></td></tr>
 <tr><td class="alt">Name</td><td>RSS Reader</td></tr>
 <tr><td class="alt">Comment</td><td>Read RSS feeds</td></tr>
 <tr><td class="alt">Package</td><td><code>evolution-plugin-rss</code></td></tr>
@@ -1278,11 +1287,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-evolution-spamassassin" class="gnome">
+<div id="app-evolution-spamassassin" class="gnome addon">
 <a name="evolution-spamassassin"/><h2>evolution-spamassassin</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#evolution">evolution</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#evolution.desktop">evolution</a></td></tr>
 <tr><td class="alt">Name</td><td>SpamAssassin</td></tr>
 <tr><td class="alt">Comment</td><td>Junk filter using SpamAssassin</td></tr>
 <tr><td class="alt">Package</td><td><code>evolution-plugin-spamassassin</code></td></tr>
@@ -1291,8 +1300,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-evolution" class="screenshots description keywords gnome">
-<a name="evolution"/><h2>evolution</h2>
+<div id="app-evolution.desktop" class="screenshots description keywords gnome">
+<a name="evolution.desktop"/><h2>evolution.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Evolution</td></tr>
@@ -1307,8 +1316,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-exaile" class="screenshots description">
-<a name="exaile"/><h2>exaile</h2>
+<div id="app-exaile.desktop" class="screenshots description">
+<a name="exaile.desktop"/><h2>exaile.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Exaile</td></tr>
@@ -1321,8 +1330,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-filezilla" class="screenshots description">
-<a name="filezilla"/><h2>filezilla</h2>
+<div id="app-filezilla.desktop" class="screenshots description">
+<a name="filezilla.desktop"/><h2>filezilla.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>FileZilla</td></tr>
@@ -1335,8 +1344,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-firefox" class="screenshots description">
-<a name="firefox"/><h2>firefox</h2>
+<div id="app-firefox.desktop" class="screenshots description">
+<a name="firefox.desktop"/><h2>firefox.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Firefox</td></tr>
@@ -1349,8 +1358,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-firewall-config" class="screenshots description keywords">
-<a name="firewall-config"/><h2>firewall-config</h2>
+<div id="app-firewall-config.desktop" class="screenshots description keywords">
+<a name="firewall-config.desktop"/><h2>firewall-config.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Firewall</td></tr>
@@ -1364,8 +1373,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-five-or-more" class="screenshots description keywords gnome">
-<a name="five-or-more"/><h2>five-or-more</h2>
+<div id="app-five-or-more.desktop" class="screenshots description keywords gnome">
+<a name="five-or-more.desktop"/><h2>five-or-more.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Five or More</td></tr>
@@ -1380,8 +1389,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-flow" class="screenshots description kde">
-<a name="flow"/><h2>flow</h2>
+<div id="app-flow.desktop" class="screenshots description kde">
+<a name="flow.desktop"/><h2>flow.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Flow</td></tr>
@@ -1395,8 +1404,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-four-in-a-row" class="screenshots description keywords gnome">
-<a name="four-in-a-row"/><h2>four-in-a-row</h2>
+<div id="app-four-in-a-row.desktop" class="screenshots description keywords gnome">
+<a name="four-in-a-row.desktop"/><h2>four-in-a-row.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Four-in-a-row</td></tr>
@@ -1411,8 +1420,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-frogr" class="screenshots description keywords gnome">
-<a name="frogr"/><h2>frogr</h2>
+<div id="app-frogr.desktop" class="screenshots description keywords gnome">
+<a name="frogr.desktop"/><h2>frogr.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>frogr</td></tr>
@@ -1427,8 +1436,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-fusion-icon" class="description">
-<a name="fusion-icon"/><h2>fusion-icon</h2>
+<div id="app-fusion-icon.desktop" class="description">
+<a name="fusion-icon.desktop"/><h2>fusion-icon.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Compiz Fusion Icon</td></tr>
@@ -1441,8 +1450,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gaupol" class="screenshots description keywords">
-<a name="gaupol"/><h2>gaupol</h2>
+<div id="app-gaupol.desktop" class="screenshots description keywords">
+<a name="gaupol.desktop"/><h2>gaupol.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Gaupol</td></tr>
@@ -1456,8 +1465,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gbrainy" class="screenshots description gnome">
-<a name="gbrainy"/><h2>gbrainy</h2>
+<div id="app-gbrainy.desktop" class="screenshots description gnome">
+<a name="gbrainy.desktop"/><h2>gbrainy.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>gbrainy</td></tr>
@@ -1471,8 +1480,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gcm-viewer" class="screenshots description keywords gnome">
-<a name="gcm-viewer"/><h2>gcm-viewer</h2>
+<div id="app-gcm-viewer.desktop" class="screenshots description keywords gnome">
+<a name="gcm-viewer.desktop"/><h2>gcm-viewer.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Color Manager</td></tr>
@@ -1487,8 +1496,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gcompris" class="screenshots description">
-<a name="gcompris"/><h2>gcompris</h2>
+<div id="app-gcompris.desktop" class="screenshots description">
+<a name="gcompris.desktop"/><h2>gcompris.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GCompris</td></tr>
@@ -1501,8 +1510,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gda-browser-5.0" class="screenshots description">
-<a name="gda-browser-5.0"/><h2>gda-browser-5.0</h2>
+<div id="app-gda-browser-5.0.desktop" class="screenshots description">
+<a name="gda-browser-5.0.desktop"/><h2>gda-browser-5.0.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Database browser</td></tr>
@@ -1515,8 +1524,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-geary" class="screenshots description keywords gnome">
-<a name="geary"/><h2>geary</h2>
+<div id="app-geary.desktop" class="screenshots description keywords gnome">
+<a name="geary.desktop"/><h2>geary.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Geary</td></tr>
@@ -1531,11 +1540,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gedit-bookmarks" class="gnome">
+<div id="app-gedit-bookmarks" class="gnome addon">
 <a name="gedit-bookmarks"/><h2>gedit-bookmarks</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit">org.gnome.gedit</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit.desktop">org.gnome.gedit</a></td></tr>
 <tr><td class="alt">Name</td><td>Bookmarks</td></tr>
 <tr><td class="alt">Comment</td><td>Easy document navigation with bookmarks</td></tr>
 <tr><td class="alt">Package</td><td><code>gedit-plugin-bookmarks</code></td></tr>
@@ -1544,11 +1553,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gedit-bracketcompletion" class="gnome">
+<div id="app-gedit-bracketcompletion" class="gnome addon">
 <a name="gedit-bracketcompletion"/><h2>gedit-bracketcompletion</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit">org.gnome.gedit</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit.desktop">org.gnome.gedit</a></td></tr>
 <tr><td class="alt">Name</td><td>Bracket Completion</td></tr>
 <tr><td class="alt">Comment</td><td>Automatically add a closing bracket when you insert one</td></tr>
 <tr><td class="alt">Package</td><td><code>gedit-plugin-bracketcompletion</code></td></tr>
@@ -1557,11 +1566,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gedit-charmap" class="gnome">
+<div id="app-gedit-charmap" class="gnome addon">
 <a name="gedit-charmap"/><h2>gedit-charmap</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit">org.gnome.gedit</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit.desktop">org.gnome.gedit</a></td></tr>
 <tr><td class="alt">Name</td><td>Charmap</td></tr>
 <tr><td class="alt">Comment</td><td>Select characters from a character map</td></tr>
 <tr><td class="alt">Package</td><td><code>gedit-plugin-charmap</code></td></tr>
@@ -1570,11 +1579,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gedit-code-assistance" class="gnome">
+<div id="app-gedit-code-assistance" class="gnome addon">
 <a name="gedit-code-assistance"/><h2>gedit-code-assistance</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit">org.gnome.gedit</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit.desktop">org.gnome.gedit</a></td></tr>
 <tr><td class="alt">Name</td><td>Code Assistance</td></tr>
 <tr><td class="alt">Comment</td><td>Assistance when writing code</td></tr>
 <tr><td class="alt">Package</td><td><code>gedit-plugin-code-assistance</code></td></tr>
@@ -1583,11 +1592,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gedit-codecomment" class="gnome">
+<div id="app-gedit-codecomment" class="gnome addon">
 <a name="gedit-codecomment"/><h2>gedit-codecomment</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit">org.gnome.gedit</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit.desktop">org.gnome.gedit</a></td></tr>
 <tr><td class="alt">Name</td><td>Code Comment</td></tr>
 <tr><td class="alt">Comment</td><td>Comment or uncomment blocks of code</td></tr>
 <tr><td class="alt">Package</td><td><code>gedit-plugin-codecomment</code></td></tr>
@@ -1596,11 +1605,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gedit-colorpicker" class="gnome">
+<div id="app-gedit-colorpicker" class="gnome addon">
 <a name="gedit-colorpicker"/><h2>gedit-colorpicker</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit">org.gnome.gedit</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit.desktop">org.gnome.gedit</a></td></tr>
 <tr><td class="alt">Name</td><td>Color picker</td></tr>
 <tr><td class="alt">Comment</td><td>Select and insert a color from a dialog (for HTML, CSS, PHP)</td></tr>
 <tr><td class="alt">Package</td><td><code>gedit-plugin-colorpicker</code></td></tr>
@@ -1609,11 +1618,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gedit-colorschemer" class="gnome">
+<div id="app-gedit-colorschemer" class="gnome addon">
 <a name="gedit-colorschemer"/><h2>gedit-colorschemer</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit">org.gnome.gedit</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit.desktop">org.gnome.gedit</a></td></tr>
 <tr><td class="alt">Name</td><td>Color Scheme Editor</td></tr>
 <tr><td class="alt">Comment</td><td>Create and edit the color scheme used for syntax highlighting</td></tr>
 <tr><td class="alt">Package</td><td><code>gedit-plugin-colorschemer</code></td></tr>
@@ -1622,11 +1631,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gedit-commander" class="gnome">
+<div id="app-gedit-commander" class="gnome addon">
 <a name="gedit-commander"/><h2>gedit-commander</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit">org.gnome.gedit</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit.desktop">org.gnome.gedit</a></td></tr>
 <tr><td class="alt">Name</td><td>Commander</td></tr>
 <tr><td class="alt">Comment</td><td>Command line interface for advanced editing</td></tr>
 <tr><td class="alt">Package</td><td><code>gedit-plugin-commander</code></td></tr>
@@ -1635,11 +1644,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gedit-dashboard" class="gnome">
+<div id="app-gedit-dashboard" class="gnome addon">
 <a name="gedit-dashboard"/><h2>gedit-dashboard</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit">org.gnome.gedit</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit.desktop">org.gnome.gedit</a></td></tr>
 <tr><td class="alt">Name</td><td>Dashboard</td></tr>
 <tr><td class="alt">Comment</td><td>Displays a grid of recently/most used files upon opening a new tab</td></tr>
 <tr><td class="alt">Package</td><td><code>gedit-plugin-dashboard</code></td></tr>
@@ -1648,11 +1657,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gedit-drawspaces" class="gnome">
+<div id="app-gedit-drawspaces" class="gnome addon">
 <a name="gedit-drawspaces"/><h2>gedit-drawspaces</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit">org.gnome.gedit</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit.desktop">org.gnome.gedit</a></td></tr>
 <tr><td class="alt">Name</td><td>Draw spaces</td></tr>
 <tr><td class="alt">Comment</td><td>Draw Spaces and Tabs</td></tr>
 <tr><td class="alt">Package</td><td><code>gedit-plugin-drawspaces</code></td></tr>
@@ -1661,11 +1670,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gedit-findinfiles" class="gnome">
+<div id="app-gedit-findinfiles" class="gnome addon">
 <a name="gedit-findinfiles"/><h2>gedit-findinfiles</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit">org.gnome.gedit</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit.desktop">org.gnome.gedit</a></td></tr>
 <tr><td class="alt">Name</td><td>Find in Files</td></tr>
 <tr><td class="alt">Comment</td><td>Find text in all files of a folder</td></tr>
 <tr><td class="alt">Package</td><td><code>gedit-plugin-findinfiles</code></td></tr>
@@ -1674,11 +1683,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gedit-git" class="gnome">
+<div id="app-gedit-git" class="gnome addon">
 <a name="gedit-git"/><h2>gedit-git</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit">org.gnome.gedit</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit.desktop">org.gnome.gedit</a></td></tr>
 <tr><td class="alt">Name</td><td>Git</td></tr>
 <tr><td class="alt">Comment</td><td>Use git information to display which lines and files changed since last commit</td></tr>
 <tr><td class="alt">Package</td><td><code>gedit-plugin-git</code></td></tr>
@@ -1687,11 +1696,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gedit-joinlines" class="gnome">
+<div id="app-gedit-joinlines" class="gnome addon">
 <a name="gedit-joinlines"/><h2>gedit-joinlines</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit">org.gnome.gedit</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit.desktop">org.gnome.gedit</a></td></tr>
 <tr><td class="alt">Name</td><td>Join lines/ Split lines</td></tr>
 <tr><td class="alt">Comment</td><td>Join or split multiple lines through Ctrl+J and Ctrl+Shift+J</td></tr>
 <tr><td class="alt">Package</td><td><code>gedit-plugin-joinlines</code></td></tr>
@@ -1700,11 +1709,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gedit-multiedit" class="gnome">
+<div id="app-gedit-multiedit" class="gnome addon">
 <a name="gedit-multiedit"/><h2>gedit-multiedit</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit">org.gnome.gedit</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit.desktop">org.gnome.gedit</a></td></tr>
 <tr><td class="alt">Name</td><td>Multi edit</td></tr>
 <tr><td class="alt">Comment</td><td>Edit document in multiple places at once</td></tr>
 <tr><td class="alt">Package</td><td><code>gedit-plugin-multiedit</code></td></tr>
@@ -1713,11 +1722,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gedit-smartspaces" class="gnome">
+<div id="app-gedit-smartspaces" class="gnome addon">
 <a name="gedit-smartspaces"/><h2>gedit-smartspaces</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit">org.gnome.gedit</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit.desktop">org.gnome.gedit</a></td></tr>
 <tr><td class="alt">Name</td><td>Smart Spaces</td></tr>
 <tr><td class="alt">Comment</td><td>Allow to unindent like if you were using tabs while you're using spaces</td></tr>
 <tr><td class="alt">Package</td><td><code>gedit-plugin-smartspaces</code></td></tr>
@@ -1726,11 +1735,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gedit-synctex" class="gnome">
+<div id="app-gedit-synctex" class="gnome addon">
 <a name="gedit-synctex"/><h2>gedit-synctex</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit">org.gnome.gedit</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit.desktop">org.gnome.gedit</a></td></tr>
 <tr><td class="alt">Name</td><td>SyncTeX</td></tr>
 <tr><td class="alt">Comment</td><td>Synchronize between LaTeX and PDF with gedit and evince</td></tr>
 <tr><td class="alt">Package</td><td><code>gedit-plugin-synctex</code></td></tr>
@@ -1739,11 +1748,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gedit-terminal" class="gnome">
+<div id="app-gedit-terminal" class="gnome addon">
 <a name="gedit-terminal"/><h2>gedit-terminal</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit">org.gnome.gedit</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit.desktop">org.gnome.gedit</a></td></tr>
 <tr><td class="alt">Name</td><td>Terminal</td></tr>
 <tr><td class="alt">Comment</td><td>A simple terminal widget accessible from the bottom panel</td></tr>
 <tr><td class="alt">Package</td><td><code>gedit-plugin-terminal</code></td></tr>
@@ -1752,11 +1761,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gedit-textsize" class="gnome">
+<div id="app-gedit-textsize" class="gnome addon">
 <a name="gedit-textsize"/><h2>gedit-textsize</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit">org.gnome.gedit</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit.desktop">org.gnome.gedit</a></td></tr>
 <tr><td class="alt">Name</td><td>Text size</td></tr>
 <tr><td class="alt">Comment</td><td>Easily increase and decrease the text size</td></tr>
 <tr><td class="alt">Package</td><td><code>gedit-plugin-textsize</code></td></tr>
@@ -1765,11 +1774,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gedit-wordcompletion" class="gnome">
+<div id="app-gedit-wordcompletion" class="gnome addon">
 <a name="gedit-wordcompletion"/><h2>gedit-wordcompletion</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit">org.gnome.gedit</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit.desktop">org.gnome.gedit</a></td></tr>
 <tr><td class="alt">Name</td><td>Word completion</td></tr>
 <tr><td class="alt">Comment</td><td>Propose automatic completion using words already present in the document</td></tr>
 <tr><td class="alt">Package</td><td><code>gedit-plugin-wordcompletion</code></td></tr>
@@ -1778,11 +1787,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gedit-zeitgeist" class="gnome">
+<div id="app-gedit-zeitgeist" class="gnome addon">
 <a name="gedit-zeitgeist"/><h2>gedit-zeitgeist</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit">org.gnome.gedit</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#org.gnome.gedit.desktop">org.gnome.gedit</a></td></tr>
 <tr><td class="alt">Name</td><td>Zeitgeist Data provider</td></tr>
 <tr><td class="alt">Comment</td><td>Records user activity and giving easy access to recently-used and frequently-used files</td></tr>
 <tr><td class="alt">Package</td><td><code>gedit-plugin-zeitgeist</code></td></tr>
@@ -1791,8 +1800,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gftp" class="screenshots description gnome">
-<a name="gftp"/><h2>gftp</h2>
+<div id="app-gftp.desktop" class="screenshots description gnome">
+<a name="gftp.desktop"/><h2>gftp.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>gFTP</td></tr>
@@ -1805,8 +1814,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-ghex" class="screenshots description keywords gnome">
-<a name="ghex"/><h2>ghex</h2>
+<div id="app-ghex.desktop" class="screenshots description keywords gnome">
+<a name="ghex.desktop"/><h2>ghex.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Hex Editor</td></tr>
@@ -1821,8 +1830,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gimp" class="screenshots description gnome">
-<a name="gimp"/><h2>gimp</h2>
+<div id="app-gimp.desktop" class="screenshots description gnome">
+<a name="gimp.desktop"/><h2>gimp.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GIMP</td></tr>
@@ -1836,8 +1845,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-girl" class="screenshots description keywords gnome">
-<a name="girl"/><h2>girl</h2>
+<div id="app-girl.desktop" class="screenshots description keywords gnome">
+<a name="girl.desktop"/><h2>girl.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Internet Radio Locator</td></tr>
@@ -1852,8 +1861,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gitg" class="screenshots description gnome">
-<a name="gitg"/><h2>gitg</h2>
+<div id="app-gitg.desktop" class="screenshots description gnome">
+<a name="gitg.desktop"/><h2>gitg.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>gitg</td></tr>
@@ -1867,8 +1876,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-glabels-3.0" class="screenshots description">
-<a name="glabels-3.0"/><h2>glabels-3.0</h2>
+<div id="app-glabels-3.0.desktop" class="screenshots description">
+<a name="glabels-3.0.desktop"/><h2>glabels-3.0.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>gLabels Label Designer 3</td></tr>
@@ -1881,8 +1890,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-glade" class="screenshots description keywords gnome">
-<a name="glade"/><h2>glade</h2>
+<div id="app-glade.desktop" class="screenshots description keywords gnome">
+<a name="glade.desktop"/><h2>glade.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Glade</td></tr>
@@ -1897,8 +1906,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-glom" class="screenshots description keywords gnome">
-<a name="glom"/><h2>glom</h2>
+<div id="app-glom.desktop" class="screenshots description keywords gnome">
+<a name="glom.desktop"/><h2>glom.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Glom</td></tr>
@@ -1913,8 +1922,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gmusicbrowser" class="screenshots description">
-<a name="gmusicbrowser"/><h2>gmusicbrowser</h2>
+<div id="app-gmusicbrowser.desktop" class="screenshots description">
+<a name="gmusicbrowser.desktop"/><h2>gmusicbrowser.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>gmusicbrowser</td></tr>
@@ -1927,8 +1936,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gnome-calculator" class="screenshots description keywords gnome">
-<a name="gnome-calculator"/><h2>gnome-calculator</h2>
+<div id="app-gnome-calculator.desktop" class="screenshots description keywords gnome">
+<a name="gnome-calculator.desktop"/><h2>gnome-calculator.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Calculator</td></tr>
@@ -1943,8 +1952,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gnome-chess" class="screenshots description keywords gnome">
-<a name="gnome-chess"/><h2>gnome-chess</h2>
+<div id="app-gnome-chess.desktop" class="screenshots description keywords gnome">
+<a name="gnome-chess.desktop"/><h2>gnome-chess.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Chess</td></tr>
@@ -1959,8 +1968,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gnome-commander" class="screenshots description gnome">
-<a name="gnome-commander"/><h2>gnome-commander</h2>
+<div id="app-gnome-commander.desktop" class="screenshots description gnome">
+<a name="gnome-commander.desktop"/><h2>gnome-commander.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Gnome Commander</td></tr>
@@ -1973,8 +1982,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gnome-control-center" class="description keywords gnome">
-<a name="gnome-control-center"/><h2>gnome-control-center</h2>
+<div id="app-gnome-control-center.desktop" class="description keywords gnome">
+<a name="gnome-control-center.desktop"/><h2>gnome-control-center.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Control Center</td></tr>
@@ -1990,8 +1999,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gnome-klotski" class="screenshots description keywords gnome">
-<a name="gnome-klotski"/><h2>gnome-klotski</h2>
+<div id="app-gnome-klotski.desktop" class="screenshots description keywords gnome">
+<a name="gnome-klotski.desktop"/><h2>gnome-klotski.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Klotski</td></tr>
@@ -2006,8 +2015,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gnome-mahjongg" class="screenshots description keywords gnome">
-<a name="gnome-mahjongg"/><h2>gnome-mahjongg</h2>
+<div id="app-gnome-mahjongg.desktop" class="screenshots description keywords gnome">
+<a name="gnome-mahjongg.desktop"/><h2>gnome-mahjongg.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Mahjongg</td></tr>
@@ -2022,8 +2031,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gnome-mines" class="screenshots description keywords gnome">
-<a name="gnome-mines"/><h2>gnome-mines</h2>
+<div id="app-gnome-mines.desktop" class="screenshots description keywords gnome">
+<a name="gnome-mines.desktop"/><h2>gnome-mines.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Mines</td></tr>
@@ -2038,8 +2047,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gnome-music" class="screenshots description keywords gnome">
-<a name="gnome-music"/><h2>gnome-music</h2>
+<div id="app-gnome-music.desktop" class="screenshots description keywords gnome">
+<a name="gnome-music.desktop"/><h2>gnome-music.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Music</td></tr>
@@ -2054,8 +2063,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gnome-power-statistics" class="screenshots description keywords gnome">
-<a name="gnome-power-statistics"/><h2>gnome-power-statistics</h2>
+<div id="app-gnome-power-statistics.desktop" class="screenshots description keywords gnome">
+<a name="gnome-power-statistics.desktop"/><h2>gnome-power-statistics.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Power Statistics</td></tr>
@@ -2070,8 +2079,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gnome-robots" class="screenshots description keywords gnome">
-<a name="gnome-robots"/><h2>gnome-robots</h2>
+<div id="app-gnome-robots.desktop" class="screenshots description keywords gnome">
+<a name="gnome-robots.desktop"/><h2>gnome-robots.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Robots</td></tr>
@@ -2086,8 +2095,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gnome-sudoku" class="screenshots description keywords gnome">
-<a name="gnome-sudoku"/><h2>gnome-sudoku</h2>
+<div id="app-gnome-sudoku.desktop" class="screenshots description keywords gnome">
+<a name="gnome-sudoku.desktop"/><h2>gnome-sudoku.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Sudoku</td></tr>
@@ -2102,8 +2111,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gnome-system-monitor" class="screenshots description keywords gnome">
-<a name="gnome-system-monitor"/><h2>gnome-system-monitor</h2>
+<div id="app-gnome-system-monitor.desktop" class="screenshots description keywords gnome">
+<a name="gnome-system-monitor.desktop"/><h2>gnome-system-monitor.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME System Monitor</td></tr>
@@ -2119,8 +2128,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gnome-tetravex" class="screenshots description keywords gnome">
-<a name="gnome-tetravex"/><h2>gnome-tetravex</h2>
+<div id="app-gnome-tetravex.desktop" class="screenshots description keywords gnome">
+<a name="gnome-tetravex.desktop"/><h2>gnome-tetravex.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Tetravex</td></tr>
@@ -2135,8 +2144,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gnome-tweak-tool" class="screenshots description keywords gnome">
-<a name="gnome-tweak-tool"/><h2>gnome-tweak-tool</h2>
+<div id="app-gnome-tweak-tool.desktop" class="screenshots description keywords gnome">
+<a name="gnome-tweak-tool.desktop"/><h2>gnome-tweak-tool.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Tweak Tool</td></tr>
@@ -2151,8 +2160,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gnote" class="screenshots description keywords gnome">
-<a name="gnote"/><h2>gnote</h2>
+<div id="app-gnote.desktop" class="screenshots description keywords gnome">
+<a name="gnote.desktop"/><h2>gnote.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Gnote</td></tr>
@@ -2167,8 +2176,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gnucash" class="screenshots description gnome">
-<a name="gnucash"/><h2>gnucash</h2>
+<div id="app-gnucash.desktop" class="screenshots description gnome">
+<a name="gnucash.desktop"/><h2>gnucash.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GnuCash</td></tr>
@@ -2182,8 +2191,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gnumeric" class="screenshots description keywords gnome">
-<a name="gnumeric"/><h2>gnumeric</h2>
+<div id="app-gnumeric.desktop" class="screenshots description keywords gnome">
+<a name="gnumeric.desktop"/><h2>gnumeric.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Gnumeric</td></tr>
@@ -2198,8 +2207,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gobby-0.5" class="screenshots description">
-<a name="gobby-0.5"/><h2>gobby-0.5</h2>
+<div id="app-gobby-0.5.desktop" class="screenshots description">
+<a name="gobby-0.5.desktop"/><h2>gobby-0.5.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Gobby 0.5 pre-release</td></tr>
@@ -2212,8 +2221,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gonvert" class="screenshots description gnome">
-<a name="gonvert"/><h2>gonvert</h2>
+<div id="app-gonvert.desktop" class="screenshots description gnome">
+<a name="gonvert.desktop"/><h2>gonvert.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Gonvert</td></tr>
@@ -2226,8 +2235,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-goobox" class="screenshots description gnome">
-<a name="goobox"/><h2>goobox</h2>
+<div id="app-goobox.desktop" class="screenshots description gnome">
+<a name="goobox.desktop"/><h2>goobox.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Goobox CD Player</td></tr>
@@ -2241,8 +2250,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gourmet" class="screenshots description keywords">
-<a name="gourmet"/><h2>gourmet</h2>
+<div id="app-gourmet.desktop" class="screenshots description keywords">
+<a name="gourmet.desktop"/><h2>gourmet.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Gourmet</td></tr>
@@ -2256,8 +2265,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gparted" class="screenshots description keywords gnome">
-<a name="gparted"/><h2>gparted</h2>
+<div id="app-gparted.desktop" class="screenshots description keywords gnome">
+<a name="gparted.desktop"/><h2>gparted.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GParted</td></tr>
@@ -2272,8 +2281,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gpk-application" class="screenshots description keywords gnome">
-<a name="gpk-application"/><h2>gpk-application</h2>
+<div id="app-gpk-application.desktop" class="screenshots description keywords gnome">
+<a name="gpk-application.desktop"/><h2>gpk-application.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Packages</td></tr>
@@ -2288,8 +2297,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gpk-update-viewer" class="screenshots description keywords gnome">
-<a name="gpk-update-viewer"/><h2>gpk-update-viewer</h2>
+<div id="app-gpk-update-viewer.desktop" class="screenshots description keywords gnome">
+<a name="gpk-update-viewer.desktop"/><h2>gpk-update-viewer.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Package Updater</td></tr>
@@ -2304,8 +2313,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gramps" class="screenshots description keywords">
-<a name="gramps"/><h2>gramps</h2>
+<div id="app-gramps.desktop" class="screenshots description keywords">
+<a name="gramps.desktop"/><h2>gramps.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Gramps</td></tr>
@@ -2318,8 +2327,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gtg" class="screenshots description">
-<a name="gtg"/><h2>gtg</h2>
+<div id="app-gtg.desktop" class="screenshots description">
+<a name="gtg.desktop"/><h2>gtg.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Getting Things GNOME!</td></tr>
@@ -2332,8 +2341,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gthumb" class="screenshots description keywords gnome">
-<a name="gthumb"/><h2>gthumb</h2>
+<div id="app-gthumb.desktop" class="screenshots description keywords gnome">
+<a name="gthumb.desktop"/><h2>gthumb.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>gThumb</td></tr>
@@ -2348,8 +2357,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gtranslator" class="screenshots description gnome">
-<a name="gtranslator"/><h2>gtranslator</h2>
+<div id="app-gtranslator.desktop" class="screenshots description gnome">
+<a name="gtranslator.desktop"/><h2>gtranslator.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Gtranslator</td></tr>
@@ -2363,8 +2372,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-gucharmap" class="description keywords gnome">
-<a name="gucharmap"/><h2>gucharmap</h2>
+<div id="app-gucharmap.desktop" class="description keywords gnome">
+<a name="gucharmap.desktop"/><h2>gucharmap.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Character Map</td></tr>
@@ -2379,8 +2388,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-hexchat" class="screenshots description keywords">
-<a name="hexchat"/><h2>hexchat</h2>
+<div id="app-hexchat.desktop" class="screenshots description keywords">
+<a name="hexchat.desktop"/><h2>hexchat.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>HexChat</td></tr>
@@ -2394,8 +2403,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-homebank" class="screenshots description keywords">
-<a name="homebank"/><h2>homebank</h2>
+<div id="app-homebank.desktop" class="screenshots description keywords">
+<a name="homebank.desktop"/><h2>homebank.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>HomeBank</td></tr>
@@ -2409,8 +2418,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-hugin" class="screenshots description">
-<a name="hugin"/><h2>hugin</h2>
+<div id="app-hugin.desktop" class="screenshots description">
+<a name="hugin.desktop"/><h2>hugin.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Hugin Panorama Creator</td></tr>
@@ -2422,8 +2431,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-iagno" class="screenshots description keywords gnome">
-<a name="iagno"/><h2>iagno</h2>
+<div id="app-iagno.desktop" class="screenshots description keywords gnome">
+<a name="iagno.desktop"/><h2>iagno.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Iagno</td></tr>
@@ -2438,8 +2447,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-impress" class="screenshots description keywords">
-<a name="impress"/><h2>impress</h2>
+<div id="app-impress.desktop" class="screenshots description keywords">
+<a name="impress.desktop"/><h2>impress.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>LibreOffice Impress</td></tr>
@@ -2453,8 +2462,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-jaxodraw" class="screenshots description">
-<a name="jaxodraw"/><h2>jaxodraw</h2>
+<div id="app-jaxodraw.desktop" class="screenshots description">
+<a name="jaxodraw.desktop"/><h2>jaxodraw.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>JaxoDraw</td></tr>
@@ -2467,8 +2476,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-juk" class="screenshots description kde">
-<a name="juk"/><h2>juk</h2>
+<div id="app-juk.desktop" class="screenshots description kde">
+<a name="juk.desktop"/><h2>juk.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>JuK</td></tr>
@@ -2482,8 +2491,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-julia" class="screenshots description">
-<a name="julia"/><h2>julia</h2>
+<div id="app-julia.desktop" class="screenshots description">
+<a name="julia.desktop"/><h2>julia.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Julia</td></tr>
@@ -2496,8 +2505,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-kajongg" class="screenshots description kde">
-<a name="kajongg"/><h2>kajongg</h2>
+<div id="app-kajongg.desktop" class="screenshots description kde">
+<a name="kajongg.desktop"/><h2>kajongg.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Kajongg</td></tr>
@@ -2511,8 +2520,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-kalzium" class="screenshots description kde">
-<a name="kalzium"/><h2>kalzium</h2>
+<div id="app-kalzium.desktop" class="screenshots description kde">
+<a name="kalzium.desktop"/><h2>kalzium.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Kalzium</td></tr>
@@ -2526,8 +2535,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-kapptemplate" class="screenshots description kde">
-<a name="kapptemplate"/><h2>kapptemplate</h2>
+<div id="app-kapptemplate.desktop" class="screenshots description kde">
+<a name="kapptemplate.desktop"/><h2>kapptemplate.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KAppTemplate</td></tr>
@@ -2541,8 +2550,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-karbon" class="screenshots description kde">
-<a name="karbon"/><h2>karbon</h2>
+<div id="app-karbon.desktop" class="screenshots description kde">
+<a name="karbon.desktop"/><h2>karbon.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Karbon</td></tr>
@@ -2556,8 +2565,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-kexi" class="screenshots description kde">
-<a name="kexi"/><h2>kexi</h2>
+<div id="app-kexi.desktop" class="screenshots description kde">
+<a name="kexi.desktop"/><h2>kexi.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Kexi</td></tr>
@@ -2571,8 +2580,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-kfind" class="screenshots description kde">
-<a name="kfind"/><h2>kfind</h2>
+<div id="app-kfind.desktop" class="screenshots description kde">
+<a name="kfind.desktop"/><h2>kfind.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KFind</td></tr>
@@ -2585,8 +2594,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-kgpg" class="screenshots description kde">
-<a name="kgpg"/><h2>kgpg</h2>
+<div id="app-kgpg.desktop" class="screenshots description kde">
+<a name="kgpg.desktop"/><h2>kgpg.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KGpg</td></tr>
@@ -2599,8 +2608,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-kid3-qt" class="screenshots description keywords">
-<a name="kid3-qt"/><h2>kid3-qt</h2>
+<div id="app-kid3-qt.desktop" class="screenshots description keywords">
+<a name="kid3-qt.desktop"/><h2>kid3-qt.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Kid3</td></tr>
@@ -2614,8 +2623,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-kid3" class="screenshots description keywords">
-<a name="kid3"/><h2>kid3</h2>
+<div id="app-kid3.desktop" class="screenshots description keywords">
+<a name="kid3.desktop"/><h2>kid3.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Kid3</td></tr>
@@ -2629,8 +2638,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-klavaro" class="screenshots description">
-<a name="klavaro"/><h2>klavaro</h2>
+<div id="app-klavaro.desktop" class="screenshots description">
+<a name="klavaro.desktop"/><h2>klavaro.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Klavaro</td></tr>
@@ -2643,8 +2652,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-kmymoney" class="screenshots description kde">
-<a name="kmymoney"/><h2>kmymoney</h2>
+<div id="app-kmymoney.desktop" class="screenshots description kde">
+<a name="kmymoney.desktop"/><h2>kmymoney.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KMyMoney</td></tr>
@@ -2658,8 +2667,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-kolourpaint" class="screenshots description kde">
-<a name="kolourpaint"/><h2>kolourpaint</h2>
+<div id="app-kolourpaint.desktop" class="screenshots description kde">
+<a name="kolourpaint.desktop"/><h2>kolourpaint.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KolourPaint</td></tr>
@@ -2672,8 +2681,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-krb5-auth-dialog" class="screenshots description gnome">
-<a name="krb5-auth-dialog"/><h2>krb5-auth-dialog</h2>
+<div id="app-krb5-auth-dialog.desktop" class="screenshots description gnome">
+<a name="krb5-auth-dialog.desktop"/><h2>krb5-auth-dialog.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Kerberos Authentication</td></tr>
@@ -2687,8 +2696,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-krita" class="screenshots description kde">
-<a name="krita"/><h2>krita</h2>
+<div id="app-krita.desktop" class="screenshots description kde">
+<a name="krita.desktop"/><h2>krita.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Krita</td></tr>
@@ -2702,8 +2711,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-ksudoku" class="screenshots description kde">
-<a name="ksudoku"/><h2>ksudoku</h2>
+<div id="app-ksudoku.desktop" class="screenshots description kde">
+<a name="ksudoku.desktop"/><h2>ksudoku.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KSudoku</td></tr>
@@ -2717,8 +2726,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-ktouch" class="screenshots description kde">
-<a name="ktouch"/><h2>ktouch</h2>
+<div id="app-ktouch.desktop" class="screenshots description kde">
+<a name="ktouch.desktop"/><h2>ktouch.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KTouch</td></tr>
@@ -2732,8 +2741,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-labplot2" class="screenshots description kde">
-<a name="labplot2"/><h2>labplot2</h2>
+<div id="app-labplot2.desktop" class="screenshots description kde">
+<a name="labplot2.desktop"/><h2>labplot2.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>LabPlot</td></tr>
@@ -2747,10 +2756,10 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-launch-new-instance@gnome-shell-extensions.gcampax.github.com" class="description">
-<a name="launch-new-instance@gnome-shell-extensions.gcampax.github.com"/><h2>launch-new-instance@gnome-shell-extensions.gcampax.github.com</h2>
+<div id="app-launch-new-instance@gnome-shell-extensions.gcampax.github.com.shell-extension" class="description">
+<a name="launch-new-instance@gnome-shell-extensions.gcampax.github.com.shell-extension"/><h2>launch-new-instance@gnome-shell-extensions.gcampax.github.com.shell-extension</h2>
 <table class="app">
-<tr><td class="alt">Type</td><td><code>unknown</code></td></tr>
+<tr><td class="alt">Type</td><td><code>shell-extension</code></td></tr>
 <tr><td class="alt">Name</td><td>Launch new instance</td></tr>
 <tr><td class="alt">Comment</td><td>GNOME Shell Extension</td></tr>
 <tr><td class="alt">Description</td><td><p>Always launch a new instance when clicking in the dash or the application view. This extension is part of Classic Mode and is officially supported by GNOME. Please do not report bugs using the form below, use GNOME Bugzilla instead.</p></td></tr>
@@ -2760,8 +2769,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-librecad" class="screenshots description">
-<a name="librecad"/><h2>librecad</h2>
+<div id="app-librecad.desktop" class="screenshots description">
+<a name="librecad.desktop"/><h2>librecad.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>LibreCAD</td></tr>
@@ -2774,8 +2783,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-liferea" class="screenshots description keywords">
-<a name="liferea"/><h2>liferea</h2>
+<div id="app-liferea.desktop" class="screenshots description keywords">
+<a name="liferea.desktop"/><h2>liferea.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Liferea</td></tr>
@@ -2789,8 +2798,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-lightsoff" class="screenshots description keywords gnome">
-<a name="lightsoff"/><h2>lightsoff</h2>
+<div id="app-lightsoff.desktop" class="screenshots description keywords gnome">
+<a name="lightsoff.desktop"/><h2>lightsoff.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Lights Off</td></tr>
@@ -2805,8 +2814,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-linphone" class="screenshots description">
-<a name="linphone"/><h2>linphone</h2>
+<div id="app-linphone.desktop" class="screenshots description">
+<a name="linphone.desktop"/><h2>linphone.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Linphone</td></tr>
@@ -2818,8 +2827,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-lollypop" class="screenshots description">
-<a name="lollypop"/><h2>lollypop</h2>
+<div id="app-lollypop.desktop" class="screenshots description">
+<a name="lollypop.desktop"/><h2>lollypop.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Lollypop</td></tr>
@@ -2832,8 +2841,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-mate-dictionary" class="screenshots description keywords">
-<a name="mate-dictionary"/><h2>mate-dictionary</h2>
+<div id="app-mate-dictionary.desktop" class="screenshots description keywords">
+<a name="mate-dictionary.desktop"/><h2>mate-dictionary.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>MATE Dictionary</td></tr>
@@ -2848,8 +2857,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-mate-disk-usage-analyzer" class="screenshots description keywords">
-<a name="mate-disk-usage-analyzer"/><h2>mate-disk-usage-analyzer</h2>
+<div id="app-mate-disk-usage-analyzer.desktop" class="screenshots description keywords">
+<a name="mate-disk-usage-analyzer.desktop"/><h2>mate-disk-usage-analyzer.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>MATE Disk Usage Analyzer</td></tr>
@@ -2864,8 +2873,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-mate-screenshot" class="screenshots description keywords">
-<a name="mate-screenshot"/><h2>mate-screenshot</h2>
+<div id="app-mate-screenshot.desktop" class="screenshots description keywords">
+<a name="mate-screenshot.desktop"/><h2>mate-screenshot.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>MATE Screenshot</td></tr>
@@ -2880,8 +2889,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-mate-search-tool" class="screenshots description keywords">
-<a name="mate-search-tool"/><h2>mate-search-tool</h2>
+<div id="app-mate-search-tool.desktop" class="screenshots description keywords">
+<a name="mate-search-tool.desktop"/><h2>mate-search-tool.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>MATE Search Tool</td></tr>
@@ -2896,8 +2905,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-mate-system-monitor" class="screenshots description keywords">
-<a name="mate-system-monitor"/><h2>mate-system-monitor</h2>
+<div id="app-mate-system-monitor.desktop" class="screenshots description keywords">
+<a name="mate-system-monitor.desktop"/><h2>mate-system-monitor.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>MATE System Monitor</td></tr>
@@ -2912,8 +2921,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-mate-terminal" class="screenshots description">
-<a name="mate-terminal"/><h2>mate-terminal</h2>
+<div id="app-mate-terminal.desktop" class="screenshots description">
+<a name="mate-terminal.desktop"/><h2>mate-terminal.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>MATE Terminal</td></tr>
@@ -2927,8 +2936,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-me.mitya57.ReText" class="screenshots keywords">
-<a name="me.mitya57.ReText"/><h2>me.mitya57.ReText</h2>
+<div id="app-me.mitya57.ReText.desktop" class="screenshots keywords">
+<a name="me.mitya57.ReText.desktop"/><h2>me.mitya57.ReText.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>ReText</td></tr>
@@ -2941,8 +2950,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-meld" class="screenshots description keywords gnome">
-<a name="meld"/><h2>meld</h2>
+<div id="app-meld.desktop" class="screenshots description keywords gnome">
+<a name="meld.desktop"/><h2>meld.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Meld</td></tr>
@@ -2957,8 +2966,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-midori" class="screenshots description">
-<a name="midori"/><h2>midori</h2>
+<div id="app-midori.desktop" class="screenshots description">
+<a name="midori.desktop"/><h2>midori.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Midori</td></tr>
@@ -2971,8 +2980,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-modem-manager-gui" class="screenshots description keywords">
-<a name="modem-manager-gui"/><h2>modem-manager-gui</h2>
+<div id="app-modem-manager-gui.desktop" class="screenshots description keywords">
+<a name="modem-manager-gui.desktop"/><h2>modem-manager-gui.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Modem Manager GUI</td></tr>
@@ -2986,8 +2995,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-nemiver" class="screenshots description keywords gnome">
-<a name="nemiver"/><h2>nemiver</h2>
+<div id="app-nemiver.desktop" class="screenshots description keywords gnome">
+<a name="nemiver.desktop"/><h2>nemiver.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Nemiver</td></tr>
@@ -3002,8 +3011,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-nip2" class="screenshots description">
-<a name="nip2"/><h2>nip2</h2>
+<div id="app-nip2.desktop" class="screenshots description">
+<a name="nip2.desktop"/><h2>nip2.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>nip2</td></tr>
@@ -3016,8 +3025,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-nm-connection-editor" class="screenshots description gnome">
-<a name="nm-connection-editor"/><h2>nm-connection-editor</h2>
+<div id="app-nm-connection-editor.desktop" class="screenshots description gnome">
+<a name="nm-connection-editor.desktop"/><h2>nm-connection-editor.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>NetworkManager</td></tr>
@@ -3031,8 +3040,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-nomacs" class="screenshots description">
-<a name="nomacs"/><h2>nomacs</h2>
+<div id="app-nomacs.desktop" class="screenshots description">
+<a name="nomacs.desktop"/><h2>nomacs.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Nomacs</td></tr>
@@ -3045,8 +3054,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.baedert.corebird" class="screenshots description keywords">
-<a name="org.baedert.corebird"/><h2>org.baedert.corebird</h2>
+<div id="app-org.baedert.corebird.desktop" class="screenshots description keywords">
+<a name="org.baedert.corebird.desktop"/><h2>org.baedert.corebird.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Corebird</td></tr>
@@ -3060,8 +3069,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Books" class="screenshots description keywords gnome">
-<a name="org.gnome.Books"/><h2>org.gnome.Books</h2>
+<div id="app-org.gnome.Books.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.Books.desktop"/><h2>org.gnome.Books.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Books</td></tr>
@@ -3076,8 +3085,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Boxes" class="screenshots description keywords gnome">
-<a name="org.gnome.Boxes"/><h2>org.gnome.Boxes</h2>
+<div id="app-org.gnome.Boxes.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.Boxes.desktop"/><h2>org.gnome.Boxes.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Boxes</td></tr>
@@ -3092,8 +3101,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Builder" class="screenshots description keywords gnome">
-<a name="org.gnome.Builder"/><h2>org.gnome.Builder</h2>
+<div id="app-org.gnome.Builder.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.Builder.desktop"/><h2>org.gnome.Builder.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Builder</td></tr>
@@ -3108,8 +3117,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Calendar" class="screenshots description keywords gnome">
-<a name="org.gnome.Calendar"/><h2>org.gnome.Calendar</h2>
+<div id="app-org.gnome.Calendar.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.Calendar.desktop"/><h2>org.gnome.Calendar.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Calendar</td></tr>
@@ -3124,8 +3133,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Characters" class="screenshots description keywords gnome">
-<a name="org.gnome.Characters"/><h2>org.gnome.Characters</h2>
+<div id="app-org.gnome.Characters.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.Characters.desktop"/><h2>org.gnome.Characters.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Characters</td></tr>
@@ -3141,8 +3150,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Cheese" class="screenshots description keywords gnome">
-<a name="org.gnome.Cheese"/><h2>org.gnome.Cheese</h2>
+<div id="app-org.gnome.Cheese.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.Cheese.desktop"/><h2>org.gnome.Cheese.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Cheese</td></tr>
@@ -3157,8 +3166,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Contacts" class="screenshots description keywords gnome">
-<a name="org.gnome.Contacts"/><h2>org.gnome.Contacts</h2>
+<div id="app-org.gnome.Contacts.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.Contacts.desktop"/><h2>org.gnome.Contacts.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Contacts</td></tr>
@@ -3173,8 +3182,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Devhelp" class="screenshots description keywords gnome">
-<a name="org.gnome.Devhelp"/><h2>org.gnome.Devhelp</h2>
+<div id="app-org.gnome.Devhelp.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.Devhelp.desktop"/><h2>org.gnome.Devhelp.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Devhelp</td></tr>
@@ -3189,8 +3198,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Dictionary" class="screenshots description keywords gnome">
-<a name="org.gnome.Dictionary"/><h2>org.gnome.Dictionary</h2>
+<div id="app-org.gnome.Dictionary.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.Dictionary.desktop"/><h2>org.gnome.Dictionary.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Dictionary</td></tr>
@@ -3205,8 +3214,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.DiskUtility" class="screenshots description keywords gnome">
-<a name="org.gnome.DiskUtility"/><h2>org.gnome.DiskUtility</h2>
+<div id="app-org.gnome.DiskUtility.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.DiskUtility.desktop"/><h2>org.gnome.DiskUtility.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Disks</td></tr>
@@ -3221,8 +3230,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Documents" class="screenshots description keywords gnome">
-<a name="org.gnome.Documents"/><h2>org.gnome.Documents</h2>
+<div id="app-org.gnome.Documents.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.Documents.desktop"/><h2>org.gnome.Documents.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Documents</td></tr>
@@ -3237,8 +3246,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.FileRoller" class="screenshots description keywords gnome">
-<a name="org.gnome.FileRoller"/><h2>org.gnome.FileRoller</h2>
+<div id="app-org.gnome.FileRoller.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.FileRoller.desktop"/><h2>org.gnome.FileRoller.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Archive Manager</td></tr>
@@ -3253,8 +3262,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.GPaste.Ui" class="screenshots description keywords gnome">
-<a name="org.gnome.GPaste.Ui"/><h2>org.gnome.GPaste.Ui</h2>
+<div id="app-org.gnome.GPaste.Ui.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.GPaste.Ui.desktop"/><h2>org.gnome.GPaste.Ui.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GPaste</td></tr>
@@ -3268,8 +3277,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Hitori" class="screenshots description keywords gnome">
-<a name="org.gnome.Hitori"/><h2>org.gnome.Hitori</h2>
+<div id="app-org.gnome.Hitori.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.Hitori.desktop"/><h2>org.gnome.Hitori.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Hitori</td></tr>
@@ -3284,8 +3293,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Logs" class="screenshots description keywords gnome">
-<a name="org.gnome.Logs"/><h2>org.gnome.Logs</h2>
+<div id="app-org.gnome.Logs.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.Logs.desktop"/><h2>org.gnome.Logs.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Logs</td></tr>
@@ -3300,8 +3309,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Maps" class="screenshots description keywords gnome">
-<a name="org.gnome.Maps"/><h2>org.gnome.Maps</h2>
+<div id="app-org.gnome.Maps.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.Maps.desktop"/><h2>org.gnome.Maps.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Maps</td></tr>
@@ -3316,8 +3325,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.MultiWriter" class="screenshots description keywords gnome">
-<a name="org.gnome.MultiWriter"/><h2>org.gnome.MultiWriter</h2>
+<div id="app-org.gnome.MultiWriter.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.MultiWriter.desktop"/><h2>org.gnome.MultiWriter.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>MultiWriter</td></tr>
@@ -3332,8 +3341,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Nautilus" class="description keywords gnome">
-<a name="org.gnome.Nautilus"/><h2>org.gnome.Nautilus</h2>
+<div id="app-org.gnome.Nautilus.desktop" class="description keywords gnome">
+<a name="org.gnome.Nautilus.desktop"/><h2>org.gnome.Nautilus.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Nautilus</td></tr>
@@ -3348,8 +3357,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.News" class="description keywords gnome">
-<a name="org.gnome.News"/><h2>org.gnome.News</h2>
+<div id="app-org.gnome.News.desktop" class="description keywords gnome">
+<a name="org.gnome.News.desktop"/><h2>org.gnome.News.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>News</td></tr>
@@ -3364,8 +3373,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Nibbles" class="screenshots description keywords gnome">
-<a name="org.gnome.Nibbles"/><h2>org.gnome.Nibbles</h2>
+<div id="app-org.gnome.Nibbles.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.Nibbles.desktop"/><h2>org.gnome.Nibbles.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Nibbles</td></tr>
@@ -3380,8 +3389,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Photos" class="screenshots description keywords gnome">
-<a name="org.gnome.Photos"/><h2>org.gnome.Photos</h2>
+<div id="app-org.gnome.Photos.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.Photos.desktop"/><h2>org.gnome.Photos.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Photos</td></tr>
@@ -3396,8 +3405,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Polari" class="screenshots description keywords gnome">
-<a name="org.gnome.Polari"/><h2>org.gnome.Polari</h2>
+<div id="app-org.gnome.Polari.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.Polari.desktop"/><h2>org.gnome.Polari.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Polari</td></tr>
@@ -3412,8 +3421,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Pomodoro" class="screenshots description keywords gnome">
-<a name="org.gnome.Pomodoro"/><h2>org.gnome.Pomodoro</h2>
+<div id="app-org.gnome.Pomodoro.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.Pomodoro.desktop"/><h2>org.gnome.Pomodoro.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Pomodoro</td></tr>
@@ -3428,8 +3437,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Screenshot" class="screenshots description keywords gnome">
-<a name="org.gnome.Screenshot"/><h2>org.gnome.Screenshot</h2>
+<div id="app-org.gnome.Screenshot.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.Screenshot.desktop"/><h2>org.gnome.Screenshot.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Screenshot</td></tr>
@@ -3444,8 +3453,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Software" class="screenshots description keywords gnome">
-<a name="org.gnome.Software"/><h2>org.gnome.Software</h2>
+<div id="app-org.gnome.Software.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.Software.desktop"/><h2>org.gnome.Software.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Software</td></tr>
@@ -3461,8 +3470,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.SoundRecorder" class="screenshots description keywords gnome">
-<a name="org.gnome.SoundRecorder"/><h2>org.gnome.SoundRecorder</h2>
+<div id="app-org.gnome.SoundRecorder.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.SoundRecorder.desktop"/><h2>org.gnome.SoundRecorder.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Sound Recorder</td></tr>
@@ -3477,11 +3486,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Terminal" class="description gnome">
-<a name="org.gnome.Terminal"/><h2>org.gnome.Terminal</h2>
+<div id="app-org.gnome.Terminal.Nautilus" class="description gnome addon">
+<a name="org.gnome.Terminal.Nautilus"/><h2>org.gnome.Terminal.Nautilus</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#org.gnome.Nautilus">org.gnome.Nautilus</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#org.gnome.Nautilus.desktop">org.gnome.Nautilus</a></td></tr>
 <tr><td class="alt">Name</td><td>Terminal plugin for Files</td></tr>
 <tr><td class="alt">Comment</td><td>Open a terminal from Files</td></tr>
 <tr><td class="alt">Description</td><td><p>Open Terminal is a plugin for the Files application that adds a menu item to the context menu to open a terminal in the currently browsed directory.</p></td></tr>
@@ -3491,8 +3500,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Terminal" class="screenshots description keywords gnome">
-<a name="org.gnome.Terminal"/><h2>org.gnome.Terminal</h2>
+<div id="app-org.gnome.Terminal.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.Terminal.desktop"/><h2>org.gnome.Terminal.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Terminal</td></tr>
@@ -3507,8 +3516,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Todo" class="description keywords gnome">
-<a name="org.gnome.Todo"/><h2>org.gnome.Todo</h2>
+<div id="app-org.gnome.Todo.desktop" class="description keywords gnome">
+<a name="org.gnome.Todo.desktop"/><h2>org.gnome.Todo.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>To Do</td></tr>
@@ -3523,8 +3532,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Totem" class="screenshots description keywords gnome">
-<a name="org.gnome.Totem"/><h2>org.gnome.Totem</h2>
+<div id="app-org.gnome.Totem.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.Totem.desktop"/><h2>org.gnome.Totem.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Videos</td></tr>
@@ -3540,8 +3549,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.Weather.Application" class="screenshots description keywords gnome">
-<a name="org.gnome.Weather.Application"/><h2>org.gnome.Weather.Application</h2>
+<div id="app-org.gnome.Weather.Application.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.Weather.Application.desktop"/><h2>org.gnome.Weather.Application.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Weather</td></tr>
@@ -3556,8 +3565,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.baobab" class="screenshots description keywords gnome">
-<a name="org.gnome.baobab"/><h2>org.gnome.baobab</h2>
+<div id="app-org.gnome.baobab.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.baobab.desktop"/><h2>org.gnome.baobab.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Disk Usage Analyzer</td></tr>
@@ -3573,8 +3582,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.bijiben" class="screenshots description keywords gnome">
-<a name="org.gnome.bijiben"/><h2>org.gnome.bijiben</h2>
+<div id="app-org.gnome.bijiben.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.bijiben.desktop"/><h2>org.gnome.bijiben.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Bijiben</td></tr>
@@ -3589,8 +3598,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.clocks" class="screenshots description keywords gnome">
-<a name="org.gnome.clocks"/><h2>org.gnome.clocks</h2>
+<div id="app-org.gnome.clocks.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.clocks.desktop"/><h2>org.gnome.clocks.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Clocks</td></tr>
@@ -3605,8 +3614,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.font-viewer" class="screenshots description keywords gnome">
-<a name="org.gnome.font-viewer"/><h2>org.gnome.font-viewer</h2>
+<div id="app-org.gnome.font-viewer.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.font-viewer.desktop"/><h2>org.gnome.font-viewer.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Font Viewer</td></tr>
@@ -3622,8 +3631,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.gedit" class="screenshots description keywords gnome">
-<a name="org.gnome.gedit"/><h2>org.gnome.gedit</h2>
+<div id="app-org.gnome.gedit.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.gedit.desktop"/><h2>org.gnome.gedit.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Text Editor</td></tr>
@@ -3639,8 +3648,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.gnome-2048" class="screenshots description keywords gnome">
-<a name="org.gnome.gnome-2048"/><h2>org.gnome.gnome-2048</h2>
+<div id="app-org.gnome.gnome-2048.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.gnome-2048.desktop"/><h2>org.gnome.gnome-2048.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME 2048</td></tr>
@@ -3655,8 +3664,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.latexila" class="screenshots description keywords gnome">
-<a name="org.gnome.latexila"/><h2>org.gnome.latexila</h2>
+<div id="app-org.gnome.latexila.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.latexila.desktop"/><h2>org.gnome.latexila.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>LaTeXila</td></tr>
@@ -3671,8 +3680,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.gnome.taquin" class="screenshots description keywords gnome">
-<a name="org.gnome.taquin"/><h2>org.gnome.taquin</h2>
+<div id="app-org.gnome.taquin.desktop" class="screenshots description keywords gnome">
+<a name="org.gnome.taquin.desktop"/><h2>org.gnome.taquin.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNOME Taquin</td></tr>
@@ -3687,8 +3696,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.holylobster.nuntius" class="screenshots description keywords">
-<a name="org.holylobster.nuntius"/><h2>org.holylobster.nuntius</h2>
+<div id="app-org.holylobster.nuntius.desktop" class="screenshots description keywords">
+<a name="org.holylobster.nuntius.desktop"/><h2>org.holylobster.nuntius.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Nuntius</td></tr>
@@ -3702,8 +3711,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.akregator" class="screenshots description kde">
-<a name="org.kde.akregator"/><h2>org.kde.akregator</h2>
+<div id="app-org.kde.akregator.desktop" class="screenshots description kde">
+<a name="org.kde.akregator.desktop"/><h2>org.kde.akregator.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Akregator</td></tr>
@@ -3717,8 +3726,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.ark" class="screenshots description kde">
-<a name="org.kde.ark"/><h2>org.kde.ark</h2>
+<div id="app-org.kde.ark.desktop" class="screenshots description kde">
+<a name="org.kde.ark.desktop"/><h2>org.kde.ark.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Ark</td></tr>
@@ -3732,8 +3741,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.artikulate" class="screenshots description kde">
-<a name="org.kde.artikulate"/><h2>org.kde.artikulate</h2>
+<div id="app-org.kde.artikulate.desktop" class="screenshots description kde">
+<a name="org.kde.artikulate.desktop"/><h2>org.kde.artikulate.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Artikulate</td></tr>
@@ -3747,8 +3756,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.blinken" class="screenshots description kde">
-<a name="org.kde.blinken"/><h2>org.kde.blinken</h2>
+<div id="app-org.kde.blinken.desktop" class="screenshots description kde">
+<a name="org.kde.blinken.desktop"/><h2>org.kde.blinken.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Blinken</td></tr>
@@ -3762,8 +3771,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.blogilo" class="screenshots description kde">
-<a name="org.kde.blogilo"/><h2>org.kde.blogilo</h2>
+<div id="app-org.kde.blogilo.desktop" class="screenshots description kde">
+<a name="org.kde.blogilo.desktop"/><h2>org.kde.blogilo.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Blogilo</td></tr>
@@ -3777,8 +3786,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.cantor" class="screenshots description kde">
-<a name="org.kde.cantor"/><h2>org.kde.cantor</h2>
+<div id="app-org.kde.cantor.desktop" class="screenshots description kde">
+<a name="org.kde.cantor.desktop"/><h2>org.kde.cantor.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Cantor</td></tr>
@@ -3792,8 +3801,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.dolphin" class="screenshots description kde">
-<a name="org.kde.dolphin"/><h2>org.kde.dolphin</h2>
+<div id="app-org.kde.dolphin.desktop" class="screenshots description kde">
+<a name="org.kde.dolphin.desktop"/><h2>org.kde.dolphin.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Dolphin</td></tr>
@@ -3807,8 +3816,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.granatier" class="screenshots description kde">
-<a name="org.kde.granatier"/><h2>org.kde.granatier</h2>
+<div id="app-org.kde.granatier.desktop" class="screenshots description kde">
+<a name="org.kde.granatier.desktop"/><h2>org.kde.granatier.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Granatier</td></tr>
@@ -3822,8 +3831,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.gwenview" class="screenshots description kde">
-<a name="org.kde.gwenview"/><h2>org.kde.gwenview</h2>
+<div id="app-org.kde.gwenview.desktop" class="screenshots description kde">
+<a name="org.kde.gwenview.desktop"/><h2>org.kde.gwenview.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Gwenview</td></tr>
@@ -3837,8 +3846,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.kalarm" class="screenshots description kde">
-<a name="org.kde.kalarm"/><h2>org.kde.kalarm</h2>
+<div id="app-org.kde.kalarm.desktop" class="screenshots description kde">
+<a name="org.kde.kalarm.desktop"/><h2>org.kde.kalarm.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KAlarm</td></tr>
@@ -3852,8 +3861,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.kalgebra" class="screenshots description kde">
-<a name="org.kde.kalgebra"/><h2>org.kde.kalgebra</h2>
+<div id="app-org.kde.kalgebra.desktop" class="screenshots description kde">
+<a name="org.kde.kalgebra.desktop"/><h2>org.kde.kalgebra.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KAlgebra</td></tr>
@@ -3867,8 +3876,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.kanagram" class="screenshots description kde">
-<a name="org.kde.kanagram"/><h2>org.kde.kanagram</h2>
+<div id="app-org.kde.kanagram.desktop" class="screenshots description kde">
+<a name="org.kde.kanagram.desktop"/><h2>org.kde.kanagram.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Kanagram</td></tr>
@@ -3882,8 +3891,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.kapman" class="screenshots description kde">
-<a name="org.kde.kapman"/><h2>org.kde.kapman</h2>
+<div id="app-org.kde.kapman.desktop" class="screenshots description kde">
+<a name="org.kde.kapman.desktop"/><h2>org.kde.kapman.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Kapman</td></tr>
@@ -3897,8 +3906,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.kate" class="screenshots description kde">
-<a name="org.kde.kate"/><h2>org.kde.kate</h2>
+<div id="app-org.kde.kate.desktop" class="screenshots description kde">
+<a name="org.kde.kate.desktop"/><h2>org.kde.kate.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Kate</td></tr>
@@ -3912,8 +3921,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.katomic" class="screenshots description kde">
-<a name="org.kde.katomic"/><h2>org.kde.katomic</h2>
+<div id="app-org.kde.katomic.desktop" class="screenshots description kde">
+<a name="org.kde.katomic.desktop"/><h2>org.kde.katomic.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KAtomic</td></tr>
@@ -3927,8 +3936,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.kblackbox" class="screenshots description kde">
-<a name="org.kde.kblackbox"/><h2>org.kde.kblackbox</h2>
+<div id="app-org.kde.kblackbox.desktop" class="screenshots description kde">
+<a name="org.kde.kblackbox.desktop"/><h2>org.kde.kblackbox.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KBlackbox</td></tr>
@@ -3942,8 +3951,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.kblocks" class="screenshots description kde">
-<a name="org.kde.kblocks"/><h2>org.kde.kblocks</h2>
+<div id="app-org.kde.kblocks.desktop" class="screenshots description kde">
+<a name="org.kde.kblocks.desktop"/><h2>org.kde.kblocks.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KBlocks</td></tr>
@@ -3957,8 +3966,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.kbruch" class="screenshots description kde">
-<a name="org.kde.kbruch"/><h2>org.kde.kbruch</h2>
+<div id="app-org.kde.kbruch.desktop" class="screenshots description kde">
+<a name="org.kde.kbruch.desktop"/><h2>org.kde.kbruch.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KBruch</td></tr>
@@ -3972,8 +3981,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.kdenlive" class="screenshots description keywords kde">
-<a name="org.kde.kdenlive"/><h2>org.kde.kdenlive</h2>
+<div id="app-org.kde.kdenlive.desktop" class="screenshots description keywords kde">
+<a name="org.kde.kdenlive.desktop"/><h2>org.kde.kdenlive.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Kdenlive</td></tr>
@@ -3988,8 +3997,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.khangman" class="screenshots description kde">
-<a name="org.kde.khangman"/><h2>org.kde.khangman</h2>
+<div id="app-org.kde.khangman.desktop" class="screenshots description kde">
+<a name="org.kde.khangman.desktop"/><h2>org.kde.khangman.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KHangMan</td></tr>
@@ -4003,8 +4012,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.kig" class="screenshots description kde">
-<a name="org.kde.kig"/><h2>org.kde.kig</h2>
+<div id="app-org.kde.kig.desktop" class="screenshots description kde">
+<a name="org.kde.kig.desktop"/><h2>org.kde.kig.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Kig</td></tr>
@@ -4018,8 +4027,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.kiriki" class="screenshots description kde">
-<a name="org.kde.kiriki"/><h2>org.kde.kiriki</h2>
+<div id="app-org.kde.kiriki.desktop" class="screenshots description kde">
+<a name="org.kde.kiriki.desktop"/><h2>org.kde.kiriki.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Kiriki</td></tr>
@@ -4033,8 +4042,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.kiten" class="screenshots description kde">
-<a name="org.kde.kiten"/><h2>org.kde.kiten</h2>
+<div id="app-org.kde.kiten.desktop" class="screenshots description kde">
+<a name="org.kde.kiten.desktop"/><h2>org.kde.kiten.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Kiten</td></tr>
@@ -4048,8 +4057,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.klettres" class="screenshots description kde">
-<a name="org.kde.klettres"/><h2>org.kde.klettres</h2>
+<div id="app-org.kde.klettres.desktop" class="screenshots description kde">
+<a name="org.kde.klettres.desktop"/><h2>org.kde.klettres.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KLettres</td></tr>
@@ -4063,8 +4072,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.kmail" class="screenshots description kde">
-<a name="org.kde.kmail"/><h2>org.kde.kmail</h2>
+<div id="app-org.kde.kmail.desktop" class="screenshots description kde">
+<a name="org.kde.kmail.desktop"/><h2>org.kde.kmail.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KMail</td></tr>
@@ -4078,8 +4087,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.kollision" class="screenshots description kde">
-<a name="org.kde.kollision"/><h2>org.kde.kollision</h2>
+<div id="app-org.kde.kollision.desktop" class="screenshots description kde">
+<a name="org.kde.kollision.desktop"/><h2>org.kde.kollision.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Kollision</td></tr>
@@ -4093,8 +4102,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.konsole" class="screenshots description kde">
-<a name="org.kde.konsole"/><h2>org.kde.konsole</h2>
+<div id="app-org.kde.konsole.desktop" class="screenshots description kde">
+<a name="org.kde.konsole.desktop"/><h2>org.kde.konsole.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Konsole</td></tr>
@@ -4108,8 +4117,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.korganizer" class="screenshots description kde">
-<a name="org.kde.korganizer"/><h2>org.kde.korganizer</h2>
+<div id="app-org.kde.korganizer.desktop" class="screenshots description kde">
+<a name="org.kde.korganizer.desktop"/><h2>org.kde.korganizer.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KOrganizer</td></tr>
@@ -4123,8 +4132,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.kshisen" class="screenshots description kde">
-<a name="org.kde.kshisen"/><h2>org.kde.kshisen</h2>
+<div id="app-org.kde.kshisen.desktop" class="screenshots description kde">
+<a name="org.kde.kshisen.desktop"/><h2>org.kde.kshisen.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KShisen</td></tr>
@@ -4138,8 +4147,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.kstars" class="screenshots description kde">
-<a name="org.kde.kstars"/><h2>org.kde.kstars</h2>
+<div id="app-org.kde.kstars.desktop" class="screenshots description kde">
+<a name="org.kde.kstars.desktop"/><h2>org.kde.kstars.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KStars</td></tr>
@@ -4153,8 +4162,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.kteatime" class="screenshots description kde">
-<a name="org.kde.kteatime"/><h2>org.kde.kteatime</h2>
+<div id="app-org.kde.kteatime.desktop" class="screenshots description kde">
+<a name="org.kde.kteatime.desktop"/><h2>org.kde.kteatime.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KTeaTime</td></tr>
@@ -4167,8 +4176,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.kturtle" class="screenshots description kde">
-<a name="org.kde.kturtle"/><h2>org.kde.kturtle</h2>
+<div id="app-org.kde.kturtle.desktop" class="screenshots description kde">
+<a name="org.kde.kturtle.desktop"/><h2>org.kde.kturtle.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KTurtle</td></tr>
@@ -4182,8 +4191,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.kwordquiz" class="screenshots description kde">
-<a name="org.kde.kwordquiz"/><h2>org.kde.kwordquiz</h2>
+<div id="app-org.kde.kwordquiz.desktop" class="screenshots description kde">
+<a name="org.kde.kwordquiz.desktop"/><h2>org.kde.kwordquiz.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KWordQuiz</td></tr>
@@ -4197,8 +4206,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.kwrite" class="screenshots description kde">
-<a name="org.kde.kwrite"/><h2>org.kde.kwrite</h2>
+<div id="app-org.kde.kwrite.desktop" class="screenshots description kde">
+<a name="org.kde.kwrite.desktop"/><h2>org.kde.kwrite.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KWrite</td></tr>
@@ -4212,8 +4221,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.okteta" class="screenshots description kde">
-<a name="org.kde.okteta"/><h2>org.kde.okteta</h2>
+<div id="app-org.kde.okteta.desktop" class="screenshots description kde">
+<a name="org.kde.okteta.desktop"/><h2>org.kde.okteta.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Okteta</td></tr>
@@ -4227,8 +4236,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.parley" class="screenshots description kde">
-<a name="org.kde.parley"/><h2>org.kde.parley</h2>
+<div id="app-org.kde.parley.desktop" class="screenshots description kde">
+<a name="org.kde.parley.desktop"/><h2>org.kde.parley.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Parley</td></tr>
@@ -4242,8 +4251,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.picmi" class="screenshots description kde">
-<a name="org.kde.picmi"/><h2>org.kde.picmi</h2>
+<div id="app-org.kde.picmi.desktop" class="screenshots description kde">
+<a name="org.kde.picmi.desktop"/><h2>org.kde.picmi.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>picmi</td></tr>
@@ -4257,8 +4266,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.rocs" class="screenshots description kde">
-<a name="org.kde.rocs"/><h2>org.kde.rocs</h2>
+<div id="app-org.kde.rocs.desktop" class="screenshots description kde">
+<a name="org.kde.rocs.desktop"/><h2>org.kde.rocs.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Rocs</td></tr>
@@ -4272,8 +4281,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-org.kde.step" class="screenshots description kde">
-<a name="org.kde.step"/><h2>org.kde.step</h2>
+<div id="app-org.kde.step.desktop" class="screenshots description kde">
+<a name="org.kde.step.desktop"/><h2>org.kde.step.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Step</td></tr>
@@ -4287,8 +4296,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-paraview" class="screenshots description">
-<a name="paraview"/><h2>paraview</h2>
+<div id="app-paraview.desktop" class="screenshots description">
+<a name="paraview.desktop"/><h2>paraview.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>ParaView</td></tr>
@@ -4300,8 +4309,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-pcb" class="screenshots description">
-<a name="pcb"/><h2>pcb</h2>
+<div id="app-pcb.desktop" class="screenshots description">
+<a name="pcb.desktop"/><h2>pcb.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>PCB Designer</td></tr>
@@ -4314,8 +4323,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-pidgin" class="screenshots description">
-<a name="pidgin"/><h2>pidgin</h2>
+<div id="app-pidgin.desktop" class="screenshots description">
+<a name="pidgin.desktop"/><h2>pidgin.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Pidgin</td></tr>
@@ -4328,8 +4337,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-pithos" class="screenshots description">
-<a name="pithos"/><h2>pithos</h2>
+<div id="app-pithos.desktop" class="screenshots description">
+<a name="pithos.desktop"/><h2>pithos.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Pithos</td></tr>
@@ -4342,8 +4351,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-pitivi" class="screenshots description gnome">
-<a name="pitivi"/><h2>pitivi</h2>
+<div id="app-pitivi.desktop" class="screenshots description gnome">
+<a name="pitivi.desktop"/><h2>pitivi.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Pitivi</td></tr>
@@ -4357,10 +4366,10 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-places-menu@gnome-shell-extensions.gcampax.github.com" class="description">
-<a name="places-menu@gnome-shell-extensions.gcampax.github.com"/><h2>places-menu@gnome-shell-extensions.gcampax.github.com</h2>
+<div id="app-places-menu@gnome-shell-extensions.gcampax.github.com.shell-extension" class="description">
+<a name="places-menu@gnome-shell-extensions.gcampax.github.com.shell-extension"/><h2>places-menu@gnome-shell-extensions.gcampax.github.com.shell-extension</h2>
 <table class="app">
-<tr><td class="alt">Type</td><td><code>unknown</code></td></tr>
+<tr><td class="alt">Type</td><td><code>shell-extension</code></td></tr>
 <tr><td class="alt">Name</td><td>Places Status Indicator</td></tr>
 <tr><td class="alt">Comment</td><td>GNOME Shell Extension</td></tr>
 <tr><td class="alt">Description</td><td><p>Add a menu for quickly navigating places in the system. This extension is part of Classic Mode and is officially supported by GNOME. Please do not report bugs using the form below, use GNOME Bugzilla instead.</p></td></tr>
@@ -4370,8 +4379,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-plan" class="screenshots description kde">
-<a name="plan"/><h2>plan</h2>
+<div id="app-plan.desktop" class="screenshots description kde">
+<a name="plan.desktop"/><h2>plan.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Plan</td></tr>
@@ -4385,8 +4394,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-plank" class="screenshots description">
-<a name="plank"/><h2>plank</h2>
+<div id="app-plank.desktop" class="screenshots description">
+<a name="plank.desktop"/><h2>plank.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Plank</td></tr>
@@ -4399,8 +4408,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-pluma" class="screenshots description keywords">
-<a name="pluma"/><h2>pluma</h2>
+<div id="app-pluma.desktop" class="screenshots description keywords">
+<a name="pluma.desktop"/><h2>pluma.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Pluma</td></tr>
@@ -4415,10 +4424,10 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-pomodoro@arun.codito.in" class="description">
-<a name="pomodoro@arun.codito.in"/><h2>pomodoro@arun.codito.in</h2>
+<div id="app-pomodoro@arun.codito.in.shell-extension" class="description">
+<a name="pomodoro@arun.codito.in.shell-extension"/><h2>pomodoro@arun.codito.in.shell-extension</h2>
 <table class="app">
-<tr><td class="alt">Type</td><td><code>unknown</code></td></tr>
+<tr><td class="alt">Type</td><td><code>shell-extension</code></td></tr>
 <tr><td class="alt">Name</td><td>Pomodoro</td></tr>
 <tr><td class="alt">Comment</td><td>GNOME Shell Extension</td></tr>
 <tr><td class="alt">Description</td><td><p>A simple pomodoro timer</p></td></tr>
@@ -4428,8 +4437,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-pragha" class="screenshots description">
-<a name="pragha"/><h2>pragha</h2>
+<div id="app-pragha.desktop" class="screenshots description">
+<a name="pragha.desktop"/><h2>pragha.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Pragha Mucic Player</td></tr>
@@ -4442,8 +4451,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-pspp" class="screenshots description">
-<a name="pspp"/><h2>pspp</h2>
+<div id="app-pspp.desktop" class="screenshots description">
+<a name="pspp.desktop"/><h2>pspp.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GNU PSPP</td></tr>
@@ -4456,8 +4465,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-pybliographic" class="screenshots description">
-<a name="pybliographic"/><h2>pybliographic</h2>
+<div id="app-pybliographic.desktop" class="screenshots description">
+<a name="pybliographic.desktop"/><h2>pybliographic.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Pybliographer</td></tr>
@@ -4469,8 +4478,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-qBittorrent" class="screenshots description">
-<a name="qBittorrent"/><h2>qBittorrent</h2>
+<div id="app-qBittorrent.desktop" class="screenshots description">
+<a name="qBittorrent.desktop"/><h2>qBittorrent.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>qBittorrent</td></tr>
@@ -4483,8 +4492,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-qelectrotech" class="screenshots description keywords">
-<a name="qelectrotech"/><h2>qelectrotech</h2>
+<div id="app-qelectrotech.desktop" class="screenshots description keywords">
+<a name="qelectrotech.desktop"/><h2>qelectrotech.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>QElectroTech</td></tr>
@@ -4498,8 +4507,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-qjackctl" class="screenshots description">
-<a name="qjackctl"/><h2>qjackctl</h2>
+<div id="app-qjackctl.desktop" class="screenshots description">
+<a name="qjackctl.desktop"/><h2>qjackctl.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>QjackCtl</td></tr>
@@ -4511,8 +4520,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-qpdfview" class="screenshots description keywords">
-<a name="qpdfview"/><h2>qpdfview</h2>
+<div id="app-qpdfview.desktop" class="screenshots description keywords">
+<a name="qpdfview.desktop"/><h2>qpdfview.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>qpdfview</td></tr>
@@ -4526,8 +4535,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-qtractor" class="screenshots description keywords">
-<a name="qtractor"/><h2>qtractor</h2>
+<div id="app-qtractor.desktop" class="screenshots description keywords">
+<a name="qtractor.desktop"/><h2>qtractor.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Qtractor</td></tr>
@@ -4541,8 +4550,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-quadrapassel" class="screenshots description keywords gnome">
-<a name="quadrapassel"/><h2>quadrapassel</h2>
+<div id="app-quadrapassel.desktop" class="screenshots description keywords gnome">
+<a name="quadrapassel.desktop"/><h2>quadrapassel.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Quadrapassel</td></tr>
@@ -4557,8 +4566,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-qupzilla" class="screenshots description">
-<a name="qupzilla"/><h2>qupzilla</h2>
+<div id="app-qupzilla.desktop" class="screenshots description">
+<a name="qupzilla.desktop"/><h2>qupzilla.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>QupZilla</td></tr>
@@ -4571,8 +4580,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-rapid-photo-downloader" class="screenshots description">
-<a name="rapid-photo-downloader"/><h2>rapid-photo-downloader</h2>
+<div id="app-rapid-photo-downloader.desktop" class="screenshots description">
+<a name="rapid-photo-downloader.desktop"/><h2>rapid-photo-downloader.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Rapid Photo Downloader</td></tr>
@@ -4585,8 +4594,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-rawstudio" class="screenshots description">
-<a name="rawstudio"/><h2>rawstudio</h2>
+<div id="app-rawstudio.desktop" class="screenshots description">
+<a name="rawstudio.desktop"/><h2>rawstudio.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Rawstudio</td></tr>
@@ -4599,8 +4608,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-redshift-gtk" class="screenshots description">
-<a name="redshift-gtk"/><h2>redshift-gtk</h2>
+<div id="app-redshift-gtk.desktop" class="screenshots description">
+<a name="redshift-gtk.desktop"/><h2>redshift-gtk.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Redshift</td></tr>
@@ -4613,8 +4622,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-rhythmbox" class="screenshots description keywords gnome">
-<a name="rhythmbox"/><h2>rhythmbox</h2>
+<div id="app-rhythmbox.desktop" class="screenshots description keywords gnome">
+<a name="rhythmbox.desktop"/><h2>rhythmbox.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Rhythmbox</td></tr>
@@ -4629,8 +4638,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-ristretto" class="screenshots description xfce">
-<a name="ristretto"/><h2>ristretto</h2>
+<div id="app-ristretto.desktop" class="screenshots description xfce">
+<a name="ristretto.desktop"/><h2>ristretto.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Ristretto</td></tr>
@@ -4644,8 +4653,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-rosegarden" class="screenshots description">
-<a name="rosegarden"/><h2>rosegarden</h2>
+<div id="app-rosegarden.desktop" class="screenshots description">
+<a name="rosegarden.desktop"/><h2>rosegarden.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Rosegarden</td></tr>
@@ -4658,8 +4667,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-scilab" class="screenshots description">
-<a name="scilab"/><h2>scilab</h2>
+<div id="app-scilab.desktop" class="screenshots description">
+<a name="scilab.desktop"/><h2>scilab.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Scilab</td></tr>
@@ -4672,8 +4681,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-seahorse" class="description keywords gnome">
-<a name="seahorse"/><h2>seahorse</h2>
+<div id="app-seahorse.desktop" class="description keywords gnome">
+<a name="seahorse.desktop"/><h2>seahorse.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Seahorse</td></tr>
@@ -4688,8 +4697,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-sheets" class="screenshots description kde">
-<a name="sheets"/><h2>sheets</h2>
+<div id="app-sheets.desktop" class="screenshots description kde">
+<a name="sheets.desktop"/><h2>sheets.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Sheets</td></tr>
@@ -4703,8 +4712,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-shotwell" class="screenshots description keywords gnome">
-<a name="shotwell"/><h2>shotwell</h2>
+<div id="app-shotwell.desktop" class="screenshots description keywords gnome">
+<a name="shotwell.desktop"/><h2>shotwell.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Shotwell</td></tr>
@@ -4719,8 +4728,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-showfoto" class="screenshots description kde">
-<a name="showfoto"/><h2>showfoto</h2>
+<div id="app-showfoto.desktop" class="screenshots description kde">
+<a name="showfoto.desktop"/><h2>showfoto.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Showfoto</td></tr>
@@ -4734,8 +4743,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-simple-ccsm" class="description">
-<a name="simple-ccsm"/><h2>simple-ccsm</h2>
+<div id="app-simple-ccsm.desktop" class="description">
+<a name="simple-ccsm.desktop"/><h2>simple-ccsm.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Desktop Effects</td></tr>
@@ -4747,8 +4756,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-simple-scan" class="screenshots description keywords">
-<a name="simple-scan"/><h2>simple-scan</h2>
+<div id="app-simple-scan.desktop" class="screenshots description keywords">
+<a name="simple-scan.desktop"/><h2>simple-scan.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Simple Scan</td></tr>
@@ -4762,8 +4771,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-smb4k" class="screenshots description">
-<a name="smb4k"/><h2>smb4k</h2>
+<div id="app-smb4k.desktop" class="screenshots description">
+<a name="smb4k.desktop"/><h2>smb4k.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Smb4K</td></tr>
@@ -4776,8 +4785,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-smuxi-frontend-gnome" class="screenshots description keywords">
-<a name="smuxi-frontend-gnome"/><h2>smuxi-frontend-gnome</h2>
+<div id="app-smuxi-frontend-gnome.desktop" class="screenshots description keywords">
+<a name="smuxi-frontend-gnome.desktop"/><h2>smuxi-frontend-gnome.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Smuxi</td></tr>
@@ -4791,8 +4800,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-sol" class="screenshots description keywords gnome">
-<a name="sol"/><h2>sol</h2>
+<div id="app-sol.desktop" class="screenshots description keywords gnome">
+<a name="sol.desktop"/><h2>sol.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Aisleriot Solitaire</td></tr>
@@ -4807,8 +4816,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-sound-juicer" class="screenshots description keywords gnome">
-<a name="sound-juicer"/><h2>sound-juicer</h2>
+<div id="app-sound-juicer.desktop" class="screenshots description keywords gnome">
+<a name="sound-juicer.desktop"/><h2>sound-juicer.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Sound Juicer</td></tr>
@@ -4823,8 +4832,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-sqlitebrowser" class="screenshots description">
-<a name="sqlitebrowser"/><h2>sqlitebrowser</h2>
+<div id="app-sqlitebrowser.desktop" class="screenshots description">
+<a name="sqlitebrowser.desktop"/><h2>sqlitebrowser.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>DB Browser for SQLite</td></tr>
@@ -4837,8 +4846,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-stage" class="screenshots description kde">
-<a name="stage"/><h2>stage</h2>
+<div id="app-stage.desktop" class="screenshots description kde">
+<a name="stage.desktop"/><h2>stage.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Stage</td></tr>
@@ -4852,8 +4861,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-stellarium" class="screenshots description">
-<a name="stellarium"/><h2>stellarium</h2>
+<div id="app-stellarium.desktop" class="screenshots description">
+<a name="stellarium.desktop"/><h2>stellarium.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Stellarium</td></tr>
@@ -4866,8 +4875,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-supertuxkart" class="screenshots description">
-<a name="supertuxkart"/><h2>supertuxkart</h2>
+<div id="app-supertuxkart.desktop" class="screenshots description">
+<a name="supertuxkart.desktop"/><h2>supertuxkart.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>SuperTuxKart</td></tr>
@@ -4880,8 +4889,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-swell-foop" class="screenshots description keywords gnome">
-<a name="swell-foop"/><h2>swell-foop</h2>
+<div id="app-swell-foop.desktop" class="screenshots description keywords gnome">
+<a name="swell-foop.desktop"/><h2>swell-foop.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Swell Foop</td></tr>
@@ -4896,8 +4905,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-system-config-printer" class="screenshots description">
-<a name="system-config-printer"/><h2>system-config-printer</h2>
+<div id="app-system-config-printer.desktop" class="screenshots description">
+<a name="system-config-printer.desktop"/><h2>system-config-printer.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Print Settings</td></tr>
@@ -4910,8 +4919,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-tali" class="screenshots description keywords gnome">
-<a name="tali"/><h2>tali</h2>
+<div id="app-tali.desktop" class="screenshots description keywords gnome">
+<a name="tali.desktop"/><h2>tali.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Tali</td></tr>
@@ -4926,8 +4935,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-tellico" class="screenshots description kde">
-<a name="tellico"/><h2>tellico</h2>
+<div id="app-tellico.desktop" class="screenshots description kde">
+<a name="tellico.desktop"/><h2>tellico.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Tellico</td></tr>
@@ -4941,8 +4950,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-terminator" class="screenshots description">
-<a name="terminator"/><h2>terminator</h2>
+<div id="app-terminator.desktop" class="screenshots description">
+<a name="terminator.desktop"/><h2>terminator.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Terminator</td></tr>
@@ -4955,8 +4964,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-texstudio" class="screenshots description keywords">
-<a name="texstudio"/><h2>texstudio</h2>
+<div id="app-texstudio.desktop" class="screenshots description keywords">
+<a name="texstudio.desktop"/><h2>texstudio.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>TeXstudio</td></tr>
@@ -4970,8 +4979,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-texworks" class="screenshots description">
-<a name="texworks"/><h2>texworks</h2>
+<div id="app-texworks.desktop" class="screenshots description">
+<a name="texworks.desktop"/><h2>texworks.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>TeXworks</td></tr>
@@ -4984,8 +4993,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-thunar" class="screenshots description xfce">
-<a name="thunar"/><h2>thunar</h2>
+<div id="app-thunar.desktop" class="screenshots description xfce">
+<a name="thunar.desktop"/><h2>thunar.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Thunar File Manager</td></tr>
@@ -4999,8 +5008,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-tilda" class="screenshots description">
-<a name="tilda"/><h2>tilda</h2>
+<div id="app-tilda.desktop" class="screenshots description">
+<a name="tilda.desktop"/><h2>tilda.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Tilda</td></tr>
@@ -5013,8 +5022,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-torbrowser" class="screenshots description">
-<a name="torbrowser"/><h2>torbrowser</h2>
+<div id="app-torbrowser.desktop" class="screenshots description">
+<a name="torbrowser.desktop"/><h2>torbrowser.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Tor Browser Launcher</td></tr>
@@ -5027,8 +5036,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-tracker-needle" class="screenshots description gnome">
-<a name="tracker-needle"/><h2>tracker-needle</h2>
+<div id="app-tracker-needle.desktop" class="screenshots description gnome">
+<a name="tracker-needle.desktop"/><h2>tracker-needle.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Desktop Search</td></tr>
@@ -5042,8 +5051,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-tracker-preferences" class="screenshots description gnome">
-<a name="tracker-preferences"/><h2>tracker-preferences</h2>
+<div id="app-tracker-preferences.desktop" class="screenshots description gnome">
+<a name="tracker-preferences.desktop"/><h2>tracker-preferences.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Search and Indexing</td></tr>
@@ -5057,8 +5066,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-transmageddon" class="screenshots description gnome">
-<a name="transmageddon"/><h2>transmageddon</h2>
+<div id="app-transmageddon.desktop" class="screenshots description gnome">
+<a name="transmageddon.desktop"/><h2>transmageddon.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Transmageddon Media Transcoder</td></tr>
@@ -5072,8 +5081,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-trojita" class="screenshots description keywords kde">
-<a name="trojita"/><h2>trojita</h2>
+<div id="app-trojita.desktop" class="screenshots description keywords kde">
+<a name="trojita.desktop"/><h2>trojita.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Trojitá</td></tr>
@@ -5088,8 +5097,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-vinagre" class="screenshots description keywords gnome">
-<a name="vinagre"/><h2>vinagre</h2>
+<div id="app-vinagre.desktop" class="screenshots description keywords gnome">
+<a name="vinagre.desktop"/><h2>vinagre.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Remote Desktop Viewer</td></tr>
@@ -5104,8 +5113,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-virt-manager" class="screenshots description">
-<a name="virt-manager"/><h2>virt-manager</h2>
+<div id="app-virt-manager.desktop" class="screenshots description">
+<a name="virt-manager.desktop"/><h2>virt-manager.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Virtual Machine Manager</td></tr>
@@ -5117,8 +5126,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-wammu" class="screenshots description keywords">
-<a name="wammu"/><h2>wammu</h2>
+<div id="app-wammu.desktop" class="screenshots description keywords">
+<a name="wammu.desktop"/><h2>wammu.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Wammu</td></tr>
@@ -5131,10 +5140,10 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-window-list@gnome-shell-extensions.gcampax.github.com" class="description">
-<a name="window-list@gnome-shell-extensions.gcampax.github.com"/><h2>window-list@gnome-shell-extensions.gcampax.github.com</h2>
+<div id="app-window-list@gnome-shell-extensions.gcampax.github.com.shell-extension" class="description">
+<a name="window-list@gnome-shell-extensions.gcampax.github.com.shell-extension"/><h2>window-list@gnome-shell-extensions.gcampax.github.com.shell-extension</h2>
 <table class="app">
-<tr><td class="alt">Type</td><td><code>unknown</code></td></tr>
+<tr><td class="alt">Type</td><td><code>shell-extension</code></td></tr>
 <tr><td class="alt">Name</td><td>Window List</td></tr>
 <tr><td class="alt">Comment</td><td>GNOME Shell Extension</td></tr>
 <tr><td class="alt">Description</td><td><p>Display a window list at the bottom of the screen. This extension is part of Classic Mode and is officially supported by GNOME. Please do not report bugs using the form below, use GNOME Bugzilla instead.</p></td></tr>
@@ -5144,8 +5153,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-writer" class="screenshots description keywords">
-<a name="writer"/><h2>writer</h2>
+<div id="app-writer.desktop" class="screenshots description keywords">
+<a name="writer.desktop"/><h2>writer.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>LibreOffice Writer</td></tr>
@@ -5159,8 +5168,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-xed" class="description keywords">
-<a name="xed"/><h2>xed</h2>
+<div id="app-xed.desktop" class="description keywords">
+<a name="xed.desktop"/><h2>xed.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Xed</td></tr>
@@ -5174,8 +5183,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-xfce4-appfinder" class="screenshots description xfce">
-<a name="xfce4-appfinder"/><h2>xfce4-appfinder</h2>
+<div id="app-xfce4-appfinder.desktop" class="screenshots description xfce">
+<a name="xfce4-appfinder.desktop"/><h2>xfce4-appfinder.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Application Finder</td></tr>
@@ -5189,8 +5198,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-xfce4-clipman" class="screenshots description xfce">
-<a name="xfce4-clipman"/><h2>xfce4-clipman</h2>
+<div id="app-xfce4-clipman.desktop" class="screenshots description xfce">
+<a name="xfce4-clipman.desktop"/><h2>xfce4-clipman.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Clipman</td></tr>
@@ -5204,8 +5213,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-xfce4-screenshooter" class="screenshots description xfce">
-<a name="xfce4-screenshooter"/><h2>xfce4-screenshooter</h2>
+<div id="app-xfce4-screenshooter.desktop" class="screenshots description xfce">
+<a name="xfce4-screenshooter.desktop"/><h2>xfce4-screenshooter.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>xfce4-screenshooter</td></tr>
@@ -5219,8 +5228,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-xiphos" class="screenshots description gnome">
-<a name="xiphos"/><h2>xiphos</h2>
+<div id="app-xiphos.desktop" class="screenshots description gnome">
+<a name="xiphos.desktop"/><h2>xiphos.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Xiphos</td></tr>
@@ -5234,8 +5243,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-xreader" class="description keywords">
-<a name="xreader"/><h2>xreader</h2>
+<div id="app-xreader.desktop" class="description keywords">
+<a name="xreader.desktop"/><h2>xreader.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Document Viewer</td></tr>
@@ -5249,11 +5258,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-xviewer-exif-display" class="">
+<div id="app-xviewer-exif-display" class="addon">
 <a name="xviewer-exif-display"/><h2>xviewer-exif-display</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#xviewer">xviewer</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#xviewer.desktop">xviewer</a></td></tr>
 <tr><td class="alt">Name</td><td>Exif Display</td></tr>
 <tr><td class="alt">Comment</td><td>Displays Exif tags in the side panel and optionally the statusbar</td></tr>
 <tr><td class="alt">Package</td><td><code>xviewer-plugin-exif-display</code></td></tr>
@@ -5261,11 +5270,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-xviewer-export-to-folder" class="">
+<div id="app-xviewer-export-to-folder" class="addon">
 <a name="xviewer-export-to-folder"/><h2>xviewer-export-to-folder</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#xviewer">xviewer</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#xviewer.desktop">xviewer</a></td></tr>
 <tr><td class="alt">Name</td><td>Export to Folder</td></tr>
 <tr><td class="alt">Comment</td><td>Export the current image to a separate directory</td></tr>
 <tr><td class="alt">Package</td><td><code>xviewer-plugin-export-to-folder</code></td></tr>
@@ -5273,11 +5282,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-xviewer-fit-to-width" class="">
+<div id="app-xviewer-fit-to-width" class="addon">
 <a name="xviewer-fit-to-width"/><h2>xviewer-fit-to-width</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#xviewer">xviewer</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#xviewer.desktop">xviewer</a></td></tr>
 <tr><td class="alt">Name</td><td>Zoom to Fit Image Width</td></tr>
 <tr><td class="alt">Comment</td><td>Adjusts the zoom to have the image's width fit into the window</td></tr>
 <tr><td class="alt">Package</td><td><code>xviewer-plugin-fit-to-width</code></td></tr>
@@ -5285,11 +5294,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-xviewer-fullscreenbg" class="">
+<div id="app-xviewer-fullscreenbg" class="addon">
 <a name="xviewer-fullscreenbg"/><h2>xviewer-fullscreenbg</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#xviewer">xviewer</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#xviewer.desktop">xviewer</a></td></tr>
 <tr><td class="alt">Name</td><td>Fullscreen Background</td></tr>
 <tr><td class="alt">Comment</td><td>Enables changing background in fullscreen mode</td></tr>
 <tr><td class="alt">Package</td><td><code>xviewer-plugin-fullscreenbg</code></td></tr>
@@ -5297,11 +5306,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-xviewer-hide-titlebar" class="">
+<div id="app-xviewer-hide-titlebar" class="addon">
 <a name="xviewer-hide-titlebar"/><h2>xviewer-hide-titlebar</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#xviewer">xviewer</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#xviewer.desktop">xviewer</a></td></tr>
 <tr><td class="alt">Name</td><td>Hide Titlebar</td></tr>
 <tr><td class="alt">Comment</td><td>Hides the titlebar of maximized windows</td></tr>
 <tr><td class="alt">Package</td><td><code>xviewer-plugin-hide-titlebar</code></td></tr>
@@ -5309,11 +5318,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-xviewer-light-theme" class="">
+<div id="app-xviewer-light-theme" class="addon">
 <a name="xviewer-light-theme"/><h2>xviewer-light-theme</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#xviewer">xviewer</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#xviewer.desktop">xviewer</a></td></tr>
 <tr><td class="alt">Name</td><td>Disable Dark Theme</td></tr>
 <tr><td class="alt">Comment</td><td>Disables dark theme</td></tr>
 <tr><td class="alt">Package</td><td><code>xviewer-plugin-light-theme</code></td></tr>
@@ -5321,11 +5330,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-xviewer-map" class="">
+<div id="app-xviewer-map" class="addon">
 <a name="xviewer-map"/><h2>xviewer-map</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#xviewer">xviewer</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#xviewer.desktop">xviewer</a></td></tr>
 <tr><td class="alt">Name</td><td>Map</td></tr>
 <tr><td class="alt">Comment</td><td>Displays on a map in the side panel where the picture was taken</td></tr>
 <tr><td class="alt">Package</td><td><code>xviewer-plugin-map</code></td></tr>
@@ -5333,11 +5342,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-xviewer-postasa" class="">
+<div id="app-xviewer-postasa" class="addon">
 <a name="xviewer-postasa"/><h2>xviewer-postasa</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#xviewer">xviewer</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#xviewer.desktop">xviewer</a></td></tr>
 <tr><td class="alt">Name</td><td>Picasa Web Uploader</td></tr>
 <tr><td class="alt">Comment</td><td>Supports uploading photos to Google Picasa Web</td></tr>
 <tr><td class="alt">Package</td><td><code>xviewer-plugin-postasa</code></td></tr>
@@ -5345,11 +5354,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-xviewer-pythonconsole" class="">
+<div id="app-xviewer-pythonconsole" class="addon">
 <a name="xviewer-pythonconsole"/><h2>xviewer-pythonconsole</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#xviewer">xviewer</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#xviewer.desktop">xviewer</a></td></tr>
 <tr><td class="alt">Name</td><td>Python Console</td></tr>
 <tr><td class="alt">Comment</td><td>Adds a Python console</td></tr>
 <tr><td class="alt">Package</td><td><code>xviewer-plugin-pythonconsole</code></td></tr>
@@ -5357,11 +5366,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-xviewer-send-by-mail" class="">
+<div id="app-xviewer-send-by-mail" class="addon">
 <a name="xviewer-send-by-mail"/><h2>xviewer-send-by-mail</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#xviewer">xviewer</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#xviewer.desktop">xviewer</a></td></tr>
 <tr><td class="alt">Name</td><td>Send by Mail</td></tr>
 <tr><td class="alt">Comment</td><td>Sends an image attached to a new mail</td></tr>
 <tr><td class="alt">Package</td><td><code>xviewer-plugin-send-by-mail</code></td></tr>
@@ -5369,11 +5378,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-xviewer-slideshowshuffle" class="">
+<div id="app-xviewer-slideshowshuffle" class="addon">
 <a name="xviewer-slideshowshuffle"/><h2>xviewer-slideshowshuffle</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#xviewer">xviewer</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#xviewer.desktop">xviewer</a></td></tr>
 <tr><td class="alt">Name</td><td>Slideshow Shuffle</td></tr>
 <tr><td class="alt">Comment</td><td>Shuffles the photos in slideshow mode</td></tr>
 <tr><td class="alt">Package</td><td><code>xviewer-plugin-slideshowshuffle</code></td></tr>
@@ -5381,8 +5390,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-xviewer" class="description keywords gnome">
-<a name="xviewer"/><h2>xviewer</h2>
+<div id="app-xviewer.desktop" class="description keywords gnome">
+<a name="xviewer.desktop"/><h2>xviewer.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Image Viewer</td></tr>
@@ -5397,8 +5406,8 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-yaics" class="screenshots description keywords">
-<a name="yaics"/><h2>yaics</h2>
+<div id="app-yaics.desktop" class="screenshots description keywords">
+<a name="yaics.desktop"/><h2>yaics.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Yaics</td></tr>
@@ -5412,11 +5421,11 @@ statusHideFilter(class_name, val)
 </table>
 <br/>
 </div>
-<div id="app-zathura-pdf-poppler" class="">
-<a name="zathura-pdf-poppler"/><h2>zathura-pdf-poppler</h2>
+<div id="app-zathura-pdf-poppler.desktop" class="addon">
+<a name="zathura-pdf-poppler.desktop"/><h2>zathura-pdf-poppler.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>addon</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#zathura">zathura</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#zathura.desktop">zathura</a></td></tr>
 <tr><td class="alt">Name</td><td>PDF plugin for Zathura</td></tr>
 <tr><td class="alt">Comment</td><td>PDF plugin based on Poppler</td></tr>
 <tr><td class="alt">Package</td><td><code>zathura-plugin-pdf-poppler</code></td></tr>
