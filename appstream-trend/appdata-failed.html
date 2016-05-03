@@ -58,7 +58,7 @@ getVisibility(what)
 function
 statusReset(class_name, val)
 {
-	var class_names = [ 'description', 'screenshots', 'keywords', 'gnome', 'kde', 'xfce' ];
+	var class_names = [ 'description', 'screenshots', 'keywords', 'gnome', 'kde', 'xfce', 'addon' ];
 	for (var i = 0; i < class_names.length; i++) {
 		document.getElementById('button-' + class_names[i] + '-with').disabled = false;
 		document.getElementById('button-' + class_names[i] + '-without').disabled = false;
@@ -133,13 +133,19 @@ statusHideFilter(class_name, val)
 <td><button id="button-xfce-without" onclick="statusHideFilter('xfce', true);">&#x2715;</button></td>
 </tr>
 <tr>
+<tr>
+<td class="alt">Hide Addons</td>
+<td><button id="button-addon-with" onclick="statusHideFilter('addon', false);">&#10003;</button></td>
+<td><button id="button-addon-without" onclick="statusHideFilter('addon', true);">&#x2715;</button></td>
+</tr>
+<tr>
 <td colspan="3"><button id="button-reset" onclick="statusReset('description');">Reset Filters</button></td>
 </tr>
 </table>
 <h1>Applications</h1>
 <div id="apps">
-<div id="app-Kjots" class="screenshots description kde">
-<a name="Kjots"/><h2>Kjots</h2>
+<div id="app-Kjots.desktop" class="screenshots description kde">
+<a name="Kjots.desktop"/><h2>Kjots.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KJots</td></tr>
@@ -148,37 +154,41 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Homepage</td><td><a href="http://www.kde.org">http://www.kde.org</a></td></tr>
 <tr><td class="alt">Project</td><td>KDE</td></tr>
 <tr><td class="alt">Kudos</td><td>ModernToolkit</td></tr>
+<tr><td class="alt">Vetos</td><td>Has no Icon, No &lt;summary&gt; in AppData</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-QXmlEdit" class="screenshots description">
-<a name="QXmlEdit"/><h2>QXmlEdit</h2>
+<div id="app-QXmlEdit.desktop" class="screenshots description">
+<a name="QXmlEdit.desktop"/><h2>QXmlEdit.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
-<tr><td class="alt">Extends</td><td><a href="#QXmlEdit">QXmlEdit</a></td></tr>
+<tr><td class="alt">Extends</td><td><a href="#QXmlEdit.desktop">QXmlEdit</a></td></tr>
 <tr><td class="alt">Name</td><td>QXmlEdit</td></tr>
 <tr><td class="alt">Comment</td><td>XML editor</td></tr>
 <tr><td class="alt">Description</td><td><p>QXmlEdit is an XML editor with some facilities to explore and process big files.</p></td></tr>
 <tr><td class="alt">Package</td><td><code>qxmledit</code></td></tr>
 <tr><td class="alt">Homepage</td><td><a href="http://qxmledit.org">http://qxmledit.org</a></td></tr>
 <tr><td class="alt">Kudos</td><td>ModernToolkit</td></tr>
+<tr><td class="alt">Vetos</td><td>Has no Icon</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-bpython" class="screenshots description">
-<a name="bpython"/><h2>bpython</h2>
+<div id="app-bpython.desktop" class="screenshots description">
+<a name="bpython.desktop"/><h2>bpython.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>bpython interpreter</td></tr>
 <tr><td class="alt">Comment</td><td>Fancy interface for the Python interpreter</td></tr>
 <tr><td class="alt">Description</td><td><p>bpython is a fancy interface to the Python interpreter. It has the following features:</p></td></tr>
-<tr><td class="alt">Package</td><td><code>python3-bpython</code></td></tr>
+<tr><td class="alt">Package</td><td><code>bpython</code></td></tr>
+<tr><td class="alt">Categories</td><td>Development, IDE</td></tr>
 <tr><td class="alt">Homepage</td><td><a href="http://www.bpython-interpreter.org/">http://www.bpython-interpreter.org/</a></td></tr>
+<tr><td class="alt">Vetos</td><td>Has no Icon, bpython.desktop has no icon</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-braindump" class="screenshots description kde">
-<a name="braindump"/><h2>braindump</h2>
+<div id="app-braindump.desktop" class="screenshots description kde">
+<a name="braindump.desktop"/><h2>braindump.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Braindump</td></tr>
@@ -188,11 +198,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Homepage</td><td><a href="http://www.calligra.org/braindump/">http://www.calligra.org/braindump/</a></td></tr>
 <tr><td class="alt">Project</td><td>KDE</td></tr>
 <tr><td class="alt">Kudos</td><td>HiDpiIcon</td></tr>
+<tr><td class="alt">Vetos</td><td>No &lt;summary&gt; in AppData</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-caja" class="screenshots description">
-<a name="caja"/><h2>caja</h2>
+<div id="app-caja.desktop" class="screenshots description">
+<a name="caja.desktop"/><h2>caja.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Caja</td></tr>
@@ -202,11 +213,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Homepage</td><td><a href="http://www.mate-desktop.org">http://www.mate-desktop.org</a></td></tr>
 <tr><td class="alt">Project</td><td>MATE</td></tr>
 <tr><td class="alt">Kudos</td><td>HiDpiIcon</td></tr>
+<tr><td class="alt">Vetos</td><td>NoDisplay=true</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-calibre-ebook-edit" class="screenshots description">
-<a name="calibre-ebook-edit"/><h2>calibre-ebook-edit</h2>
+<div id="app-calibre-ebook-edit.desktop" class="screenshots description">
+<a name="calibre-ebook-edit.desktop"/><h2>calibre-ebook-edit.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>(null)</td></tr>
@@ -214,11 +226,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Package</td><td><code>calibre</code></td></tr>
 <tr><td class="alt">Homepage</td><td><a href="http://calibre-ebook.com">http://calibre-ebook.com</a></td></tr>
 <tr><td class="alt">Kudos</td><td>ModernToolkit</td></tr>
+<tr><td class="alt">Vetos</td><td>Has no Icon, No &lt;name&gt; in AppData, No &lt;summary&gt; in AppData</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-calibre-ebook-viewer" class="screenshots description">
-<a name="calibre-ebook-viewer"/><h2>calibre-ebook-viewer</h2>
+<div id="app-calibre-ebook-viewer.desktop" class="screenshots description">
+<a name="calibre-ebook-viewer.desktop"/><h2>calibre-ebook-viewer.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>(null)</td></tr>
@@ -226,11 +239,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Package</td><td><code>calibre</code></td></tr>
 <tr><td class="alt">Homepage</td><td><a href="http://calibre-ebook.com">http://calibre-ebook.com</a></td></tr>
 <tr><td class="alt">Kudos</td><td>ModernToolkit</td></tr>
+<tr><td class="alt">Vetos</td><td>Has no Icon, No &lt;name&gt; in AppData, No &lt;summary&gt; in AppData</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-calibre-gui" class="screenshots description">
-<a name="calibre-gui"/><h2>calibre-gui</h2>
+<div id="app-calibre-gui.desktop" class="screenshots description">
+<a name="calibre-gui.desktop"/><h2>calibre-gui.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>(null)</td></tr>
@@ -238,11 +252,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Package</td><td><code>calibre</code></td></tr>
 <tr><td class="alt">Homepage</td><td><a href="http://calibre-ebook.com">http://calibre-ebook.com</a></td></tr>
 <tr><td class="alt">Kudos</td><td>ModernToolkit</td></tr>
+<tr><td class="alt">Vetos</td><td>Has no Icon, No &lt;name&gt; in AppData, No &lt;summary&gt; in AppData</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-com.hughski.ColorHug.Backlight" class="screenshots description keywords">
-<a name="com.hughski.ColorHug.Backlight"/><h2>com.hughski.ColorHug.Backlight</h2>
+<div id="app-com.hughski.ColorHug.Backlight.desktop" class="screenshots description keywords">
+<a name="com.hughski.ColorHug.Backlight.desktop"/><h2>com.hughski.ColorHug.Backlight.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>ColorHug Backlight Utility</td></tr>
@@ -253,11 +268,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Keywords</td><td>Ambient, Backlight, ColorHug, Display</td></tr>
 <tr><td class="alt">Homepage</td><td><a href="http://www.hughski.com/">http://www.hughski.com/</a></td></tr>
 <tr><td class="alt">Kudos</td><td>HiDpiIcon, ModernToolkit</td></tr>
+<tr><td class="alt">Vetos</td><td>NoDisplay=true</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-com.hughski.ColorHug.CcmxLoader" class="screenshots description keywords">
-<a name="com.hughski.ColorHug.CcmxLoader"/><h2>com.hughski.ColorHug.CcmxLoader</h2>
+<div id="app-com.hughski.ColorHug.CcmxLoader.desktop" class="screenshots description keywords">
+<a name="com.hughski.ColorHug.CcmxLoader.desktop"/><h2>com.hughski.ColorHug.CcmxLoader.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>ColorHug CCMX Loader</td></tr>
@@ -268,11 +284,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Keywords</td><td>CCMX, ColorHug</td></tr>
 <tr><td class="alt">Homepage</td><td><a href="http://www.hughski.com/">http://www.hughski.com/</a></td></tr>
 <tr><td class="alt">Kudos</td><td>HiDpiIcon, ModernToolkit</td></tr>
+<tr><td class="alt">Vetos</td><td>NoDisplay=true</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-com.hughski.ColorHug.DisplayAnalysis" class="screenshots description keywords">
-<a name="com.hughski.ColorHug.DisplayAnalysis"/><h2>com.hughski.ColorHug.DisplayAnalysis</h2>
+<div id="app-com.hughski.ColorHug.DisplayAnalysis.desktop" class="screenshots description keywords">
+<a name="com.hughski.ColorHug.DisplayAnalysis.desktop"/><h2>com.hughski.ColorHug.DisplayAnalysis.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>ColorHug Display Analysis</td></tr>
@@ -283,11 +300,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Keywords</td><td>Analysis, ColorHug, Display</td></tr>
 <tr><td class="alt">Homepage</td><td><a href="http://www.hughski.com/">http://www.hughski.com/</a></td></tr>
 <tr><td class="alt">Kudos</td><td>HiDpiIcon, ModernToolkit</td></tr>
+<tr><td class="alt">Vetos</td><td>NoDisplay=true</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-com.hughski.ColorHug.FlashLoader" class="screenshots description keywords">
-<a name="com.hughski.ColorHug.FlashLoader"/><h2>com.hughski.ColorHug.FlashLoader</h2>
+<div id="app-com.hughski.ColorHug.FlashLoader.desktop" class="screenshots description keywords">
+<a name="com.hughski.ColorHug.FlashLoader.desktop"/><h2>com.hughski.ColorHug.FlashLoader.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>ColorHug Firmware Updater</td></tr>
@@ -298,11 +316,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Keywords</td><td>ColorHug, Firmware, Flash</td></tr>
 <tr><td class="alt">Homepage</td><td><a href="http://www.hughski.com/">http://www.hughski.com/</a></td></tr>
 <tr><td class="alt">Kudos</td><td>HiDpiIcon, ModernToolkit</td></tr>
+<tr><td class="alt">Vetos</td><td>NoDisplay=true</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-deja-dup" class="screenshots description">
-<a name="deja-dup"/><h2>deja-dup</h2>
+<div id="app-deja-dup.desktop" class="screenshots description">
+<a name="deja-dup.desktop"/><h2>deja-dup.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Déjà Dup Backup Tool</td></tr>
@@ -312,11 +331,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Categories</td><td>Archiving, Utility</td></tr>
 <tr><td class="alt">Homepage</td><td><a href="https://launchpad.net/deja-dup">https://launchpad.net/deja-dup</a></td></tr>
 <tr><td class="alt">Kudos</td><td>HiDpiIcon, ModernToolkit, Notifications, UserDocs</td></tr>
+<tr><td class="alt">Vetos</td><td>NoDisplay=true</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-eiciel" class="screenshots description">
-<a name="eiciel"/><h2>eiciel</h2>
+<div id="app-eiciel.desktop" class="screenshots description">
+<a name="eiciel.desktop"/><h2>eiciel.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Eiciel</td></tr>
@@ -325,11 +345,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Package</td><td><code>eiciel</code></td></tr>
 <tr><td class="alt">Homepage</td><td><a href="http://rofi.roger-ferrer.org/eiciel/">http://rofi.roger-ferrer.org/eiciel/</a></td></tr>
 <tr><td class="alt">Kudos</td><td>ModernToolkit</td></tr>
+<tr><td class="alt">Vetos</td><td>Has no Icon</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-gtick" class="screenshots description">
-<a name="gtick"/><h2>gtick</h2>
+<div id="app-gtick.desktop" class="screenshots description">
+<a name="gtick.desktop"/><h2>gtick.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>GTick</td></tr>
@@ -338,11 +359,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Package</td><td><code>gtick</code></td></tr>
 <tr><td class="alt">Categories</td><td>Audio, Music, Video</td></tr>
 <tr><td class="alt">Homepage</td><td><a href="http://www.antcom.de/gtick/">http://www.antcom.de/gtick/</a></td></tr>
+<tr><td class="alt">Vetos</td><td>Failed to load icon: image format xpm is not supported: /usr/share/icons/hicolor/64x64/apps/gtick.xpm, Has no Icon</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-kmplot" class="screenshots description kde">
-<a name="kmplot"/><h2>kmplot</h2>
+<div id="app-kmplot.desktop" class="screenshots description kde">
+<a name="kmplot.desktop"/><h2>kmplot.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KmPlot</td></tr>
@@ -352,11 +374,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Homepage</td><td><a href="http://edu.kde.org/kmplot/">http://edu.kde.org/kmplot/</a></td></tr>
 <tr><td class="alt">Project</td><td>KDE</td></tr>
 <tr><td class="alt">Kudos</td><td>ModernToolkit</td></tr>
+<tr><td class="alt">Vetos</td><td>Has no Icon</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-konqueror" class="screenshots description kde">
-<a name="konqueror"/><h2>konqueror</h2>
+<div id="app-konqueror.desktop" class="screenshots description kde">
+<a name="konqueror.desktop"/><h2>konqueror.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Konqueror</td></tr>
@@ -365,11 +388,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Package</td><td><code>konqueror</code></td></tr>
 <tr><td class="alt">Homepage</td><td><a href="http://www.konqueror.org">http://www.konqueror.org</a></td></tr>
 <tr><td class="alt">Project</td><td>KDE</td></tr>
+<tr><td class="alt">Vetos</td><td>Has no Icon</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-marble" class="screenshots description kde">
-<a name="marble"/><h2>marble</h2>
+<div id="app-marble.desktop" class="screenshots description kde">
+<a name="marble.desktop"/><h2>marble.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Marble</td></tr>
@@ -379,11 +403,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Homepage</td><td><a href="http://marble.kde.org/">http://marble.kde.org/</a></td></tr>
 <tr><td class="alt">Project</td><td>KDE</td></tr>
 <tr><td class="alt">Kudos</td><td>ModernToolkit</td></tr>
+<tr><td class="alt">Vetos</td><td>Has no Icon</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-org.kde.bomber" class="screenshots description kde">
-<a name="org.kde.bomber"/><h2>org.kde.bomber</h2>
+<div id="app-org.kde.bomber.desktop" class="screenshots description kde">
+<a name="org.kde.bomber.desktop"/><h2>org.kde.bomber.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Bomber</td></tr>
@@ -393,11 +418,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Homepage</td><td><a href="http://www.kde.org">http://www.kde.org</a></td></tr>
 <tr><td class="alt">Project</td><td>KDE</td></tr>
 <tr><td class="alt">Kudos</td><td>HiDpiIcon, ModernToolkit</td></tr>
+<tr><td class="alt">Vetos</td><td>No &lt;summary&gt; in AppData</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-org.kde.bovo" class="screenshots description kde">
-<a name="org.kde.bovo"/><h2>org.kde.bovo</h2>
+<div id="app-org.kde.bovo.desktop" class="screenshots description kde">
+<a name="org.kde.bovo.desktop"/><h2>org.kde.bovo.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Bovo</td></tr>
@@ -407,11 +433,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Homepage</td><td><a href="http://games.kde.org/">http://games.kde.org/</a></td></tr>
 <tr><td class="alt">Project</td><td>KDE</td></tr>
 <tr><td class="alt">Kudos</td><td>HiDpiIcon, ModernToolkit</td></tr>
+<tr><td class="alt">Vetos</td><td>No &lt;summary&gt; in AppData</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-org.kde.dragonplayer" class="screenshots description kde">
-<a name="org.kde.dragonplayer"/><h2>org.kde.dragonplayer</h2>
+<div id="app-org.kde.dragonplayer.desktop" class="screenshots description kde">
+<a name="org.kde.dragonplayer.desktop"/><h2>org.kde.dragonplayer.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Dragon Player</td></tr>
@@ -421,11 +448,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Homepage</td><td><a href="http://dragonplayer.org/">http://dragonplayer.org/</a></td></tr>
 <tr><td class="alt">Project</td><td>KDE</td></tr>
 <tr><td class="alt">Kudos</td><td>HiDpiIcon, ModernToolkit</td></tr>
+<tr><td class="alt">Vetos</td><td>No &lt;summary&gt; in AppData</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-org.kde.kaddressbook" class="screenshots description kde">
-<a name="org.kde.kaddressbook"/><h2>org.kde.kaddressbook</h2>
+<div id="app-org.kde.kaddressbook.desktop" class="screenshots description kde">
+<a name="org.kde.kaddressbook.desktop"/><h2>org.kde.kaddressbook.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KAddressBook</td></tr>
@@ -435,11 +463,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Homepage</td><td><a href="http://www.kde.org">http://www.kde.org</a></td></tr>
 <tr><td class="alt">Project</td><td>KDE</td></tr>
 <tr><td class="alt">Kudos</td><td>HiDpiIcon, ModernToolkit</td></tr>
+<tr><td class="alt">Vetos</td><td>No &lt;summary&gt; in AppData</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-org.kde.kleopatra" class="screenshots description kde">
-<a name="org.kde.kleopatra"/><h2>org.kde.kleopatra</h2>
+<div id="app-org.kde.kleopatra.desktop" class="screenshots description kde">
+<a name="org.kde.kleopatra.desktop"/><h2>org.kde.kleopatra.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Kleopatra</td></tr>
@@ -450,11 +479,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Homepage</td><td><a href="http://www.kde.org">http://www.kde.org</a></td></tr>
 <tr><td class="alt">Project</td><td>KDE</td></tr>
 <tr><td class="alt">Kudos</td><td>ModernToolkit</td></tr>
+<tr><td class="alt">Vetos</td><td>Failed to find icon: Failed to find icon kleopatra, Has no Icon</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-org.kde.knotes" class="screenshots description kde">
-<a name="org.kde.knotes"/><h2>org.kde.knotes</h2>
+<div id="app-org.kde.knotes.desktop" class="screenshots description kde">
+<a name="org.kde.knotes.desktop"/><h2>org.kde.knotes.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>KNotes</td></tr>
@@ -464,11 +494,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Homepage</td><td><a href="http://www.kde.org">http://www.kde.org</a></td></tr>
 <tr><td class="alt">Project</td><td>KDE</td></tr>
 <tr><td class="alt">Kudos</td><td>HiDpiIcon, ModernToolkit</td></tr>
+<tr><td class="alt">Vetos</td><td>No &lt;summary&gt; in AppData</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-org.kde.kontact" class="screenshots description kde">
-<a name="org.kde.kontact"/><h2>org.kde.kontact</h2>
+<div id="app-org.kde.kontact.desktop" class="screenshots description kde">
+<a name="org.kde.kontact.desktop"/><h2>org.kde.kontact.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Kontact</td></tr>
@@ -478,11 +509,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Homepage</td><td><a href="http://www.kontact.org/">http://www.kontact.org/</a></td></tr>
 <tr><td class="alt">Project</td><td>KDE</td></tr>
 <tr><td class="alt">Kudos</td><td>HiDpiIcon, ModernToolkit</td></tr>
+<tr><td class="alt">Vetos</td><td>No &lt;summary&gt; in AppData</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-org.kde.labplot2" class="screenshots description kde">
-<a name="org.kde.labplot2"/><h2>org.kde.labplot2</h2>
+<div id="app-org.kde.labplot2.desktop" class="screenshots description kde">
+<a name="org.kde.labplot2.desktop"/><h2>org.kde.labplot2.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>LabPlot</td></tr>
@@ -492,11 +524,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Homepage</td><td><a href="http://labplot.sourceforge.net/">http://labplot.sourceforge.net/</a></td></tr>
 <tr><td class="alt">Project</td><td>KDE</td></tr>
 <tr><td class="alt">Kudos</td><td>ModernToolkit</td></tr>
+<tr><td class="alt">Vetos</td><td>Has no Icon</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-psi" class="screenshots description">
-<a name="psi"/><h2>psi</h2>
+<div id="app-psi.desktop" class="screenshots description">
+<a name="psi.desktop"/><h2>psi.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Psi</td></tr>
@@ -505,11 +538,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Package</td><td><code>psi+</code></td></tr>
 <tr><td class="alt">Homepage</td><td><a href="http://psi-im.org">http://psi-im.org</a></td></tr>
 <tr><td class="alt">Kudos</td><td>ModernToolkit</td></tr>
+<tr><td class="alt">Vetos</td><td>Has no Icon</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-scap-workbench" class="screenshots description">
-<a name="scap-workbench"/><h2>scap-workbench</h2>
+<div id="app-scap-workbench.desktop" class="screenshots description">
+<a name="scap-workbench.desktop"/><h2>scap-workbench.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>SCAP Workbench</td></tr>
@@ -519,11 +553,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Categories</td><td>System, Utility</td></tr>
 <tr><td class="alt">Homepage</td><td><a href="https://fedorahosted.org/scap-workbench">https://fedorahosted.org/scap-workbench</a></td></tr>
 <tr><td class="alt">Kudos</td><td>HiDpiIcon</td></tr>
+<tr><td class="alt">Vetos</td><td>NoDisplay=true</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-thunderbird" class="description">
-<a name="thunderbird"/><h2>thunderbird</h2>
+<div id="app-thunderbird.desktop" class="description">
+<a name="thunderbird.desktop"/><h2>thunderbird.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Thunderbird</td></tr>
@@ -532,11 +567,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Package</td><td><code>MozillaThunderbird</code></td></tr>
 <tr><td class="alt">Categories</td><td>Email, Network</td></tr>
 <tr><td class="alt">Homepage</td><td><a href="http://www.mozilla.org/thunderbird/">http://www.mozilla.org/thunderbird/</a></td></tr>
+<tr><td class="alt">Vetos</td><td>Failed to find icon: Failed to find icon thunderbird, Has no Icon</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-veusz" class="screenshots description">
-<a name="veusz"/><h2>veusz</h2>
+<div id="app-veusz.desktop" class="screenshots description">
+<a name="veusz.desktop"/><h2>veusz.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Veusz</td></tr>
@@ -544,11 +580,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Description</td><td><p>Veusz is an interactive graphical scientific plotting and graphing package. It is designed to produce publication-ready Postscript or PDF output. SVG, EMF and bitmap export formats are also supported. Data can be read from text, CSV, HDF5 or FITS files. In addition, you can also enter, manipulate or examine data from within the application.  The program also provides a command line and scripting interface (based on Python) to its plotting facilities. It can also act as a Python plotting module.</p><p>In Veusz plots are created by building up plotting widgets with a consistent object-based interface. Plotting types support by Veusz include the following: x-y, function, contour, image, stepped, date, vector field, box, polar, ternary, nested and stacked. Plots can also include multiple axes.</p></td></tr>
 <tr><td class="alt">Package</td><td><code>python-veusz</code></td></tr>
 <tr><td class="alt">Homepage</td><td><a href="http://home.gna.org/veusz/">http://home.gna.org/veusz/</a></td></tr>
+<tr><td class="alt">Vetos</td><td>Has no Icon</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-veusz3" class="screenshots description">
-<a name="veusz3"/><h2>veusz3</h2>
+<div id="app-veusz3.desktop" class="screenshots description">
+<a name="veusz3.desktop"/><h2>veusz3.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Veusz3</td></tr>
@@ -556,11 +593,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Description</td><td><p>Veusz3 is an interactive graphical scientific plotting and graphing package. It is designed to produce publication-ready Postscript or PDF output. SVG, EMF and bitmap export formats are also supported. Data can be read from text, CSV, HDF5 or FITS files. In addition, you can also enter, manipulate or examine data from within the application.  The program also provides a command line and scripting interface (based on Python) to its plotting facilities. It can also act as a Python plotting module.</p><p>In Veusz3 plots are created by building up plotting widgets with a consistent object-based interface. Plotting types support by Veusz3 include the following: x-y, function, contour, image, stepped, date, vector field, box, polar, ternary, nested and stacked. Plots can also include multiple axes.</p></td></tr>
 <tr><td class="alt">Package</td><td><code>python3-veusz</code></td></tr>
 <tr><td class="alt">Homepage</td><td><a href="http://home.gna.org/veusz/">http://home.gna.org/veusz/</a></td></tr>
+<tr><td class="alt">Vetos</td><td>Has no Icon</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-wireshark" class="screenshots description">
-<a name="wireshark"/><h2>wireshark</h2>
+<div id="app-wireshark.desktop" class="screenshots description">
+<a name="wireshark.desktop"/><h2>wireshark.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>(null)</td></tr>
@@ -568,11 +606,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Package</td><td><code>wireshark-ui-gtk</code></td></tr>
 <tr><td class="alt">Homepage</td><td><a href="http://www.wireshark.org">http://www.wireshark.org</a></td></tr>
 <tr><td class="alt">Kudos</td><td>ModernToolkit</td></tr>
+<tr><td class="alt">Vetos</td><td>Has no Icon, No &lt;name&gt; in AppData, No &lt;summary&gt; in AppData</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-words" class="screenshots description kde">
-<a name="words"/><h2>words</h2>
+<div id="app-words.desktop" class="screenshots description kde">
+<a name="words.desktop"/><h2>words.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Words</td></tr>
@@ -581,11 +620,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Package</td><td><code>calligra-words-common</code></td></tr>
 <tr><td class="alt">Homepage</td><td><a href="http://www.calligra.org/words/">http://www.calligra.org/words/</a></td></tr>
 <tr><td class="alt">Project</td><td>KDE</td></tr>
+<tr><td class="alt">Vetos</td><td>Has no Icon</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-wxmaxima" class="screenshots description">
-<a name="wxmaxima"/><h2>wxmaxima</h2>
+<div id="app-wxmaxima.desktop" class="screenshots description">
+<a name="wxmaxima.desktop"/><h2>wxmaxima.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>wxMaxima</td></tr>
@@ -593,11 +633,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Description</td><td><p>wxMaxima is a graphical user interface for the computer algebra system Maxima: a program that solves mathematical problems by manipulating equations (and outputting the resulting formula), instead of just calculating a number. wxMaxima eases the use of Maxima by making most of its commands available through a menu system and by providing input dialogs for commands that require more than one argument. It also implements its own display engine that outputs mathematical symbols directly instead of depicting them with ASCII characters.</p><p>wxMaxima also features 2D and 3D inline plots, simple animations, mixing of text and mathematical calculations to create documents, exporting of input and output to TeX, document structuring and a browser for Maxima's manual including command index and full text searching.</p></td></tr>
 <tr><td class="alt">Package</td><td><code>wxMaxima</code></td></tr>
 <tr><td class="alt">Homepage</td><td><a href="http://andrejv.github.io/wxmaxima/">http://andrejv.github.io/wxmaxima/</a></td></tr>
+<tr><td class="alt">Vetos</td><td>Has no Icon</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-xfce4-power-manager" class="screenshots description xfce">
-<a name="xfce4-power-manager"/><h2>xfce4-power-manager</h2>
+<div id="app-xfce4-power-manager.desktop" class="screenshots description xfce">
+<a name="xfce4-power-manager.desktop"/><h2>xfce4-power-manager.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Xfce power manager</td></tr>
@@ -606,11 +647,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Package</td><td><code>xfce4-power-manager</code></td></tr>
 <tr><td class="alt">Homepage</td><td><a href="http://www.xfce.org/">http://www.xfce.org/</a></td></tr>
 <tr><td class="alt">Project</td><td>XFCE</td></tr>
+<tr><td class="alt">Vetos</td><td>Has no Icon</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-yakuake" class="screenshots description kde">
-<a name="yakuake"/><h2>yakuake</h2>
+<div id="app-yakuake.desktop" class="screenshots description kde">
+<a name="yakuake.desktop"/><h2>yakuake.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Yakuake</td></tr>
@@ -620,11 +662,12 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Homepage</td><td><a href="http://yakuake.kde.org/">http://yakuake.kde.org/</a></td></tr>
 <tr><td class="alt">Project</td><td>KDE</td></tr>
 <tr><td class="alt">Kudos</td><td>ModernToolkit</td></tr>
+<tr><td class="alt">Vetos</td><td>Has no Icon</td></tr>
 </table>
 <br/>
 </div>
-<div id="app-zathura" class="screenshots description keywords">
-<a name="zathura"/><h2>zathura</h2>
+<div id="app-zathura.desktop" class="screenshots description keywords">
+<a name="zathura.desktop"/><h2>zathura.desktop</h2>
 <table class="app">
 <tr><td class="alt">Type</td><td><code>desktop</code></td></tr>
 <tr><td class="alt">Name</td><td>Zathura</td></tr>
@@ -635,6 +678,7 @@ statusHideFilter(class_name, val)
 <tr><td class="alt">Keywords</td><td>DjVU, PDF, PS, PostScript, document, presentation, viewer</td></tr>
 <tr><td class="alt">Homepage</td><td><a href="https://pwmt.org/projects/zathura">https://pwmt.org/projects/zathura</a></td></tr>
 <tr><td class="alt">Kudos</td><td>ModernToolkit</td></tr>
+<tr><td class="alt">Vetos</td><td>Has no Icon, zathura.desktop has no icon</td></tr>
 </table>
 <br/>
 </div>
