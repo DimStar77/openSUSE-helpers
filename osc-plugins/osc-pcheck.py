@@ -20,6 +20,8 @@ from osc import cmdln
 
 @cmdln.option('--push',action='store_true',
               help="Push changed packages to their parents")
+@cmdln.option('-m',action='store_true',
+              help='Specify submit message')
 def do_pcheck(self, subcmd, opts, project):
     """${cmd_name}: Show changed packages (packages that have a diff)
 
@@ -27,6 +29,7 @@ def do_pcheck(self, subcmd, opts, project):
     osc pcheck <prj>        # shows changed packages etc. for <prj>
 
     --push      Create submit requests for packages with a diff (if none exists yet)
+    -m          Specify submit message (defaut: "Scripted push of project <pre>")
 
     """
     apiurl = self.get_api_url()
