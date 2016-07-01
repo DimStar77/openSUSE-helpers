@@ -144,8 +144,8 @@ for package in Reminded:
         elif Reminded[package].remindCount == 2:
             for maintainer in maintainers[0]:
                 if maintainer.tag == "person":
-                    print(EMAIL2 % (Person[maintainer.attrib["name"]][1], package, time.ctime(Reminded[package].firstfail)))
-                    print("\n\n\n\n\n\n\n")
+                    sendmail(Person[maintainer.attrib["name"]][2], Person[maintainer.attrib["name"]][1], 'openSUSE Tumbleweed - %s - Build fail notification - reminder' % package,
+                             EMAIL2 % (Person[maintainer.attrib["name"]][1], package, time.ctime(Reminded[package].firstfail)))
         elif Reminded[package].remindCount == 3:
             print( "Package '%s' has been failing for three weeks - let's create a bug report" % package)
         else:
