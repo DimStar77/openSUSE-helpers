@@ -75,8 +75,9 @@ get the status back to building.
 You will get another reminder in a week if the package still fails by then.
 
 *** NOTE: This is an attempt to raise awareness of the maintainers about broken
-          builds in Tumbleweed. Please let me know if you think this is useless
-          and a waste of resources
+          builds in Tumbleweed. You receive this mail because you are marked
+          as maintainer for the above mentioned package (or project maintainer
+          if the package has no explicit maintainer assigned)
 
 Kind regards,
 Dominique Leuenberger a.k.a DimStar
@@ -94,8 +95,9 @@ Please find the time to fix the build of this package. If needed, also reach out
 to the broader community, trying to find somebody to help you fix this package.
 
 *** NOTE: This is an attempt to raise awareness of the maintainers about broken
-          builds in Tumbleweed. Please let me know if you think this is useless
-          and a waste of resources
+          builds in Tumbleweed. You receive this mail because you are marked
+          as maintainer for the above mentioned package (or project maintainer
+          if the package has no explicit maintainer assigned)
 
 Kind regards,
 Dominique Leuenberger a.k.a DimStar
