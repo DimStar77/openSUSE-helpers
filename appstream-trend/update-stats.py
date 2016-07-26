@@ -14,5 +14,5 @@ DATA = re.findall('<tr><td class="alt">Keywords</td><td>(\d+)/(\d+)</td><td clas
 
 V1 = (DISTRO[0].split(':')[4]).split(',')[0]
 SNAPDATE=V1[:4] + '-' + V1[4:6] + '-' + V1[6:]
-print ("%s:%s:%s" % (SNAPDATE, DATA[0][1], DATA[0][0]))
+print ("%s:%s" % (SNAPDATE, DATA[0][1]))
 

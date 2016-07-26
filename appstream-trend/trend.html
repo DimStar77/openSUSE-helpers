@@ -17,16 +17,14 @@
   <script type="text/javascript">
   window.onload = function () {
     var dataPoints1 = [];
-    var dataPoints2 = [];
 
     $.get("data.txt", function(data) {
       var allLines = data.split('\n');
       if(allLines.length > 0) {
         for(var i=0; i< allLines.length; i++) {
           items = allLines[i].split(':');
-          if (items[0] && items[1] && items[2]) {
+          if (items[0] && items[1]) {
             dataPoints1.push({x: new Date(items[0]), y: parseInt(items[1])});
-            dataPoints2.push({x: new Date(items[0]), y: parseInt(items[2])});
           }
         }
       }
@@ -58,14 +56,6 @@
             color: "rgba(46, 240, 25, 1)",
             dataPoints: dataPoints1
           },
-
-          { type: "area",
-            showInLegend: true,
-            legendMarkerType: "circle",
-            legendText: "Applications with Keywords",
-            color: "rgba(85, 155, 255, 1)",
-            dataPoints: dataPoints2
-          }
 
         ]
 
