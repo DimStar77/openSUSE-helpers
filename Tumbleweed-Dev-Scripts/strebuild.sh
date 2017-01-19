@@ -7,7 +7,8 @@ else
 fi
 
 for prj in {A..J}; do
-  osc rebuildpac -f ${PROJECT}:Staging:${prj}
-  osc rebuildpac -f ${PROJECT}:Staging:${prj}:DVD
+  for sub in {"",:DVD}; do
+    osc rebuildpac -f ${PROJECT}:Staging:${prj}${sub}
+  done
 done
 
