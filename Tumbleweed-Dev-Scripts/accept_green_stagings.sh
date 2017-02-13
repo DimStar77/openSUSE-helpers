@@ -14,6 +14,7 @@ if [ "$snapshot" != "$openqa" -o "$dirty" != "False" ]; then
   exit 1
 fi
 
+osc staging list --supersede
 
 echo Finding acceptable staging projects
 
@@ -24,4 +25,8 @@ for prj in {A..J}; do
   fi
 done
 
-echo "Acceptable projects would be ${ACCPRJ}"
+echo "Acceptable projects${ACCPRJ}"
+
+osc staging adi
+
+osc staging accept $ACCPRJ
