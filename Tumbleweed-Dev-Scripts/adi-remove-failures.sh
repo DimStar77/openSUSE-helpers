@@ -9,4 +9,4 @@ if [ -z "$1" ]; then
 	exit
 fi
 
-osc prjresults openSUSE:Factory:Staging:adi:$1 -V | awk '/^[FU] / {print $2}' | xargs -r osc staging unselect
+osc prjresults openSUSE:Factory:Staging:adi:$1 -V | awk '/^[FU] / {print $2}' | xargs -r osc staging adi --move
