@@ -25,6 +25,11 @@ for prj in {A..J}; do
   fi
 done
 
+if [ -z "$ACCPRJ" ]; then
+  echo "No staging project to accept - skipping non-ring-only accept run"
+  exit 1
+fi
+
 echo "Acceptable projects${ACCPRJ}"
 
 osc staging adi
