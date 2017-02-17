@@ -5,11 +5,16 @@ today=$(date +%Y%m%d)
 stdver=$(osc api /source/openSUSE:Factory/_product:openSUSE-release/openSUSE-release.spec | awk '/^Version/ {print $2}')
 
 if [ $today -le $stdver ]; then
-    echo "openSUSE:Factory has already been accepted today - latest snapshot build: $stdver"
+    echo "openSUSE:Factory has already been accepted today - current snapshot build: $stdver"
     exit 1
 fi
 
 read snapshot openqa dirty <<< $(osc staging acheck | awk '{print $2" "$5" "$8}' )
+
+if [ "$stdver" -ne "$openqa" ]; then
+    echo "$stdver did not yet move over to openQA - please wait..."
+    exit 1
+fi
 
 if [ "$snapshot" != "$openqa" -o "$dirty" != "False" ]; then
   echo "openSUSE:Factory is not ready to accept submissions at this moment"
