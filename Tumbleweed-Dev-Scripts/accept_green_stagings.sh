@@ -1,5 +1,10 @@
 #!/bin/bash
 
+if ! osc staging lock -m "Factory accept bot"; then
+   echo "Cannot aquire lock - please try again later"
+   exit 1
+fi
+
 today=$(date +%Y%m%d)
 
 stdver=$(osc api /source/openSUSE:Factory/_product:openSUSE-release/openSUSE-release.spec | awk '/^Version/ {print $2}')
@@ -22,14 +27,17 @@ if [ "$snapshot" != "$openqa" -o "$dirty" != "False" ]; then
 fi
 
 osc staging list --supersede
+osc staging adi
 
 echo Finding acceptable staging projects
 
 for prj in {A..J}; do
-  echo Checking project $prj
+  echo -n Checking project $prj
   if [ $(osc staging check $prj | grep -q "Acceptable staging project"; echo $?) -eq 0 ]; then
+    echo -n "  -> acceptable"
     ACCPRJ="$ACCPRJ $prj"
   fi
+  echo
 done
 
 if [ -z "$ACCPRJ" ]; then
@@ -39,6 +47,6 @@ fi
 
 echo "Acceptable projects${ACCPRJ}"
 
-osc staging adi
-
 osc staging accept $ACCPRJ
+
+osc staging unlock
