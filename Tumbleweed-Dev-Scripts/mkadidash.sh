@@ -1,4 +1,3 @@
-
 echo '
 <html>
 <head>
@@ -19,7 +18,7 @@ for adi in $(osc api "/search/project/id?match=starts-with(@name,'openSUSE:Facto
 
   echo "<tr><td><a href='https://build.opensuse.org/project/staging_projects/openSUSE:Factory/adi:$adi'>adi:$adi</a></td><td><ul class="packages-list">"
 # Get all requests in a staging project
-  for rq in $(osc review list -P openSUSE:Factory:Staging:adi:$adi | awk '/State:review/ {print $1}'); do
+  for rq in $(osc review list openSUSE:Factory -P openSUSE:Factory:Staging:adi:$adi | awk '/State:review/ {print $1}'); do
     STATUS="ok request"
     ICON=""
     RQXML=""
@@ -31,9 +30,9 @@ for adi in $(osc api "/search/project/id?match=starts-with(@name,'openSUSE:Facto
     fi
     if [ "$STATUS" = "review request" ]; then
 	    # Check which reviews are pending and add the correspoding icons - we have the XML in memory
-	    echo "$RQXML" | grep '<review state="new" by_group="opensuse-review-team">' > /dev/null && ICON="$ICON <i class='fa fa-search'></i>"
-	    echo "$RQXML" | grep '<review state="new" by_group="legal-team">' > /dev/null && ICON="$ICON <i class='fa fa-graduation-cap'></i>"
-	    echo "$RQXML" | grep '<review state="new".*by_user="factory-repo-checker">' > /dev/null && ICON="$ICON <i class='fa fa-cog'></i>"
+	    echo "$RQXML" | grep '<review state="new" by_group="opensuse-review-team"' > /dev/null && ICON="$ICON <i class='fa fa-search'></i>"
+	    echo "$RQXML" | grep '<review state="new" by_group="legal-auto"' > /dev/null && ICON="$ICON <i class='fa fa-graduation-cap'></i>"
+	    echo "$RQXML" | grep '<review state="new".*by_user="factory-repo-checker"' > /dev/null && ICON="$ICON <i class='fa fa-cog'></i>"
     fi
 
     echo "<li class='${STATUS}'><a href='https://build.opensuse.org/request/show/$rq'>$PKG ${ICON}</a></li>"
@@ -45,3 +44,5 @@ done
 
 echo '</table></body>'
 
+#Sync it over to ani
+[ -x /home/dimstar/bin/dashsync ] && /home/dimstar/bin/dashsync
