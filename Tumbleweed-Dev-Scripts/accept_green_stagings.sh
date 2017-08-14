@@ -11,6 +11,7 @@ stdver=$(osc api /source/openSUSE:Factory/_product:openSUSE-release/openSUSE-rel
 
 if [ $today -le $stdver ]; then
     echo "openSUSE:Factory has already been accepted today - current snapshot build: $stdver"
+    osc staging unlock
     exit 1
 fi
 
@@ -18,6 +19,7 @@ read snapshot openqa dirty <<< $(osc staging acheck | awk '{print $2" "$5" "$8}'
 
 if [ "$stdver" -ne "$openqa" ]; then
     echo "$stdver did not yet move over to openQA - please wait..."
+    osc staging unlock
     exit 1
 fi
 
@@ -31,7 +33,7 @@ osc staging adi
 
 echo Finding acceptable staging projects
 
-for prj in {A..J}; do
+for prj in {A..M}; do
   echo -n Checking project $prj
   if [ $(osc staging check $prj | grep -q "Acceptable staging project"; echo $?) -eq 0 ]; then
     echo -n "  -> acceptable"
@@ -42,6 +44,7 @@ done
 
 if [ -z "$ACCPRJ" ]; then
   echo "No staging project to accept - skipping non-ring-only accept run"
+  osc staging unlock
   exit 1
 fi
 
