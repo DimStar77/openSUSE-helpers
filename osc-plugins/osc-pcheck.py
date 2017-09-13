@@ -45,6 +45,11 @@ def do_pcheck(self, subcmd, opts, project):
         if sinfo.find('error'):
             errors[pkg] = sinfo.find('error').text
             continue
+        elif sinfo.find('originpackage') is not None:
+            # This is a package created from a _multibuild
+            # Status will be checked by the main one (which
+            # has no originpackage.) so let's not continue further
+            continue
         elif sinfo.find('linked') is not None:
             elm = sinfo.find('linked')
             key = '%s/%s' % (elm.get('project'), elm.get('package'))
