@@ -33,7 +33,7 @@ osc staging adi
 
 echo Finding acceptable staging projects
 
-for prj in {A..M}; do
+for prj in {A..O}; do
   echo -n Checking project $prj
   if [ $(osc staging check $prj | grep -q "Acceptable staging project"; echo $?) -eq 0 ]; then
     echo -n "  -> acceptable"
