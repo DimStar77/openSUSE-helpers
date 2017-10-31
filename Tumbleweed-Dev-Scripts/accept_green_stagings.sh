@@ -50,6 +50,10 @@ fi
 
 echo "Acceptable projects${ACCPRJ}"
 
-osc staging accept $ACCPRJ
+# we --force accept, as we only accept stagings that were green before
+# it frequently happens that 'rings change' (think delete requests) and
+# the scheduler marks a staging as 'dirty'/building, failing the original
+# accept command
+osc staging accept --force $ACCPRJ
 
 osc staging unlock
