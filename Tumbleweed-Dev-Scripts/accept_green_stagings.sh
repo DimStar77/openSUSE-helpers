@@ -28,7 +28,7 @@ if [ "$snapshot" != "$openqa" -o "$dirty" != "False" ]; then
   exit 1
 fi
 
-osc staging list --supersede
+osc staging --wipe-cache list --supersede
 osc staging adi
 
 echo Finding acceptable staging projects
