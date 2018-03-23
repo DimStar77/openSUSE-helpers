@@ -1,12 +1,19 @@
 #!/bin/bash
 
+API="/build/openSUSE:Factory/%s/x86_64/_repository/openSUSE-release.rpm?view=fileinfo"
+REGEXP="(<version>)\K.*(?=</version>)"
+
+function get_version() {
+  osc api $(printf $API $1) | grep -Po $REGEXP
+}
+
 # These are the versions defined by TTM - so that's what SHOULD be in place
 totest=$(osc cat openSUSE:Factory:Staging/dashboard/version_totest)
 snapshot=$(osc cat openSUSE:Factory:Staging/dashboard/version_snapshot)
 
 # These are the version extracted from OBS directly
-prjsnapshot=$(osc ls -b openSUSE:Factory _product:openSUSE-release snapshot x86_64 | awk -F- '/src.rpm/ {print $3}')
-prjtotest=$(osc ls -b openSUSE:Factory _product:openSUSE-release totest x86_64 | awk -F- '/src.rpm/ {print $3}')
+prjsnapshot=$(get_version snapshot)
+prjtotest=$(get_version totest)
 
 if [ $snapshot -gt $prjsnapshot -a $snapshot -eq $prjtotest ]; then
   # TTM triggered a publisher run of :ToTest - let's sync up /snapshot from /totest
