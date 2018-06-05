@@ -29,6 +29,7 @@ if [ "$snapshot" != "$openqa" -o "$dirty" != "False" ]; then
   exit 1
 fi
 
+osc check_dups openSUSE:Factory
 osc staging --wipe-cache list --supersede
 osc staging adi
 
