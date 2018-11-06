@@ -35,13 +35,10 @@ osc staging adi
 
 echo Finding acceptable staging projects
 
-for prj in {A..O}; do
-  echo -n Checking project $prj
-  if [ $(osc staging check $prj | grep -q "Acceptable staging project"; echo $?) -eq 0 ]; then
-    echo -n "  -> acceptable"
-    ACCPRJ="$ACCPRJ $prj"
-  fi
-  echo
+ACCPRJS=$(/usr/bin/osc api /project/staging_projects/openSUSE:Factory?format=json  | jq '.[] | select(.overall_state=="acceptable") | select( .name | contains(":adi:") | not).name' | sed -e 's/"//g' -e 's/openSUSE:Factory:Staging://')
+
+for prj in $ACCPRJS; do
+  ACCPRJ="$ACCPRJ $prj"
 done
 
 if [ -z "$ACCPRJ" ]; then
