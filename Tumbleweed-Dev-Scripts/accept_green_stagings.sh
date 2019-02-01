@@ -6,9 +6,9 @@ if ! osc staging lock -m "Factory accept bot"; then
 fi
 
 today=$(date +%Y%m%d)
-REGEXP="(<version>)\K.*(?=</version>)"
+REGEXP="(<value>)\K.*(?=</value>)"
 
-stdver=$(osc api /source/openSUSE:Factory/000product/openSUSE.product | grep -Po $REGEXP)
+stdver=$(osc api /source/openSUSE:Factory/_attribute/OSRT:ProductVersion | grep -Po $REGEXP)
 
 if [ $today -le $stdver ]; then
     echo "openSUSE:Factory has already been accepted today - current snapshot build: $stdver"
