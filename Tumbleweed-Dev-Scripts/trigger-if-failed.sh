@@ -30,7 +30,7 @@ fi
 
 while (sleep $DELAY); do
 
-	result=$(osc --no-keyring results $PRJ $PKG -r $REPO -a $ARCH --csv | awk -F\| '{print $5}' )
+	result=$(osc --no-keyring results --no-multibuild $PRJ $PKG -r $REPO -a $ARCH --csv | awk -F\| '{print $5}' )
 
 	case "$result" in
 		"failed")
