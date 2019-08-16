@@ -20,7 +20,7 @@ from osc import cmdln
 
 @cmdln.option('--push',action='store_true',
               help="Push changed packages to their parents")
-@cmdln.option('-m',action='store_true',
+@cmdln.option('-m', "--message",
               help='Specify submit message')
 def do_pcheck(self, subcmd, opts, project):
     """${cmd_name}: Show changed packages (packages that have a diff)
