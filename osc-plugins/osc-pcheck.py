@@ -41,7 +41,7 @@ def do_pcheck(self, subcmd, opts, project):
     changed = []
     changeSRed = {}
     api = oscapi(apiurl)
-    for pkg, sinfo in sinfos.iteritems():
+    for pkg, sinfo in sinfos.items():
         if sinfo.find('error'):
             errors[pkg] = sinfo.find('error').text
             continue
@@ -56,15 +56,15 @@ def do_pcheck(self, subcmd, opts, project):
             pmap.setdefault(key, []).append(pkg)
             todo.setdefault(elm.get('project'), []).append(elm.get('package'))
         md5s[pkg] = sinfo.get('verifymd5')
-    for prj, pkgs in todo.iteritems():
+    for prj, pkgs in todo.items():
         sinfos = get_project_sourceinfo(apiurl, prj, True, *pkgs)
-        for pkg, sinfo in sinfos.iteritems():
+        for pkg, sinfo in sinfos.items():
             key = '%s/%s' % (prj, pkg)
             for p in pmap[key]:
                 vmd5 = md5s.pop(p)
                 if vmd5 != sinfo.get('verifymd5'):
                     # Is there already an SR outgoing for this package?
-                    SRid = api.sr_for_package(project, p)
+                    SRid = int(api.sr_for_package(project, p))
                     if SRid > 0:
                         changeSRed[p] = SRid
                     else:
@@ -80,13 +80,13 @@ def do_pcheck(self, subcmd, opts, project):
     print(', '.join(changed))
     print() 
     print('Changed & submitted packages: %d' % len(changeSRed.keys()))
-    print(', '.join(['%s(%s)' % (pkg, SR) for pkg, SR in changeSRed.iteritems()]))
+    print(', '.join(['%s(%s)' % (pkg, SR) for pkg, SR in changeSRed.items()]))
     print()
     print('Packages without link: %d' % len(md5s.keys()))
     print(', '.join(md5s.keys()))
     print()
     print('Packages with errors: %d' % len(errors.keys()))
-    print('\n'.join(['%s: %s' % (p, err) for p, err in errors.iteritems()]))
+    print('\n'.join(['%s: %s' % (p, err) for p, err in errors.items()]))
 
 class oscapi:
     def __init__(self, apiurl):
@@ -100,6 +100,7 @@ class oscapi:
         requests = []
         for root in collection.findall('request'):
             return root.get('id')
+        return 0
 
     def get_rev(self, project, package):
         return 0
