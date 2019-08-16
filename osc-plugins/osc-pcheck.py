@@ -70,7 +70,11 @@ def do_pcheck(self, subcmd, opts, project):
                     else:
                         changed.append(p)
                         if opts.push:
-                            api.create(project=project, package=p, target=prj)
+                            if opts.message:
+                               message = opts.message
+                            else:
+                               message = "Scripted push from {project}"
+                            api.create(project=project, package=p, target=prj, message=message)
                             
     overview = 'Overview of project {}'.format(project)
     print()
@@ -105,12 +109,12 @@ class oscapi:
     def get_rev(self, project, package):
         return 0
 
-    def create(self, project, package, target):
+    def create(self, project, package, target, message):
         currev = get_source_rev(self.apiurl, project, package)['rev']
         print ("Creating a request from {project}/{package}".format(project=project,package=package))
         query = {'cmd'    : 'create' }
         url = makeurl(self.apiurl, ['request'], query=query)
 
-        data = '<request type="submit"><submit><source project="{project}" package="{package}" rev="{rev}"/><target project="{target}" package="{package}"  /></submit><state name="new"/><description>Scripted push of project {project}</description></request>'.format(project=project, package=package, target=target, rev=currev)
+        data = '<request type="submit"><submit><source project="{project}" package="{package}" rev="{rev}"/><target project="{target}" package="{package}"  /></submit><state name="new"/><description>{message}</description></request>'.format(project=project, package=package, target=target, rev=currev, message=message)
         f = http_POST(url, data=data)
 
