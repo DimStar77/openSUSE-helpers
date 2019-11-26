@@ -73,7 +73,7 @@ def do_pcheck(self, subcmd, opts, project):
                             if opts.message:
                                message = opts.message
                             else:
-                               message = "Scripted push from {project}"
+                               message = "Scripted push from {project}".format(project=project)
                             api.create(project=project, package=p, target=prj, message=message)
                             
     overview = 'Overview of project {}'.format(project)
