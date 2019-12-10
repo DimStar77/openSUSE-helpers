@@ -46,11 +46,8 @@ osc staging adi --project openSUSE:Factory:NonFree
 
 # echo "Acceptable projects${ACCPRJ}"
 
-# we --force accept, as we only accept stagings that were green before
-# it frequently happens that 'rings change' (think delete requests) and
-# the scheduler marks a staging as 'dirty'/building, failing the original
-# accept command
-osc staging accept
+# First accept NonFree; after accepting OSS, there is a chance that NonFree stagings already start building again
 osc staging accept --project openSUSE:Factory:NonFree
+osc staging accept
 
 osc staging unlock
