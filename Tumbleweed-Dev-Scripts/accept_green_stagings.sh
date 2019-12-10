@@ -16,7 +16,7 @@ if [ $today -le $stdver ]; then
     exit 1
 fi
 
-read snapshot openqa dirty <<< $(osc staging acheck | awk '{print $2" "$5" "$8}' )
+openqa=$(osc  meta attribute openSUSE:Factory -a  OSRT:ToTestManagerStatus | awk '/testing/ {print $2}' | tr -d \')
 
 if [ "$stdver" -ne "$openqa" ]; then
     echo "$stdver did not yet move over to openQA - please wait..."
@@ -24,34 +24,33 @@ if [ "$stdver" -ne "$openqa" ]; then
     exit 1
 fi
 
-if [ "$snapshot" != "$openqa" -o "$dirty" != "False" ]; then
-  echo "openSUSE:Factory is not ready to accept submissions at this moment"
-  exit 1
-fi
-
 osc staging --wipe-cache list --supersede
+osc staging --wipe-cache list --supersede --project openSUSE:Factory:NonFree
 osc staging adi
+osc staging adi --project openSUSE:Factory:NonFree
 
-echo Finding acceptable staging projects
+# echo Finding acceptable staging projects
 
-ACCPRJS=$(/usr/bin/osc api /project/staging_projects/openSUSE:Factory?format=json  | jq '.[] | select(.overall_state=="acceptable") | select( .name | contains(":adi:") | not).name' | sed -e 's/"//g' -e 's/openSUSE:Factory:Staging://')
+# ACCPRJS now including adi stagings
+# ACCPRJS=$(/usr/bin/osc api /staging/openSUSE:Factory/staging_projects?status=1 | egrep 'staging_project name="openSUSE:Factory:Staging:.*" state="acceptable"' | egrep -o 'name="openSUSE:Factory:Staging:[^"]+' | sed 's/name="openSUSE:Factory:Staging://')
 
-for prj in $ACCPRJS; do
-  ACCPRJ="$ACCPRJ $prj"
-done
+#for prj in $ACCPRJS; do
+#  ACCPRJ="$ACCPRJ $prj"
+#done
+#
+#if [ -z "$ACCPRJ" ]; then
+#  echo "No staging project to accept - skipping non-ring-only accept run"
+#  osc staging unlock
+#  exit 1
+#fi
 
-if [ -z "$ACCPRJ" ]; then
-  echo "No staging project to accept - skipping non-ring-only accept run"
-  osc staging unlock
-  exit 1
-fi
-
-echo "Acceptable projects${ACCPRJ}"
+# echo "Acceptable projects${ACCPRJ}"
 
 # we --force accept, as we only accept stagings that were green before
 # it frequently happens that 'rings change' (think delete requests) and
 # the scheduler marks a staging as 'dirty'/building, failing the original
 # accept command
-osc staging accept --force $ACCPRJ
+osc staging accept
+osc staging accept --project openSUSE:Factory:NonFree
 
 osc staging unlock
