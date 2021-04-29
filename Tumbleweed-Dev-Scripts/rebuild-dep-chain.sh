@@ -19,7 +19,7 @@ if dialog --title "Trigger build of ${NUM_TRIGGER} packages?" --yesno "The packa
 	for PKG in $PKGLIST; do
 		PCT=$[100 * $i / ${NUM_TRIGGER}]
 		echo XXX| dialog --gauge "Trigger $i / ${NUM_TRIGGER} packages for rebuild ($PCT%)\nCurrent package: $PKG" 7 70 $PCT
-                for PORT in "" :ARM :PowerPC; do
+                for PORT in "" :ARM :PowerPC :zSystems; do
 			osc rebuildpac openSUSE:Factory${PORT} $PKG -r standard > /dev/null
 		done
 		i=$(($i + 1))
