@@ -31,6 +31,6 @@ echo
 echo "### onlybuild|excludebuid: packages to verify - the package names listed here do not exist"
 echo
 
-for pkg in $(osc meta prjconf openSUSE:Factory | grep "BuildFlags" | sed 's/BuildFlags: onlybuild://'); do
+for pkg in $(osc meta prjconf openSUSE:Factory | grep "BuildFlags.*build:" | sed -e 's/BuildFlags: //' -e 's/onlybuild://' -e 's/excludebuild://'); do
       grep -q "^${pkg}$" ${TMPDIR}/all_sources || echo "Drop only|exclude build for $pkg";
   done
