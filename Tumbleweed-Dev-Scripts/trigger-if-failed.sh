@@ -45,6 +45,7 @@ while (sleep $DELAY); do
 			;;	
 		"succeeded")
 			echo "Package $PRJ/$PKG successfully built for $REPO/$ARCH after $retry tries"
+                        echo -en "\007"
 			break
 			;;
 	esac
