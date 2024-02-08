@@ -1,5 +1,8 @@
 old_IFS=$IFS
 IFS=/ read PRJ PKG REPO ARCH dump <<< "$1"
+if [ "$PRJ" = "https:" ]; then
+IFS=/ read PROTO EMPTY HOT PACKAGE LOG PRJ PKG REPO ARCH dump <<< "$1"
+fi
 IFS=$old_IFS
 
 if [ -n "$PRJ" -a -n "$PKG" -a -n "$REPO" -a -n "$ARCH" ]; then
