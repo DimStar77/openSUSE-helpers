@@ -25,6 +25,7 @@ sed -i "s|<param name=\"revision\">.*</param>|<param name=\"revision\">${REV}</p
 osc service mr
 
 VERSION=$(awk '/version:/ {print $2}' *.obsinfo)
+NEW_REV=$(awk '/commit:/ {print $2}' *.obsinfo 2>/dev/null)
 
 if [ ! -z "$OLD_REV" ]; then
   pushd $PKGNAME
@@ -34,7 +35,12 @@ if [ ! -z "$OLD_REV" ]; then
 popd
 fi
 
-osc vc -m "Update to version $VERSION:"
+if [ "$OLD_REV" != "$NEW_REV" ]; then
+  echo "- Update to version $VERSION:" > .NEWS
+  grep "^+" osc-collab.NEWS | sed 's/^+//g' >> .NEWS
+  osc vc -F .NEWS
+  rm .NEWS
+fi
 
 osc ar
 
