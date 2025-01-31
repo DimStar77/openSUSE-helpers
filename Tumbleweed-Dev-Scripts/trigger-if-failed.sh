@@ -33,7 +33,7 @@ fi
 
 while (sleep $DELAY); do
 
-	result=$(osc --no-keyring results --no-multibuild $PRJ $PKG -r $REPO -a $ARCH --csv | awk -F\| '{print $5}' )
+	result=$(osc --no-keyring results --no-multibuild $PRJ $PKG -r $REPO -a $ARCH | awk  '{print $4}' )
 
 	case "$result" in
 		"failed")
@@ -43,7 +43,7 @@ while (sleep $DELAY); do
 			fi
 			retry=$[$retry + 1]
 			;;	
-		"succeeded")
+		"succeeded*")
 			echo "Package $PRJ/$PKG successfully built for $REPO/$ARCH after $retry tries"
                         echo -en "\007"
 			break
