@@ -16,16 +16,16 @@ if [ ! -f _service ]; then
   exit 3
 fi
 
-OLD_REV=$(awk '/commit:/ {print $2}' *.obsinfo 2>/dev/null)
-PKGNAME=$(grep '<param name="url">.*</param>' _service | sed -e 's/<.*">//' -e's/<.*>//' -e 's/ //g' -e 's/\.git$//' | awk -F/ '{print $NF}')
+PKGNAME=$(awk -F'[<>]' '/<param name="url">/ { gsub(/\.git$/, "", $3); n=split($3,a,"/"); print a[n]; exit }' _service)
+OLD_REV=$(awk '/commit:/ {print $2}' ${PKGNAME}.obsinfo 2>/dev/null)
 
 rm *.obscpio 2> /dev/null
 
-sed -i "s|<param name=\"revision\">.*</param>|<param name=\"revision\">${REV}</param>|" _service
+sed -i '1,/<param name="revision">/s|<param name="revision">[^<]*</param>|<param name="revision">'"$REV"'</param>|' _service
 osc service mr
 
-VERSION=$(awk '/version:/ {print $2}' *.obsinfo)
-NEW_REV=$(awk '/commit:/ {print $2}' *.obsinfo 2>/dev/null)
+VERSION=$(awk '/version:/ {print $2}' ${PKGNAME}.obsinfo)
+NEW_REV=$(awk '/commit:/ {print $2}' ${PKGNAME}.obsinfo 2>/dev/null)
 
 if [ ! -z "$OLD_REV" ]; then
   pushd $PKGNAME
