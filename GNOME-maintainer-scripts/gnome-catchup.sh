@@ -52,7 +52,7 @@ for entry in $BEHIND_MODULES; do
     
     # Show the log of what is in Factory but not in Next
     # We use -C to run the log inside the specific submodule
-    git -C "$sm_path" log --oneline --color HEAD.."$factory_hash"
+    git --no-pager -C "$sm_path" log --oneline --color HEAD.."$factory_hash"
     
     echo "-------------------------------------------------------------------"
     read -p "Merge these changes into 'next' and push? [y/N]: " confirm
