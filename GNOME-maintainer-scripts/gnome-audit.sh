@@ -32,6 +32,11 @@ cd "$NEXT_PATH" || exit
 
 # 2. Execution
 RAW_OUTPUT=$(git submodule foreach --quiet "
+    case \"\$sm_path\" in
+        gnome-next-pkglist|gnome-next.x86_64|obs-service-pkg_version)
+          exit 0
+          ;;
+    esac
     NEXT_HASH=\$(git rev-parse HEAD 2>/dev/null)
     FACTORY_HASH=\$(git -C \"$FACTORY_PATH\" ls-tree factory \"\$sm_path\" | awk '{print \$3}')
     
