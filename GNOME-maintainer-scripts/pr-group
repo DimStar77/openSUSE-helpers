@@ -1,112 +1,169 @@
 #!/usr/bin/env bash
 set -e
 
-# Configuration
 REPO="GNOME/_ObsPrj"
 
-TARGET_PR_ID="$1"
-shift # Remove the target ID from the arguments list, leaving only the package names
-
-if [ -z "$TARGET_PR_ID" ] || [ $# -eq 0 ]; then
-    echo "Usage: pr-select <target-pr-id> <package1> [package2] [package3] ..."
-    echo "Example: pr-select 516 atkmm papers liferea"
+usage() {
+    echo "Usage:"
+    echo "  pr-group select <target-pr-id> <package-name> [package2] ..."
+    echo "  pr-group unselect <target-pr-id> <package-name>"
+    echo "  pr-group combine <target-pr-id> <source-pr-id>"
+    echo ""
+    echo "Examples:"
+    echo "  pr-group select 516 papers liferea"
+    echo "  pr-group unselect 516 papers"
+    echo "  pr-group combine 516 517"
     exit 1
+}
+
+COMMAND="$1"
+TARGET_ID="$2"
+shift 2 || usage # Pop COMMAND and TARGET_ID, leaving remaining args in $@
+
+if [ -z "$COMMAND" ] || [ -z "$TARGET_ID" ]; then
+    usage
 fi
 
-echo "=== Fetching details for Target PR #$TARGET_PR_ID ==="
-TARGET_JSON=$(tea pr --repo "$REPO" "$TARGET_PR_ID" --output json)
+# Fetch target PR details up front
+echo "=== Fetching Target PR #$TARGET_ID ==="
+TARGET_JSON=$(tea pr --repo "$REPO" "$TARGET_ID" --output json)
 TARGET_BRANCH=$(echo "$TARGET_JSON" | jq -r '.base')
 TARGET_BODY=$(echo "$TARGET_JSON" | jq -r '.body')
 
 echo "Target Branch: $TARGET_BRANCH"
 echo "------------------------------------------------------"
 
-# Fetch the global list of open PRs once to save API calls
-echo "=== Fetching active open PR list ==="
-OPEN_PR_LIST=$(tea pr list --repo "$REPO" --state open --output json)
-
-NEW_PR_TOKENS=""
-declare -a PR_IDS_TO_CLOSE=()
-
-# Loop through all packages provided in the command line arguments
-for SOURCE_PACKAGE in "$@"; do
-    echo "Processing package: '$SOURCE_PACKAGE'..."
-    
-    # Find the PR ID for this package from the cache
-    SOURCE_PR_ID=$(echo "$OPEN_PR_LIST" | jq -r ".[] | select(.title == \"Forwarded PRs: $SOURCE_PACKAGE\") | .index")
-    
-    if [ -z "$SOURCE_PR_ID" ] || [ "$SOURCE_PR_ID" = "null" ]; then
-        echo "--> ERROR: Could not find an open PR for package '$SOURCE_PACKAGE'. Skipping!"
-        echo "------------------------------------------------------"
-        continue
+# ---------------------------------------------------------------------
+# MODE 1: SELECT (Add one or more raw package PRs into this group)
+# ---------------------------------------------------------------------
+if [ "$COMMAND" = "select" ]; then
+    if [ $# -eq 0 ]; then
+        echo "Error: Please specify at least one package name to select."
+        exit 1
     fi
-    
-    # Fetch this specific source PR's JSON details
-    SOURCE_JSON=$(tea pr --repo "$REPO" "$SOURCE_PR_ID" --output json)
-    SOURCE_BRANCH=$(echo "$SOURCE_JSON" | jq -r '.base')
-    SOURCE_BODY=$(echo "$SOURCE_JSON" | jq -r '.body')
-    
-    # --- Security Validation Layer ---
-    if [ "$TARGET_BRANCH" != "$SOURCE_BRANCH" ]; then
-        echo "--> CRITICAL ERROR: Target branch mismatch for '$SOURCE_PACKAGE' (#$SOURCE_PR_ID)!"
-        echo "    Target PR #$TARGET_PR_ID targets: '$TARGET_BRANCH'"
-        echo "    Source PR #$SOURCE_PR_ID targets: '$SOURCE_BRANCH'"
-        echo "    Skipping this package to avoid release target corruption."
-        echo "------------------------------------------------------"
-        continue
-    fi
-    
-    # --- Extract the PR Token ---
-    PR_TOKEN=$(echo "$SOURCE_BODY" | grep -E '^PR: GNOME/[A-Za-z0-9_-]+![0-9]+' || true)
-    
-    if [ -z "$PR_TOKEN" ]; then
-        echo "--> ERROR: Could not find 'PR: GNOME/...' reference string in PR #$SOURCE_PR_ID. Skipping!"
-        echo "------------------------------------------------------"
-        continue
-    fi
-    
-    echo "--> Found PR #$SOURCE_PR_ID ($SOURCE_BRANCH). Reference: $PR_TOKEN"
-    
-    # Keep track of tokens to add and PRs to close
-    NEW_PR_TOKENS="$NEW_PR_TOKENS"$'\n'"$PR_TOKEN"
-    PR_IDS_TO_CLOSE+=("$SOURCE_PR_ID")
-    echo "------------------------------------------------------"
-done
 
-# If no valid packages were successfully processed, stop here
-if [ -z "$NEW_PR_TOKENS" ]; then
-    echo "No valid source PRs were staging-approved or matched target criteria. Exiting."
-    exit 0
-fi
+    OPEN_PR_LIST=$(tea pr list --repo "$REPO" --state open --output json)
+    NEW_PR_TOKENS=""
+    declare -a PR_IDS_TO_CLOSE=()
 
-# --- Combine the Descriptions ---
-# Inject all accumulated new PR tokens right below the existing target tracking strings
-NEW_BODY=$(echo "$TARGET_BODY" | awk -v tokens="$NEW_PR_TOKENS" '
-    /^PR: GNOME\// { last_pr_line = NR }
-    { lines[NR] = $0 }
-    END {
-        for (i = 1; i <= NR; i++) {
-            print lines[i]
-            if (i == last_pr_line) {
-                print tokens
+    for SOURCE_PACKAGE in "$@"; do
+        echo "Processing package: '$SOURCE_PACKAGE'..."
+        SOURCE_PR_ID=$(echo "$OPEN_PR_LIST" | jq -r ".[] | select(.title | contains(\"$SOURCE_PACKAGE\")) | .index")
+        
+        if [ -z "$SOURCE_PR_ID" ] || [ "$SOURCE_PR_ID" = "null" ]; then
+            echo "--> ERROR: Could not find an open PR for package '$SOURCE_PACKAGE'. Skipping!"
+            continue
+        fi
+
+        SOURCE_JSON=$(tea pr --repo "$REPO" "$SOURCE_PR_ID" --output json)
+        SOURCE_BRANCH=$(echo "$SOURCE_JSON" | jq -r '.base')
+        SOURCE_BODY=$(echo "$SOURCE_JSON" | jq -r '.body')
+
+        if [ "$TARGET_BRANCH" != "$SOURCE_BRANCH" ]; then
+            echo "--> CRITICAL BRANCH MISMATCH for '$SOURCE_PACKAGE' (#$SOURCE_PR_ID)! Skipping."
+            continue
+        fi
+
+        PR_TOKEN=$(echo "$SOURCE_BODY" | grep -E '^PR: GNOME/[A-Za-z0-9_-]+![0-9]+' || true)
+        if [ -z "$PR_TOKEN" ]; then
+            echo "--> ERROR: No valid reference token found in PR #$SOURCE_PR_ID. Skipping."
+            continue
+        fi
+
+        echo "--> Staging PR #$SOURCE_PR_ID reference: $PR_TOKEN"
+        NEW_PR_TOKENS="$NEW_PR_TOKENS"$'\n'"$PR_TOKEN"
+        PR_IDS_TO_CLOSE+=("$SOURCE_PR_ID")
+    done
+
+    if [ -z "$NEW_PR_TOKENS" ]; then
+        echo "No valid packages were processed. Exiting."
+        exit 0
+    fi
+
+    NEW_BODY=$(echo "$TARGET_BODY" | awk -v tokens="$NEW_PR_TOKENS" '
+        /^PR: GNOME\// { last_pr_line = NR }
+        { lines[NR] = $0 }
+        END {
+            for (i = 1; i <= NR; i++) {
+                print lines[i]
+                if (i == last_pr_line) {
+                    print tokens
+                }
             }
         }
-    }
-')
+    ')
 
-echo "=== Updating Target PR #$TARGET_PR_ID with grouped tokens ==="
-TMP_BODY_FILE=$(mktemp)
-echo "$NEW_BODY" > "$TMP_BODY_FILE"
+    echo "=== Updating Target PR #$TARGET_ID ==="
+    tea pr edit "$TARGET_ID" --repo "$REPO" --description "$NEW_BODY"
 
-tea pr edit "$TARGET_PR_ID" --repo "$REPO" --description "$(cat "$TMP_BODY_FILE")"
-rm -f "$TMP_BODY_FILE"
-echo "Target PR description updated successfully!"
+    echo "=== Closing Absorbed Source PRs ==="
+    for CLOSE_ID in "${PR_IDS_TO_CLOSE[@]}"; do
+        tea pr close "$CLOSE_ID" --repo "$REPO"
+    done
+    echo "=== Done! Packages successfully selected into group #$TARGET_ID ==="
 
-# --- Clean up and Close all processed Source PRs ---
-echo "=== Closing absorbed Source PRs ==="
-for CLOSE_ID in "${PR_IDS_TO_CLOSE[@]}"; do
-    tea pr close "$CLOSE_ID" --repo "$REPO"
-    echo "Closed PR #$CLOSE_ID"
-done
+# ---------------------------------------------------------------------
+# MODE 2: UNSELECT (Remove a single package from this group)
+# ---------------------------------------------------------------------
+elif [ "$COMMAND" = "unselect" ]; then
+    PACKAGE_TO_REMOVE="$1"
+    if [ -z "$PACKAGE_TO_REMOVE" ]; then usage; fi
 
-echo "=== Batch Combination Complete! ==="
+    echo "=== Attempting to remove package '$PACKAGE_TO_REMOVE' from PR #$TARGET_ID ==="
+
+    if ! echo "$TARGET_BODY" | grep -qE "^PR: GNOME/$PACKAGE_TO_REMOVE!"; then
+        echo "Error: Package '$PACKAGE_TO_REMOVE' not found in PR #$TARGET_ID description."
+        exit 1
+    fi
+
+    NEW_BODY=$(echo "$TARGET_BODY" | grep -vE "^PR: GNOME/$PACKAGE_TO_REMOVE!" || true)
+
+    tea pr edit "$TARGET_ID" --repo "$REPO" --description "$NEW_BODY"
+    echo "Done! Successfully removed '$PACKAGE_TO_REMOVE' from PR #$TARGET_ID."
+
+# ---------------------------------------------------------------------
+# MODE 3: COMBINE (Merge another pre-existing group PR into this group)
+# ---------------------------------------------------------------------
+elif [ "$COMMAND" = "combine" ]; then
+    SOURCE_ID="$1"
+    if [ -z "$SOURCE_ID" ]; then usage; fi
+
+    echo "=== Fetching Source PR #$SOURCE_ID to merge into #$TARGET_ID ==="
+    SOURCE_JSON=$(tea pr --repo "$REPO" "$SOURCE_ID" --output json)
+    SOURCE_BRANCH=$(echo "$SOURCE_JSON" | jq -r '.base')
+    SOURCE_BODY=$(echo "$SOURCE_JSON" | jq -r '.body')
+
+    if [ "$TARGET_BRANCH" != "$SOURCE_BRANCH" ]; then
+        echo "CRITICAL ERROR: Branch mismatch! Target is '$TARGET_BRANCH', Source is '$SOURCE_BRANCH'."
+        exit 1
+    fi
+
+    SOURCE_TOKENS=$(echo "$SOURCE_BODY" | grep -E '^PR: GNOME/[A-Za-z0-9_-]+![0-9]+' || true)
+    if [ -z "$SOURCE_TOKENS" ]; then
+        echo "Error: No valid tracking tokens found in source PR #$SOURCE_ID"
+        exit 1
+    fi
+
+    NEW_BODY=$(echo "$TARGET_BODY" | awk -v tokens="$SOURCE_TOKENS" '
+        /^PR: GNOME\// { last_pr_line = NR }
+        { lines[NR] = $0 }
+        END {
+            for (i = 1; i <= NR; i++) {
+                print lines[i]
+                if (i == last_pr_line) {
+                    print tokens
+                }
+            }
+        }
+    ')
+
+    echo "=== Updating Target PR #$TARGET_ID ==="
+    tea pr edit "$TARGET_ID" --repo "$REPO" --description "$NEW_BODY"
+
+    echo "=== Closing Source PR #$SOURCE_ID ==="
+    tea pr close "$SOURCE_ID" --repo "$REPO"
+    echo "Done! Group PR #$SOURCE_ID has been combined into #$TARGET_ID."
+
+else
+    usage
+fi
