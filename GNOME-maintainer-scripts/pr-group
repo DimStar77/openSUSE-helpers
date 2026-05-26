@@ -8,23 +8,24 @@ usage() {
     echo "  pr-group select <target-pr-id> <package-name> [package2] ..."
     echo "  pr-group unselect <target-pr-id> <package-name>"
     echo "  pr-group combine <target-pr-id> <source-pr-id>"
+    echo "  pr-group disintegrate <target-pr-id>"
     echo ""
     echo "Examples:"
     echo "  pr-group select 516 papers liferea"
     echo "  pr-group unselect 516 papers"
     echo "  pr-group combine 516 517"
+    echo "  pr-group disintegrate 516"
     exit 1
 }
 
 COMMAND="$1"
 TARGET_ID="$2"
-shift 2 || usage # Pop COMMAND and TARGET_ID, leaving remaining args in $@
+shift 2 || usage # Pop COMMAND and TARGET_ID
 
 if [ -z "$COMMAND" ] || [ -z "$TARGET_ID" ]; then
     usage
 fi
 
-# Fetch target PR details up front
 echo "=== Fetching Target PR #$TARGET_ID ==="
 TARGET_JSON=$(tea pr --repo "$REPO" "$TARGET_ID" --output json)
 TARGET_BRANCH=$(echo "$TARGET_JSON" | jq -r '.base')
@@ -33,15 +34,16 @@ TARGET_BODY=$(echo "$TARGET_JSON" | jq -r '.body')
 echo "Target Branch: $TARGET_BRANCH"
 echo "------------------------------------------------------"
 
+# Extract all valid token lines
+ALL_TOKENS=$(echo "$TARGET_BODY" | grep -E "^PR: GNOME/[A-Za-z0-9_-]+![0-9]+" || true)
+FIRST_TOKEN_LINE=$(echo "$ALL_TOKENS" | head -n 1 || true)
+HOST_PACKAGE=$(echo "$FIRST_TOKEN_LINE" | awk -F '[/!]' '{print $2}')
+
 # ---------------------------------------------------------------------
-# MODE 1: SELECT (Add one or more raw package PRs into this group)
+# MODE 1: SELECT
 # ---------------------------------------------------------------------
 if [ "$COMMAND" = "select" ]; then
-    if [ $# -eq 0 ]; then
-        echo "Error: Please specify at least one package name to select."
-        exit 1
-    fi
-
+    if [ $# -eq 0 ]; then usage; fi
     OPEN_PR_LIST=$(tea pr list --repo "$REPO" --state open --output json)
     NEW_PR_TOKENS=""
     declare -a PR_IDS_TO_CLOSE=()
@@ -75,10 +77,7 @@ if [ "$COMMAND" = "select" ]; then
         PR_IDS_TO_CLOSE+=("$SOURCE_PR_ID")
     done
 
-    if [ -z "$NEW_PR_TOKENS" ]; then
-        echo "No valid packages were processed. Exiting."
-        exit 0
-    fi
+    if [ -z "$NEW_PR_TOKENS" ]; then exit 0; fi
 
     NEW_BODY=$(echo "$TARGET_BODY" | awk -v tokens="$NEW_PR_TOKENS" '
         /^PR: GNOME\// { last_pr_line = NR }
@@ -93,57 +92,61 @@ if [ "$COMMAND" = "select" ]; then
         }
     ')
 
-    echo "=== Updating Target PR #$TARGET_ID ==="
     tea pr edit "$TARGET_ID" --repo "$REPO" --description "$NEW_BODY"
-
-    echo "=== Closing Absorbed Source PRs ==="
     for CLOSE_ID in "${PR_IDS_TO_CLOSE[@]}"; do
         tea pr close "$CLOSE_ID" --repo "$REPO"
     done
     echo "=== Done! Packages successfully selected into group #$TARGET_ID ==="
 
 # ---------------------------------------------------------------------
-# MODE 2: UNSELECT (Remove a single package from this group)
+# MODE 2: UNSELECT (With Host Protection & Auto-Reopen)
 # ---------------------------------------------------------------------
 elif [ "$COMMAND" = "unselect" ]; then
     PACKAGE_TO_REMOVE="$1"
     if [ -z "$PACKAGE_TO_REMOVE" ]; then usage; fi
 
-    echo "=== Attempting to remove package '$PACKAGE_TO_REMOVE' from PR #$TARGET_ID ==="
-
-    if ! echo "$TARGET_BODY" | grep -qE "^PR: GNOME/$PACKAGE_TO_REMOVE!"; then
-        echo "Error: Package '$PACKAGE_TO_REMOVE' not found in PR #$TARGET_ID description."
+    if [ "$PACKAGE_TO_REMOVE" = "$HOST_PACKAGE" ]; then
+        echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+        echo "CRITICAL WARNING: Danger Zone!"
+        echo "You cannot unselect '$PACKAGE_TO_REMOVE' because it is the original HOST."
+        echo "To break apart this group safely, use: pr-group disintegrate $TARGET_ID"
+        echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
         exit 1
     fi
 
-    NEW_BODY=$(echo "$TARGET_BODY" | grep -vE "^PR: GNOME/$PACKAGE_TO_REMOVE!" || true)
+    FULL_TOKEN_LINE=$(echo "$TARGET_BODY" | grep -E "^PR: GNOME/$PACKAGE_TO_REMOVE![0-9]+" || true)
+    if [ -z "$FULL_TOKEN_LINE" ]; then
+        echo "Error: Package '$PACKAGE_TO_REMOVE' not found in PR #$TARGET_ID."
+        exit 1
+    fi
 
+    SUB_REPO=$(echo "$FULL_TOKEN_LINE" | awk -F '[ :!]' '{print $3}')
+    ORIGINAL_PR_ID=$(echo "$FULL_TOKEN_LINE" | awk -F '!' '{print $2}')
+
+    NEW_BODY=$(echo "$TARGET_BODY" | grep -vE "^PR: GNOME/$PACKAGE_TO_REMOVE!" || true)
     tea pr edit "$TARGET_ID" --repo "$REPO" --description "$NEW_BODY"
-    echo "Done! Successfully removed '$PACKAGE_TO_REMOVE' from PR #$TARGET_ID."
+
+    echo "=== Reopening original package PR #$ORIGINAL_PR_ID in $SUB_REPO ==="
+    tea pr reopen "$ORIGINAL_PR_ID" --repo "$SUB_REPO" || true
+    echo "=== Done! Successfully unselected and restored '$PACKAGE_TO_REMOVE' ==="
 
 # ---------------------------------------------------------------------
-# MODE 3: COMBINE (Merge another pre-existing group PR into this group)
+# MODE 3: COMBINE
 # ---------------------------------------------------------------------
 elif [ "$COMMAND" = "combine" ]; then
     SOURCE_ID="$1"
     if [ -z "$SOURCE_ID" ]; then usage; fi
 
-    echo "=== Fetching Source PR #$SOURCE_ID to merge into #$TARGET_ID ==="
     SOURCE_JSON=$(tea pr --repo "$REPO" "$SOURCE_ID" --output json)
     SOURCE_BRANCH=$(echo "$SOURCE_JSON" | jq -r '.base')
     SOURCE_BODY=$(echo "$SOURCE_JSON" | jq -r '.body')
 
     if [ "$TARGET_BRANCH" != "$SOURCE_BRANCH" ]; then
-        echo "CRITICAL ERROR: Branch mismatch! Target is '$TARGET_BRANCH', Source is '$SOURCE_BRANCH'."
+        echo "CRITICAL ERROR: Branch mismatch!"
         exit 1
     fi
 
     SOURCE_TOKENS=$(echo "$SOURCE_BODY" | grep -E '^PR: GNOME/[A-Za-z0-9_-]+![0-9]+' || true)
-    if [ -z "$SOURCE_TOKENS" ]; then
-        echo "Error: No valid tracking tokens found in source PR #$SOURCE_ID"
-        exit 1
-    fi
-
     NEW_BODY=$(echo "$TARGET_BODY" | awk -v tokens="$SOURCE_TOKENS" '
         /^PR: GNOME\// { last_pr_line = NR }
         { lines[NR] = $0 }
@@ -157,12 +160,51 @@ elif [ "$COMMAND" = "combine" ]; then
         }
     ')
 
-    echo "=== Updating Target PR #$TARGET_ID ==="
     tea pr edit "$TARGET_ID" --repo "$REPO" --description "$NEW_BODY"
-
-    echo "=== Closing Source PR #$SOURCE_ID ==="
     tea pr close "$SOURCE_ID" --repo "$REPO"
     echo "Done! Group PR #$SOURCE_ID has been combined into #$TARGET_ID."
+
+# ---------------------------------------------------------------------
+# MODE 4: DISINTEGRATE (The Escape Hatch)
+# ---------------------------------------------------------------------
+elif [ "$COMMAND" = "disintegrate" ]; then
+    echo "=== Initiating Disintegration Protocol for Group PR #$TARGET_ID ==="
+    
+    # Isolate all lines EXCEPT the first tracking line (these are the peer tokens we need to revive)
+    PEER_TOKENS=$(echo "$ALL_TOKENS" | tail -n +2 || true)
+
+    if [ -z "$PEER_TOKENS" ]; then
+        echo "This PR doesn't have any grouped peer packages. It is already a standalone PR for '$HOST_PACKAGE'."
+        exit 0
+    fi
+
+    echo "Host package to preserve: $HOST_PACKAGE ($FIRST_TOKEN_LINE)"
+    echo "------------------------------------------------------"
+    echo "Reopening all sub-package PRs in parallel..."
+
+    # Loop through peer tokens and fire off background reopen jobs
+    echo "$PEER_TOKENS" | while read -r LINE; do
+        if [ -n "$LINE" ]; then
+            SUB_REPO=$(echo "$LINE" | awk -F '[ :!]' '{print $3}')
+            ORIGINAL_PR_ID=$(echo "$LINE" | awk -F '!' '{print $2}')
+            
+            (
+                echo "--> Reopening #$ORIGINAL_PR_ID in $SUB_REPO..."
+                tea pr reopen "$ORIGINAL_PR_ID" --repo "$SUB_REPO" >/dev/null 2>&1 || echo "    FAILED to reopen #$ORIGINAL_PR_ID in $SUB_REPO"
+            ) &
+        fi
+    done
+    wait
+
+    # Reconstruct the target body: filter out all peer PR tokens, keeping only the host token
+    # We do a grep -v using the PEER_TOKENS content to cleanly reset the file description
+    NEW_BODY=$(echo "$TARGET_BODY" | grep -F -v "$PEER_TOKENS" || true)
+
+    echo "------------------------------------------------------"
+    echo "=== Resetting PR #$TARGET_ID description to Host-Only ==="
+    tea pr edit "$TARGET_ID" --repo "$REPO" --description "$NEW_BODY"
+    
+    echo "=== Disintegration Complete! PR #$TARGET_ID has been reset back to standalone '$HOST_PACKAGE' ==="
 
 else
     usage
