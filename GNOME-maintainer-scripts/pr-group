@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+set -e
+
+# Configuration
+REPO="GNOME/_ObsPrj"
+
+TARGET_PR_ID="$1"
+shift # Remove the target ID from the arguments list, leaving only the package names
+
+if [ -z "$TARGET_PR_ID" ] || [ $# -eq 0 ]; then
+    echo "Usage: pr-select <target-pr-id> <package1> [package2] [package3] ..."
+    echo "Example: pr-select 516 atkmm papers liferea"
+    exit 1
+fi
+
+echo "=== Fetching details for Target PR #$TARGET_PR_ID ==="
+TARGET_JSON=$(tea pr --repo "$REPO" "$TARGET_PR_ID" --output json)
+TARGET_BRANCH=$(echo "$TARGET_JSON" | jq -r '.base')
+TARGET_BODY=$(echo "$TARGET_JSON" | jq -r '.body')
+
+echo "Target Branch: $TARGET_BRANCH"
+echo "------------------------------------------------------"
+
+# Fetch the global list of open PRs once to save API calls
+echo "=== Fetching active open PR list ==="
+OPEN_PR_LIST=$(tea pr list --repo "$REPO" --state open --output json)
+
+NEW_PR_TOKENS=""
+declare -a PR_IDS_TO_CLOSE=()
+
+# Loop through all packages provided in the command line arguments
+for SOURCE_PACKAGE in "$@"; do
+    echo "Processing package: '$SOURCE_PACKAGE'..."
+    
+    # Find the PR ID for this package from the cache
+    SOURCE_PR_ID=$(echo "$OPEN_PR_LIST" | jq -r ".[] | select(.title == \"Forwarded PRs: $SOURCE_PACKAGE\") | .index")
+    
+    if [ -z "$SOURCE_PR_ID" ] || [ "$SOURCE_PR_ID" = "null" ]; then
+        echo "--> ERROR: Could not find an open PR for package '$SOURCE_PACKAGE'. Skipping!"
+        echo "------------------------------------------------------"
+        continue
+    fi
+    
+    # Fetch this specific source PR's JSON details
+    SOURCE_JSON=$(tea pr --repo "$REPO" "$SOURCE_PR_ID" --output json)
+    SOURCE_BRANCH=$(echo "$SOURCE_JSON" | jq -r '.base')
+    SOURCE_BODY=$(echo "$SOURCE_JSON" | jq -r '.body')
+    
+    # --- Security Validation Layer ---
+    if [ "$TARGET_BRANCH" != "$SOURCE_BRANCH" ]; then
+        echo "--> CRITICAL ERROR: Target branch mismatch for '$SOURCE_PACKAGE' (#$SOURCE_PR_ID)!"
+        echo "    Target PR #$TARGET_PR_ID targets: '$TARGET_BRANCH'"
+        echo "    Source PR #$SOURCE_PR_ID targets: '$SOURCE_BRANCH'"
+        echo "    Skipping this package to avoid release target corruption."
+        echo "------------------------------------------------------"
+        continue
+    fi
+    
+    # --- Extract the PR Token ---
+    PR_TOKEN=$(echo "$SOURCE_BODY" | grep -E '^PR: GNOME/[A-Za-z0-9_-]+![0-9]+' || true)
+    
+    if [ -z "$PR_TOKEN" ]; then
+        echo "--> ERROR: Could not find 'PR: GNOME/...' reference string in PR #$SOURCE_PR_ID. Skipping!"
+        echo "------------------------------------------------------"
+        continue
+    fi
+    
+    echo "--> Found PR #$SOURCE_PR_ID ($SOURCE_BRANCH). Reference: $PR_TOKEN"
+    
+    # Keep track of tokens to add and PRs to close
+    NEW_PR_TOKENS="$NEW_PR_TOKENS"$'\n'"$PR_TOKEN"
+    PR_IDS_TO_CLOSE+=("$SOURCE_PR_ID")
+    echo "------------------------------------------------------"
+done
+
+# If no valid packages were successfully processed, stop here
+if [ -z "$NEW_PR_TOKENS" ]; then
+    echo "No valid source PRs were staging-approved or matched target criteria. Exiting."
+    exit 0
+fi
+
+# --- Combine the Descriptions ---
+# Inject all accumulated new PR tokens right below the existing target tracking strings
+NEW_BODY=$(echo "$TARGET_BODY" | awk -v tokens="$NEW_PR_TOKENS" '
+    /^PR: GNOME\// { last_pr_line = NR }
+    { lines[NR] = $0 }
+    END {
+        for (i = 1; i <= NR; i++) {
+            print lines[i]
+            if (i == last_pr_line) {
+                print tokens
+            }
+        }
+    }
+')
+
+echo "=== Updating Target PR #$TARGET_PR_ID with grouped tokens ==="
+TMP_BODY_FILE=$(mktemp)
+echo "$NEW_BODY" > "$TMP_BODY_FILE"
+
+tea pr edit "$TARGET_PR_ID" --repo "$REPO" --description "$(cat "$TMP_BODY_FILE")"
+rm -f "$TMP_BODY_FILE"
+echo "Target PR description updated successfully!"
+
+# --- Clean up and Close all processed Source PRs ---
+echo "=== Closing absorbed Source PRs ==="
+for CLOSE_ID in "${PR_IDS_TO_CLOSE[@]}"; do
+    tea pr close "$CLOSE_ID" --repo "$REPO"
+    echo "Closed PR #$CLOSE_ID"
+done
+
+echo "=== Batch Combination Complete! ==="

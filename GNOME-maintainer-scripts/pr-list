@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -e
+
+REPO="GNOME/_ObsPrj"
+
+echo "=== Fetching active open PR summaries... ==="
+# Get the basic list of open PR indexes
+PR_IDS=$(tea pr list --repo "$REPO" --state open --output json | jq -r '.[].index')
+
+if [ -z "$PR_IDS" ]; then
+    echo "No open PRs found."
+    exit 0
+fi
+
+echo "=== Resolving target branches in parallel... ==="
+TMP_DIR=$(mktemp -d)
+
+# Fetch individual PR JSON details concurrently in the background
+for ID in $PR_IDS; do
+    (
+        # Grab the individual JSON, extract what we need, and dump to a temp file
+        tea pr "$ID" --repo "$REPO" --output json > "$TMP_DIR/$ID.json" 2>/dev/null
+    ) &
+done
+
+# Wait for all background API calls to finish
+wait
+
+echo "------------------------------------------------------------"
+echo -e "INDEX\tTARGET BRANCH\tPACKAGE / TITLE"
+echo -e "-----\t-------------\t---------------"
+
+# Process all the gathered JSON files, sort by target branch, then index, and print
+cat "$TMP_DIR"/*.json | jq -r '
+  [ .index, .base, (.title | sub("Forwarded PRs: "; "")) ] | @tsv
+' | sort -k2,2 -k1,1n | column -t -s $'\t'
+
+# Clean up temp directory
+rm -rf "$TMP_DIR"
