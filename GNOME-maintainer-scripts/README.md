@@ -45,4 +45,10 @@ Shows an overview of what packages in GNOME/ have a diff on their
  factory branch vs the package in pool (i.e what needs to be submitted
  to Factory
 
+# pr_manage.py
+Manages Pull Requests (PRs) in the GNOME/_ObsPrj repository. Allows grouping
+multiple package PRs into a single group PR, unselecting packages, and
+signaling approval for staging.
+See [PR_MANAGE_MANUAL.md](PR_MANAGE_MANUAL.md) for detailed usage.
+
 
