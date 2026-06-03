@@ -1,7 +1,7 @@
+#!/bin/bash
 
-
-if [ ! -d .osc ]; then
-  echo "This seems not to be an osc checkout - aborting"
+if [ ! -f _service ]; then
+  echo "Found no _service file - aborting"
   exit 1
 fi
 
@@ -11,15 +11,10 @@ else
   REV="$1"
 fi
 
-if [ ! -f _service ]; then
-  echo "Package has not been converted to a _service managed package"
-  exit 3
-fi
-
 PKGNAME=$(awk -F'[<>]' '/<param name="url">/ { gsub(/\.git$/, "", $3); n=split($3,a,"/"); print a[n]; exit }' _service)
 OLD_REV=$(awk '/commit:/ {print $2}' ${PKGNAME}.obsinfo 2>/dev/null)
 
-rm *.obscpio 2> /dev/null
+rm *.obscpio *.tar.xz 2> /dev/null
 
 sed -i '1,/<param name="revision">/s|<param name="revision">[^<]*</param>|<param name="revision">'"$REV"'</param>|' _service
 osc service mr
@@ -42,5 +37,5 @@ if [ "$OLD_REV" != "$NEW_REV" ]; then
   rm .NEWS
 fi
 
-osc ar
+
 
