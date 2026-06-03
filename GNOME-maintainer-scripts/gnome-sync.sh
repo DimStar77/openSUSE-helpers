@@ -44,13 +44,23 @@ sync_project() {
         # Snap parent to the Bot's state
         git reset --hard "origin/$CURRENT_BRANCH"
         
-        # Update URLs and Pointers
+        # 3. Submodule Sync & Branch Re-attachment
+        # Ensure submodules are synced and initialized at the superproject's recorded commits
         git submodule sync --recursive --quiet
-        
-        # Standard update (Compatible with older Git versions)
-        # We use --init to catch new ones and --recursive for nested ones
         git submodule update --init --recursive --jobs $JOBS
         
+        echo "🌿 Re-attaching submodules to branch: $CURRENT_BRANCH"
+        # 1. Set submodules to track the parent's branch
+        # 2. Checkout the branch to avoid detached HEAD
+        git submodule foreach --quiet --recursive "
+            git -C \"\$toplevel\" config submodule.\$name.branch $CURRENT_BRANCH
+            git checkout -q $CURRENT_BRANCH 2>/dev/null || true
+        "
+
+        # 3. Parallel pull/update to the tip of the branch (equivalent to git pull for all submodules)
+        echo "🚀 Pulling latest changes for 500+ submodules (Parallel)..."
+        git submodule update --remote --merge --jobs $JOBS
+
         # This is the "Safety Valve": it cleans up folders of submodules 
         # that were removed from the index, effectively doing what --prune intended.
         git clean -dff
