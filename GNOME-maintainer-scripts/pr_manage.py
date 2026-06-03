@@ -7,6 +7,7 @@ import sys
 import urllib.request
 import yaml
 from pathlib import Path
+from typing import Optional
 from concurrent.futures import ThreadPoolExecutor
 from colorama import init, Fore, Style
 
@@ -82,7 +83,7 @@ class GiteaClient:
 
 
 # ---------------------------------------------------------------------
-# WORKFLOW UTILITIES
+# WORKFLOW UTILITIES & RELATIONSHIP GRAPH ENGINE
 # ---------------------------------------------------------------------
 client = GiteaClient()
 
@@ -101,6 +102,23 @@ def get_branch_color(branch_name: str) -> str:
     if branch_name == "next":
         return Fore.CYAN
     return Fore.YELLOW
+
+def find_forwarded_child_id(sub_repo: str, parent_id: str) -> Optional[int]:
+    """
+    Scans the parent component PR timeline events to find the first
+    native relationship link leading back to a child PR in GNOME/_ObsPrj.
+    """
+    try:
+        timeline = client.request(f"repos/{sub_repo}/issues/{parent_id}/timeline")
+        for event in timeline:
+            ref_issue = event.get("ref_issue")
+            if ref_issue:
+                repo_name = ref_issue.get("repository", {}).get("name", "")
+                if repo_name == "_ObsPrj":
+                    return int(ref_issue["number"])
+    except Exception as e:
+        print(f"{Fore.RED}Warning: Failed to look up child PR mapping for {sub_repo}!{parent_id}: {e}")
+    return None
 
 
 # ---------------------------------------------------------------------
@@ -137,13 +155,10 @@ def action_list(filter_branch: str = None):
         b_color = get_branch_color(branch)
         raw_title = r["title"].replace("Forwarded PRs: ", "")
         
-        # Extract the absolute host package from the immutable head reference string
-        # Example: "PR_atkmm1_6#1" -> "atkmm1_6"
+        # Extract the host package name out of the immutable git branch head reference
         head_ref = r.get("head", {}).get("ref", "")
         if head_ref and head_ref.startswith("PR_"):
             host_package = head_ref.replace("PR_", "").split("#")[0]
-            
-            # Tokenize all packages listed in the title
             packages = [p.strip() for p in raw_title.split(",")]
             
             if host_package in packages:
@@ -151,17 +166,18 @@ def action_list(filter_branch: str = None):
                 host_str = f"{Fore.YELLOW}{Style.BRIGHT}★ {host_package}{Style.RESET_ALL}"
                 
                 if packages:
+                    # Inherit system terminal text default configurations for high contrast
                     peer_str = f" (+ {', '.join(packages)})"
                     clean_title = f"{host_str}{Style.RESET_ALL}{peer_str}"
                 else:
                     clean_title = host_str
             else:
-                # Fallback if the host package naming doesn't exactly align with the title string
                 clean_title = f"{Fore.YELLOW}{Style.BRIGHT}★ {host_package}{Style.RESET_ALL} (+ {raw_title})"
         else:
             clean_title = raw_title
 
         print(f"{Fore.WHITE}{r['number']:<8} {b_color}{branch:<15} {Style.RESET_ALL}{clean_title}")
+
 
 def action_select(target_id: int, source_packages: list[str]):
     target = get_pr_details(target_id)
@@ -195,7 +211,7 @@ def action_select(target_id: int, source_packages: list[str]):
             print(f"--> {Fore.RED}ERROR: No valid reference token found in PR #{source['number']}. Skipping.")
             continue
 
-        print(f"--> Staging reference line: {Fore.LIGHTBLACK_EX}{tokens[0]}")
+        print(f"--> Staging reference line: {Style.DIM}{tokens[0]}")
         new_tokens.append(tokens[0])
         ids_to_close.append(source["number"])
 
@@ -241,13 +257,20 @@ def action_unselect(target_id: int, package: str):
         return
 
     sub_repo = target_token_line.split()[1].split("!")[0]
-    sub_id = target_token_line.split("!")[1]
+    parent_id = target_token_line.split("!")[1]
+
+    print(f"Resolving forwarded child PR ID for {package} via parent #{parent_id} timeline...")
+    child_id = find_forwarded_child_id(sub_repo, parent_id)
+
+    if not child_id:
+        print(f"{Fore.RED}Error: Could not resolve the forwarded child PR ID for '{package}'. Aborting unselect.")
+        return
 
     new_body = "\n".join([line for line in target["body"].splitlines() if not line.startswith(f"PR: GNOME/{package}!")])
     client.request(f"repos/{REPO}/pulls/{target_id}", method="PATCH", data={"body": new_body})
 
-    print(f"=== Reopening original package PR #{sub_id} in {sub_repo} ===")
-    client.request(f"repos/{sub_repo}/pulls/{sub_id}", method="PATCH", data={"state": "open"})
+    print(f"=== Reopening original forwarded child PR #{child_id} in {REPO} ===")
+    client.request(f"repos/{REPO}/pulls/{str(child_id)}", method="PATCH", data={"state": "open"})
     print(f"=== {Fore.GREEN}Done! Successfully unselected and restored '{package}' ===")
 
 
@@ -287,16 +310,22 @@ def action_disintegrate(target_id: int):
         return
 
     peer_tokens = all_tokens[1:]
-    print("Reopening all sub-package PRs in parallel...")
+    print("Resolving and reopening all forwarded child PRs in parallel...")
 
-    def reopen_pr(tok_line: str):
+    def restore_child_pr(tok_line: str):
         sub_repo = tok_line.split()[1].split("!")[0]
-        sub_id = tok_line.split("!")[1]
-        print(f"--> Reopening #{sub_id} in {sub_repo}...")
-        client.request(f"repos/{sub_repo}/pulls/{sub_id}", method="PATCH", data={"state": "open"})
+        parent_id = tok_line.split("!")[1]
+        package_name = sub_repo.split("/")[-1]
+        
+        child_id = find_forwarded_child_id(sub_repo, parent_id)
+        if child_id:
+            print(f"--> Reopening forwarded child #{child_id} ({package_name}) in {REPO}...")
+            client.request(f"repos/{REPO}/pulls/{str(child_id)}", method="PATCH", data={"state": "open"})
+        else:
+            print(f"--> {Fore.RED}Error: Could not trace child PR for package {package_name}")
 
     with ThreadPoolExecutor(max_workers=5) as executor:
-        list(executor.map(reopen_pr, peer_tokens))
+        list(executor.map(restore_child_pr, peer_tokens))
 
     cleaned_lines = [line for line in target["body"].splitlines() if not any(p in line for p in peer_tokens)]
     client.request(f"repos/{REPO}/pulls/{target_id}", method="PATCH", data={"body": "\n".join(cleaned_lines)})
@@ -307,7 +336,6 @@ def action_accept(target_id: int):
     print(f"=== Signaling Staging Approval for Group PR #{target_id} ===")
     client.request(f"repos/{REPO}/issues/{target_id}/comments", method="POST", data={"body": "merge ok"})
     print(f"{Fore.GREEN}Successfully commented 'merge ok' on PR #{target_id}.")
-    print("The openSUSE staging workflow bots have been notified to process the merge.")
 
 
 # ---------------------------------------------------------------------
