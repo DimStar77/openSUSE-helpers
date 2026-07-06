@@ -6,6 +6,7 @@
 
 
 TMPDIR=$(mktemp -d)
+trap 'rm -rf "${TMPDIR}"' EXIT
 
 for PORT in "" :ARM :PowerPC :zSystems; do osc ls -b openSUSE:Factory${PORT} -r standard; done | sed 's/\.rpm$//' | sort -u > ${TMPDIR}/all_packages
 
@@ -16,6 +17,7 @@ for pkg in $(for word in $(osc meta prjconf openSUSE:Factory | \
     sed "s/Prefer://g"); do echo $word; done | \
     sed "s/^-//g" | \
     sed 's/.*://g' | \
+    grep -v '%' | \
     sort -u); do 
       grep -q "\\s${pkg}$" ${TMPDIR}/all_packages || echo "$pkg";
      done
@@ -32,5 +34,8 @@ echo "### onlybuild|excludebuid: packages to verify - the package names listed h
 echo
 
 for pkg in $(osc meta prjconf openSUSE:Factory | grep "BuildFlags.*build:" | sed -e 's/BuildFlags: //' -e 's/onlybuild://' -e 's/excludebuild://'); do
+      case "$pkg" in
+        *%*) continue ;;
+      esac
       grep -q "^${pkg}$" ${TMPDIR}/all_sources || echo "Drop only|exclude build for $pkg";
   done
