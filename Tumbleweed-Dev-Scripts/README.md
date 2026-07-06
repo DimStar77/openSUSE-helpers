@@ -142,12 +142,12 @@ Below is an alphabetical reference explaining the purpose, syntax, and behaviors
 
 ---
 
-### `print-obsolete-prjconf.sh`
+### `print-obsolete-prjconf.py`
 
 *   **Description:** Scans the `openSUSE:Factory` project configuration (`prjconf`) to detect obsolete or non-existent entries.
 *   **Usage:**
     ```bash
-    ./print-obsolete-prjconf.sh
+    ./print-obsolete-prjconf.py
     ```
 *   **How it works:**
     1.  Assembles a master list of all package binaries built in `openSUSE:Factory` and its architectures/ports (`:ARM`, `:PowerPC`, `:zSystems`).
