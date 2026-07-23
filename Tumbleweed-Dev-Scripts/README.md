@@ -142,6 +142,32 @@ Below is an alphabetical reference explaining the purpose, syntax, and behaviors
 
 ---
 
+### `osc_clean_devel.py`
+
+*   **Description:** Scans, identifies, and cleans up incorrect or redundant `<devel project="..." package="..."/>` tags from package metadata XML on the OBS server. Supports targeted single-package cleaning and project-wide batch cleanup (with a wildcard mode for projects like `openSUSE:Factory:RISCV`).
+*   **Usage:**
+    ```bash
+    ./osc_clean_devel.py [global_options] <command> [args]
+    ```
+*   **Commands:**
+    *   `list`: Scans and lists all packages with the specified or any devel project tags.
+    *   `drop <package>`: Interactively verifies and removes the tag from a single package.
+    *   `drop-all`: Scans, generates, and processes a batch cleanup for all matching packages.
+*   **Key Parameters:**
+    *   `--project <project>`: The target OBS project to scan (default: `openSUSE:Factory`).
+    *   `--devel-project <devel>`: The incorrect devel project target to remove (default: `GNOME:Apps`).
+    *   `--all-devel`: Matches and removes **any** `<devel>` tag regardless of target project (wildcard mode).
+    *   `--dry-run`: Performs a trial run showing unified diffs of proposed changes without writing them back to OBS.
+    *   `-y`, `--yes`: Bypasses all interactive confirmation prompts.
+*   **How it works:**
+    1.  Uses high-performance XPath queries (`devel/@project='...'` or wildcard tautology `devel/@project = devel/@project`) to query the OBS search API, locating matching packages instantly.
+    2.  If `--all-devel` list is requested, retrieves associated package metadata in parallel using a `ThreadPoolExecutor` to display each package's actual devel project inline.
+    3.  Parses metadata XML, surgically removing the target `<devel>` tag while preserving trailing whitespaces and formatting.
+    4.  Presents a clean, colorized unified diff showing exact XML modifications.
+    5.  Saves the corrected XML back to OBS via `osc.core.edit_meta` once approved.
+
+---
+
 ### `print-obsolete-prjconf.py`
 
 *   **Description:** Scans the `openSUSE:Factory` project configuration (`prjconf`) to detect obsolete or non-existent entries.
