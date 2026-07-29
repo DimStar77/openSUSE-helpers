@@ -49,10 +49,30 @@ During review, the helper script automatically flags low-level discrepancies, bu
   - `/usr/share/` $\rightarrow$ `%{_datadir}`
   - `/usr/include/` $\rightarrow$ `%{_includedir}`
 
-### 3. Changes Attribution (`.changes` file)
-- Every request must include or modify a `.changes` file with a properly formatted header:
-  `Day Month Date Hour:Min:Sec UTC Year - Name <email>`
-- The entry must clearly document the version updates, security CVEs (using `[bsc#...]` and `CVE-XXXX-XXXX`), and packaging changes.
+### 3. Changes Attribution & Integrity (`.changes` file)
+- **Formatting & Best Practices (ref: openSUSE changes guidelines):**
+  - **Reverse Chronological Order:** Newest entry goes at the very top.
+  - **Automatic Entry:** Recommend that submitters always use `osc vc` to create/edit entries; it automatically formats the standard header: `Day Month Date Hour:Min:Sec UTC Year - Name <email>`.
+  - **Line Length (Recommendation Only):** Limit lines to **67 characters** (recommended for standard tool wrapping; **do not** decline on this).
+  - **Bullets (Recommendation Only):** First level must be `-`, second level must be `*`. (Avoid third-level indentation or deeper if possible; **do not** decline on this).
+  - **Version Updates:** The first line after the email must specify the version (e.g., `- Update to new upstream release x.y.z:`). If no changelog is available, state `* No changelog was made available.`.
+  - **Security Formatting:** Security CVE entries should use the strict pattern: `- <CVE number> <description> <(bsc number)> <patch name>`.
+  - **Bug Prefixes:** Use `boo#1234` (openSUSE) or `bsc#1234` (SUSE). `bnc#` is obsolete.
+
+- **Content & Volume Management:**
+  - **Relevance:** Focus on user-facing news and package changes (e.g., dependencies, patches). Avoid internal build/tool details.
+  - **Length limit:** If a changelog entry exceeds **30 lines**, summarize and refer to local package docs (e.g., `/usr/share/doc/packages/$name/Changelog.md`).
+  - **Useless Info:** Strip non-openSUSE platform mentions, credits (who reported/fixed), and bare web links to changelogs (which break offline).
+
+- **Context-Aware Integrity & Permitted Edits:**
+  - **Historical Stability:** You **shall not** modify or delete existing components (text between `----------` separators) once checked into official repositories.
+  - **CRITICAL CHECK:** Any large-scale deletion of past history is a critical packaging regression and must be flagged.
+  - **Allowed/Encouraged Minor Edits:** It is **perfectly valid** and acceptable to edit older entries in the `.changes` file *only* for the following:
+    1. Small typo corrections.
+    2. Injecting missing bug/CVE references (e.g. `boo#`/`bsc#` or `CVE-XXXX-XXXX`) into older entries.
+    3. Trimming useless trailing whitespace.
+    4. Merging SLE/openSUSE entries during SP/cross-repo merges (never lose CVE references).
+  - *Review Action:* When reviewing, be fully context-aware: distinguish between safe corrections (small removals for typo/bug fixes) and destructive changelog truncation.
 
 ### 4. Patch Life Cycle Documentation (Strict Guideline)
 - According to the [openSUSE Patch Life Cycle Guidelines](https://en.opensuse.org/openSUSE:Packaging_Patches_guidelines#Patch_life_cycle), **every patch addition, modification, or removal must be explicitly documented in the `.changes` file, including the exact patch filename**.
@@ -60,6 +80,11 @@ During review, the helper script automatically flags low-level discrepancies, bu
 
 ### 5. Shared Library Policy
 - If a shared library (`libre`) gets an SOVERSION bump (e.g. `sover 43` $\rightarrow$ `sover 44`), ensure the subpackage is renamed accordingly (e.g. `libname` becomes `libre44`) and properly handled using `%ldconfig_scriptlets`.
+
+### 6. Source URL & Package Source Verification (Strict Guideline)
+- According to the [openSUSE Package Source Verification Guidelines](https://en.opensuse.org/openSUSE:Package_source_verification), the `Source:` (or `Source0:`) tag should preferably contain a full URL pointing directly to the upstream release tarball.
+- This allows reviewers and automated tools to verify that the local tarball matches the official upstream release.
+- If direct URL referencing is not possible (e.g., tracking an active SCM branch), the source tarball should be generated/fetched using an OBS source service file (`_service`) such as `obs_scm` or `tar_scm`.
 
 ---
 
@@ -83,4 +108,5 @@ When you are asked to review requests, follow this step-by-step workflow:
        ```bash
        python3 osc_review_helper.py comment <request_id> "your custom comment"
        ```
+       *Note: Format your review comments on OBS using Markdown where helpful (e.g., wrap code snippets, config options, or spec declarations in code blocks like \`\`\`...\`\`\`). Also, introduce yourself as Gemini (e.g., "Hi! This is Gemini, reviewing on behalf of the openSUSE review team.") whenever commenting for change.*
      - Remember, do **not** accept or decline requests on your own; always gain explicit user agreement first.

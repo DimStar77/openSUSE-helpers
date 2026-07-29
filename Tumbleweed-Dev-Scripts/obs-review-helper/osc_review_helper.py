@@ -185,9 +185,10 @@ def analyze_spec_diff(filename: str, added_lines: List[str]) -> List[str]:
     return warnings
 
 
-def analyze_changes_diff(filename: str, added_lines: List[str]) -> List[str]:
+def analyze_changes_diff(filename: str, added_lines: List[str], raw_lines: List[str]) -> List[str]:
     """
-    Verifies that added .changes lines include a standard formatted header.
+    Verifies that added .changes lines include a standard formatted header, and
+    performs context-aware checks for accidental deletion of historical changelog entries.
     """
     warnings = []
     has_header = False
@@ -208,9 +209,35 @@ def analyze_changes_diff(filename: str, added_lines: List[str]) -> List[str]:
         warnings.append(
             "The added '.changes' entries do not appear to contain a standard openSUSE changes header line "
             "(e.g., 'Wed Jul 23 12:00:00 UTC 2026 - Name <email>'). Every change must be properly attributed "
-            "(ref: openSUSE Changes Files Guidelines)."
+            "(ref: openSUSE Changes Files Guidelines). Consider using 'osc vc' to automatically format your changes headers."
         )
         
+    # Context-aware analysis of deletions
+    deleted_lines = [line[1:] for line in raw_lines if line.startswith('-') and not line.startswith('---')]
+    
+    # Check if they deleted entry separation boundaries (a standard line of 67-68 hyphens)
+    has_deleted_separator = any(line.strip().startswith('--------------------') for line in deleted_lines)
+    
+    # Check if they deleted older date-stamp headers (which might not have <email> if they were legacy, but match standard date/time format)
+    generic_header_pattern = re.compile(
+        r'^[*-]?\s*[A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+UTC\s+\d{4}\s+-\s+.*'
+    )
+    deleted_headers = [line for line in deleted_lines if generic_header_pattern.match(line.strip())]
+    
+    if deleted_headers or has_deleted_separator:
+        warnings.append(
+            f"CRITICAL WARNING: Accidental deletion of historical changes boundaries or headers detected in '{filename}'. "
+            f"We detected the deletion of {len(deleted_headers)} entry headers and/or separator lines. "
+            "According to official openSUSE guidelines, once a package is checked in, you shall not delete or modify "
+            "past history, except for small typo corrections or adding missing bug/CVE references. Please restore the changelog."
+        )
+    elif len(deleted_lines) > 25:
+        warnings.append(
+            f"WARNING: A substantial amount of text ({len(deleted_lines)} lines) was deleted from '{filename}'. "
+            "Please ensure these edits are limited to minor typo corrections, whitespace cleanup, or bug/CVE additions, "
+            "and that no historical changelog content has been accidentally lost."
+        )
+
     return warnings
 
 
@@ -284,7 +311,7 @@ def run_automated_checks(diff_str: str) -> Dict[str, List[str]]:
         if filename.endswith('.spec'):
             file_warnings.extend(analyze_spec_diff(filename, diff_data['added']))
         elif filename.endswith('.changes'):
-            file_warnings.extend(analyze_changes_diff(filename, diff_data['added']))
+            file_warnings.extend(analyze_changes_diff(filename, diff_data['added'], diff_data['raw']))
             
         if file_warnings:
             all_warnings[filename] = file_warnings
