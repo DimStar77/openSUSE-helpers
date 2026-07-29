@@ -32,7 +32,9 @@ We have developed a custom review helper utility in Python: `osc_review_helper.p
 
 ## 📋 The openSUSE Review Checklist (Guidelines)
 
-During review, the helper script automatically flags low-level discrepancies, but you must combine it with a cognitive review of the diff using this checklist:
+During review, the helper script automatically flags low-level discrepancies, but you must combine it with a cognitive review of the diff using this checklist. 
+
+*Mandate:* All referenced guidelines per topic from the [openSUSE Portal:Packaging Guidelines](https://en.opensuse.org/Portal:Packaging) (and any packaging standard in the `Category:Packaging` namespace) apply as basic rulesets to adhere to.
 
 ### 1. Spec File Header & Structure
 - Must have the standard header pointing to `https://bugs.opensuse.org/` and the copyright boilerplate.
@@ -55,7 +57,8 @@ During review, the helper script automatically flags low-level discrepancies, bu
   - **Automatic Entry:** Recommend that submitters always use `osc vc` to create/edit entries; it automatically formats the standard header: `Day Month Date Hour:Min:Sec UTC Year - Name <email>`.
   - **Line Length (Recommendation Only):** Limit lines to **67 characters** (recommended for standard tool wrapping; **do not** decline on this).
   - **Bullets (Recommendation Only):** First level must be `-`, second level must be `*`. (Avoid third-level indentation or deeper if possible; **do not** decline on this).
-  - **Version Updates:** The first line after the email must specify the version (e.g., `- Update to new upstream release x.y.z:`). If no changelog is available, state `* No changelog was made available.`.
+  - **Version Updates (Strict Guideline):** If a version update is performed, the version number must be explicitly specified somewhere inside the changes entry description (the style is flexible—e.g., `- Update to version 5.0.1:` at the top, or `- 5.0.1` as a bullet at the bottom are both fully acceptable). The entry must also contain a list/description of what is new or has changed (features, bugfixes, etc.). If no upstream changelog is available or if it offers no value, the entry must explicitly state: `* No changelog was made available.` (never leave the update entry empty or without details).
+  - **No Version in Header (Strict Guideline):** The version or release number must **NOT** be appended to the header line (the line containing the date and email). The header line must strictly conform to the `osc vc` standard format.
   - **Security Formatting:** Security CVE entries should use the strict pattern: `- <CVE number> <description> <(bsc number)> <patch name>`.
   - **Bug Prefixes:** Use `boo#1234` (openSUSE) or `bsc#1234` (SUSE). `bnc#` is obsolete.
 
