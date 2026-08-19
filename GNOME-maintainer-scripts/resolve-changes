@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+"""
+openSUSE .changes Conflict Resolver & Git Merge Driver
+Uses Git stage index :1: (ancestor), :2: (ours/next), and :3: (theirs/factory)
+to structurally merge and de-duplicate changelog entries.
+
+This ensures that new entries on the 'next' branch (Stage 2) always sit on the very top,
+followed by the new stable/bugfix entries from 'factory' (Stage 3), and then the 
+common shared older history (Stage 1), preserving the proper package version order
+regardless of overlapping timestamps.
+
+If both branches have new entries, the script automatically 'redates' the new 'next'
+entries to the current system time ('now') to satisfy openSUSE's strict chronological 
+validation requirements while maintaining their relative reverse-chronological order.
+
+It also automatically detects and de-duplicates identical entries caused by cherry-picking
+between branches.
+"""
+
+import os
+import sys
+import time
+import subprocess
+
+def parse_entries_list(content):
+    """Parse a .changes file content into a list of (header, raw_text) entries."""
+    raw_entries = content.split("-------------------------------------------------------------------\n")
+    entries = []
+    for raw in raw_entries:
+        raw = raw.strip()
+        if not raw:
+            continue
+        lines = raw.splitlines()
+        if lines:
+            header = lines[0].strip()
+            entries.append((header, raw))
+    return entries
+
+def get_body(raw_text):
+    """Extract the description body (excluding the header line) of an entry."""
+    lines = raw_text.splitlines()
+    if len(lines) > 1:
+        return "\n".join(lines[1:]).strip()
+    return ""
+
+def redate_entry(entry, timestamp_sec):
+    """Replaced the entry's timestamp in the header with the formatted system time."""
+    header, raw_text = entry
+    struct_time = time.localtime(timestamp_sec)
+    new_dt_str = time.strftime('%a %b %e %H:%M:%S %Z %Y', struct_time)
+    
+    # Split header by " - " or "- " to isolate the author info
+    parts = header.split(" - ", 1)
+    if len(parts) == 2:
+        new_header = f"{new_dt_str} - {parts[1]}"
+    else:
+        parts = header.split("- ", 1)
+        if len(parts) == 2:
+            new_header = f"{new_dt_str} - {parts[1]}"
+        else:
+            new_header = f"{new_dt_str} - anonymous"
+            
+    # Replace the first line (the header) in raw_text
+    lines = raw_text.splitlines()
+    if lines:
+        lines[0] = new_header
+        new_raw_text = "\n".join(lines)
+    else:
+        new_raw_text = raw_text
+        
+    return (new_header, new_raw_text)
+
+def main():
+    # =========================================================================
+    # MODE 1: Git Merge Driver Mode (called natively by Git)
+    # Arguments: %O %A %B %P (Ancestor, Ours, Theirs, Path)
+    # =========================================================================
+    if len(sys.argv) == 5:
+        ancestor_file = sys.argv[1]
+        ours_file = sys.argv[2]
+        theirs_file = sys.argv[3]
+        original_path = sys.argv[4]
+        
+        try:
+            with open(ancestor_file, 'r', encoding='utf-8') as f:
+                stage1_content = f.read()
+            with open(ours_file, 'r', encoding='utf-8') as f:
+                stage2_content = f.read()
+            with open(theirs_file, 'r', encoding='utf-8') as f:
+                stage3_content = f.read()
+        except Exception as e:
+            print(f"❌ Error reading merge driver temp files: {e}", file=sys.stderr)
+            sys.exit(1)
+            
+        print(f"🔄 Git Merge Driver: Structurally merging {original_path}...", file=sys.stderr)
+        
+        stage1_entries = parse_entries_list(stage1_content)
+        stage2_entries = parse_entries_list(stage2_content)
+        stage3_entries = parse_entries_list(stage3_content)
+
+        ancestor_headers = {e[0] for e in stage1_entries}
+        new_next = [e for e in stage2_entries if e[0] not in ancestor_headers]
+        new_factory = [e for e in stage3_entries if e[0] not in ancestor_headers]
+
+        # De-duplicate new_next vs new_factory by body content (handles cherry-picks)
+        cleaned_next = []
+        factory_bodies = {get_body(e[1]) for e in new_factory}
+        for e in new_next:
+            body = get_body(e[1])
+            if body and body in factory_bodies:
+                print(f"🕒 Git Merge Driver: Detected duplicate cherry-picked entry. De-duplicating...", file=sys.stderr)
+                continue
+            cleaned_next.append(e)
+        new_next = cleaned_next
+
+        if new_next and new_factory:
+            print("🕒 Git Merge Driver: Redating 'next' entries to 'now'...", file=sys.stderr)
+            now_ts = time.time()
+            redated_next = []
+            for i, entry in enumerate(new_next):
+                ts = now_ts - i
+                redated_next.append(redate_entry(entry, ts))
+            new_next = redated_next
+
+        final_entries = new_next + new_factory + stage1_entries
+        separator = "-------------------------------------------------------------------\n"
+        merged_output = separator + (separator).join(e[1] + "\n\n" for e in final_entries)
+
+        # In a Git merge driver, we must overwrite Ours (%A) with the merged output
+        with open(ours_file, 'w', encoding='utf-8') as f:
+            f.write(merged_output)
+            
+        print(f"✅ Git Merge Driver: Successfully merged {original_path}!", file=sys.stderr)
+        sys.exit(0) # Exit code 0 tells Git the merge was successful and clean
+
+    # =========================================================================
+    # MODE 2: Interactive CLI Mode (called manually by user)
+    # =========================================================================
+    changes_files = [f for f in os.listdir('.') if f.endswith('.changes')]
+    if not changes_files:
+        print("❌ Error: No .changes file found in the current directory.", file=sys.stderr)
+        sys.exit(1)
+    
+    changes_file = changes_files[0]
+    print(f"🔄 Found conflict in: {changes_file}", file=sys.stderr)
+
+    # Extract Stage 1, Stage 2 and Stage 3 from Git index
+    try:
+        ancestor_proc = subprocess.run(
+            ['git', 'show', f':1:{changes_file}'],
+            check=True, capture_output=True, text=True
+        )
+        stage1_content = ancestor_proc.stdout
+    except subprocess.CalledProcessError:
+        print("❌ Error: Could not read stage 1 (ancestor) from Git index. Are you in a merge conflict?", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        ours_proc = subprocess.run(
+            ['git', 'show', f':2:{changes_file}'],
+            check=True, capture_output=True, text=True
+        )
+        stage2_content = ours_proc.stdout
+    except subprocess.CalledProcessError:
+        print("❌ Error: Could not read stage 2 (ours) from Git index.", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        theirs_proc = subprocess.run(
+            ['git', 'show', f':3:{changes_file}'],
+            check=True, capture_output=True, text=True
+        )
+        stage3_content = theirs_proc.stdout
+    except subprocess.CalledProcessError:
+        print("❌ Error: Could not read stage 3 (theirs) from Git index.", file=sys.stderr)
+        sys.exit(1)
+
+    print("Parsing changelog entries structurally...", file=sys.stderr)
+    stage1_entries = parse_entries_list(stage1_content)
+    stage2_entries = parse_entries_list(stage2_content)
+    stage3_entries = parse_entries_list(stage3_content)
+
+    ancestor_headers = {e[0] for e in stage1_entries}
+
+    new_next = [e for e in stage2_entries if e[0] not in ancestor_headers]
+    new_factory = [e for e in stage3_entries if e[0] not in ancestor_headers]
+
+    # De-duplicate new_next vs new_factory by body content (handles cherry-picks)
+    cleaned_next = []
+    factory_bodies = {get_body(e[1]) for e in new_factory}
+    for e in new_next:
+        body = get_body(e[1])
+        if body and body in factory_bodies:
+            print(f"🕒 Detected duplicate cherry-picked entry. De-duplicating...", file=sys.stderr)
+            continue
+        cleaned_next.append(e)
+    new_next = cleaned_next
+
+    if new_next and new_factory:
+        print("🕒 Redating new 'next' entries to 'now' to satisfy strict chronological rules...", file=sys.stderr)
+        now_ts = time.time()
+        redated_next = []
+        for i, entry in enumerate(new_next):
+            ts = now_ts - i
+            redated_next.append(redate_entry(entry, ts))
+        new_next = redated_next
+
+    final_entries = new_next + new_factory + stage1_entries
+
+    separator = "-------------------------------------------------------------------\n"
+    merged_output = separator + (separator).join(e[1] + "\n\n" for e in final_entries)
+
+    with open(changes_file, 'w', encoding='utf-8') as f:
+        f.write(merged_output)
+    
+    print("Overwrote .changes file with structurally perfect, chronological merge.", file=sys.stderr)
+    
+    subprocess.run(['git', 'add', changes_file], check=True)
+    print("✅ Staged file successfully with 'git add'. Conflict resolved!", file=sys.stderr)
+
+if __name__ == '__main__':
+    main()

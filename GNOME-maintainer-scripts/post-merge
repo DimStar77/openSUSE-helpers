@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""
+openSUSE Packaging post-merge Git Hook
+Runs automatically after a successful git merge or git pull.
+
+It scans the newly created merge commit (HEAD) for any added stable tarballs
+whose version doesn't match the Version: inside your local .spec file,
+and automatically unstages, deletes, and amends the merge commit to completely
+remove the unwanted stable tarball from the git history.
+"""
+
+import sys
+import os
+import re
+import subprocess
+
+def get_spec_version():
+    """Find the local .spec file and extract its Version: value."""
+    spec_files = [f for f in os.listdir('.') if f.endswith('.spec')]
+    if not spec_files:
+        return None
+    spec_file = spec_files[0]
+    try:
+        with open(spec_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                if line.strip().lower().startswith('version:'):
+                    return line.split(':', 1)[1].strip()
+    except Exception:
+        pass
+    return None
+
+def main():
+    spec_version = get_spec_version()
+    if not spec_version:
+        sys.exit(0) # Not a package repo or no spec, exit cleanly
+
+    # 1. Get the list of all files modified/added in the last commit (HEAD)
+    # We pass --name-status to filter out deleted files (status 'D') which cannot be removed!
+    try:
+        res = subprocess.run(
+            ['git', 'diff-tree', '--no-commit-id', '--name-status', '-r', '-m', 'HEAD'],
+            check=True, capture_output=True, text=True
+        )
+        lines = res.stdout.splitlines()
+    except subprocess.CalledProcessError:
+        sys.exit(0)
+
+    committed_files = []
+    for line in lines:
+        parts = line.split('\t', 1)
+        if len(parts) == 2:
+            status, file_path = parts
+            if status in ('A', 'M'): # Only check added or modified files
+                committed_files.append(file_path)
+
+    # 2. Check if any committed files are unwanted tarballs
+    tarball_extensions = ('.tar.xz', '.tar.gz', '.tar.bz2', '.tar.zst', '.zip')
+    unwanted_tarballs = []
+    
+    for file_path in committed_files:
+        if file_path.lower().endswith(tarball_extensions):
+            filename = os.path.basename(file_path)
+            
+            # Strip known extensions first so they don't get matched as part of the version string
+            filename_clean = filename
+            for ext in ('.tar.xz', '.tar.gz', '.tar.bz2', '.tar.zst', '.zip', '.tar'):
+                if filename_clean.lower().endswith(ext):
+                    filename_clean = filename_clean[:-len(ext)]
+            
+            # Extract version-like strings from the cleaned filename
+            match = re.search(r'-([0-9]+(?:\.[0-9a-zA-Z]+)+)', filename_clean)
+            if match:
+                file_version = match.group(1)
+                if file_version != spec_version:
+                    unwanted_tarballs.append(file_path)
+
+    # 3. If any unwanted tarballs were committed, delete them and amend the merge commit
+    if unwanted_tarballs:
+        # De-duplicate the list (since -m lists them against each parent of a merge)
+        unwanted_tarballs = sorted(list(set(unwanted_tarballs)))
+        
+        print(f"🕒 Git Post-Merge Hook: Detected unwanted stable tarball(s) in merge commit: {', '.join(unwanted_tarballs)}", file=sys.stderr)
+        
+        # Remove and unstage the unwanted tarballs
+        for file_path in unwanted_tarballs:
+            subprocess.run(['git', 'rm', '-f', file_path], check=True)
+            
+        # Clean up MERGE_HEAD so Git allows running git commit --amend inside post-merge
+        try:
+            res_git_dir = subprocess.run(
+                ['git', 'rev-parse', '--git-dir'],
+                check=True, capture_output=True, text=True
+            )
+            git_dir = res_git_dir.stdout.strip()
+            merge_head_path = os.path.join(git_dir, 'MERGE_HEAD')
+            if os.path.exists(merge_head_path):
+                os.remove(merge_head_path)
+        except Exception:
+            pass
+
+        # Amend the merge commit to cleanly remove them
+        # We temporarily set GIT_EDITOR=true to prevent git from opening the commit message editor during amend
+        env = os.environ.copy()
+        env['GIT_EDITOR'] = 'true'
+        
+        print("🕒 Git Post-Merge Hook: Amending the merge commit to completely remove unwanted tarball(s)...", file=sys.stderr)
+        subprocess.run(['git', 'commit', '--amend', '--no-edit'], check=True, env=env)
+        print("✅ Git Post-Merge Hook: Merge commit successfully amended and cleaned!", file=sys.stderr)
+
+    sys.exit(0)
+
+if __name__ == '__main__':
+    main()
