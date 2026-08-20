@@ -26,7 +26,7 @@ RESET = "\x1b[0m"
 
 def check_repo_sync(repo_name):
     repo_path = os.path.join('.', repo_name)
-    
+
     # 1. Fetch latest state from origin (src.opensuse.org/<devel_project>/<repo>)
     try:
         subprocess.run(
@@ -45,7 +45,7 @@ def check_repo_sync(repo_name):
         has_origin_factory = True
     except subprocess.CalledProcessError:
         has_origin_factory = False
-        
+
     if not has_origin_factory:
         return repo_name, {
             "status": "error",
@@ -67,7 +67,7 @@ def check_repo_sync(repo_name):
     pool_status = "unknown"
     pool_ahead = 0
     pool_behind = 0
-    
+
     try:
         subprocess.run(
             ['git', '-C', repo_path, 'fetch', '--quiet', pool_url, 'factory'],
@@ -106,7 +106,7 @@ def check_repo_sync(repo_name):
     next_status = "N/A"
     next_ahead = 0
     next_behind = 0
-    
+
     if has_origin_next:
         try:
             res_next = subprocess.run(
@@ -148,9 +148,9 @@ def check_repo_sync(repo_name):
     }
 
 
-def check_repo_version(repo_name):
+def check_repo_version(repo_name, branch=None):
     repo_path = os.path.join('.', repo_name)
-    
+
     # 1. Fetch latest state from origin (src.opensuse.org/<devel_project>/<repo>)
     try:
         subprocess.run(
@@ -169,45 +169,47 @@ def check_repo_version(repo_name):
                 break
     except Exception:
         pass
-        
+
     if not spec_file:
         return repo_name, {
             "status": "error",
             "message": "No spec file found"
         }
 
-    # 3. Get version from factory branch
+    # 3. Get version from factory branch (if checking factory or both)
     factory_ver = None
-    try:
-        res = subprocess.run(
-            ['git', '-C', repo_path, 'show', f'refs/remotes/origin/factory:{spec_file}'],
-            check=True, capture_output=True, text=True
-        )
-        for line in res.stdout.splitlines():
-            if line.strip().lower().startswith('version:'):
-                factory_ver = line.split(':', 1)[1].strip()
-                break
-    except subprocess.CalledProcessError:
-        pass
+    if branch is None or branch == "factory":
+        try:
+            res = subprocess.run(
+                ['git', '-C', repo_path, 'show', f'refs/remotes/origin/factory:{spec_file}'],
+                check=True, capture_output=True, text=True
+            )
+            for line in res.stdout.splitlines():
+                if line.strip().lower().startswith('version:'):
+                    factory_ver = line.split(':', 1)[1].strip()
+                    break
+        except subprocess.CalledProcessError:
+            pass
 
-    # 4. Get version from next branch (if it exists)
+    # 4. Get version from next branch (if checking next or both)
     next_ver = None
-    try:
-        res = subprocess.run(
-            ['git', '-C', repo_path, 'show', f'refs/remotes/origin/next:{spec_file}'],
-            check=True, capture_output=True, text=True
-        )
-        for line in res.stdout.splitlines():
-            if line.strip().lower().startswith('version:'):
-                next_ver = line.split(':', 1)[1].strip()
-                break
-    except subprocess.CalledProcessError:
-        pass
+    if branch is None or branch == "next":
+        try:
+            res = subprocess.run(
+                ['git', '-C', repo_path, 'show', f'refs/remotes/origin/next:{spec_file}'],
+                check=True, capture_output=True, text=True
+            )
+            for line in res.stdout.splitlines():
+                if line.strip().lower().startswith('version:'):
+                    next_ver = line.split(':', 1)[1].strip()
+                    break
+        except subprocess.CalledProcessError:
+            pass
 
     # 5. Query release-monitoring.org for upstream versions (using curl to bypass challenge)
     upstream_stable = None
     upstream_latest = None
-    
+
     url = f"https://release-monitoring.org/api/v2/packages/?name={repo_name}&distribution=openSUSE"
     try:
         res_curl = subprocess.run(
@@ -224,7 +226,7 @@ def check_repo_version(repo_name):
                     break
             if not exact_item:
                 exact_item = items[0]
-            
+
             upstream_stable = exact_item.get("stable_version")
             upstream_latest = exact_item.get("version")
     except Exception:
@@ -238,11 +240,11 @@ def check_repo_version(repo_name):
 
     # Compare versions
     needs_update = False
-    
-    if factory_ver and upstream_stable and factory_ver != upstream_stable:
+
+    if (branch is None or branch == "factory") and factory_ver and upstream_stable and factory_ver != upstream_stable:
         needs_update = True
-        
-    if next_ver and upstream_latest and next_ver != upstream_latest:
+
+    if (branch is None or branch == "next") and next_ver and next_ver != "—" and upstream_latest and next_ver != upstream_latest:
         needs_update = True
 
     return repo_name, {
@@ -274,7 +276,7 @@ def pad_left(text, width):
 def run_sync_check(repos):
     total = len(repos)
     print(f"Checking {total} packages in parallel (50 threads)...", file=sys.stderr)
-    
+
     results = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
         futures = {executor.submit(check_repo_sync, repo): repo for repo in repos}
@@ -306,7 +308,7 @@ def run_sync_check(repos):
                 stage1_str = f"{YELLOW}❓ Not in Pool{RESET}"
             else:
                 stage1_str = f"{GREEN}✅ In Sync{RESET}"
-                
+
             # Stage 2 format
             if data["next_status"] == "No next branch":
                 stage2_str = "—"
@@ -318,7 +320,7 @@ def run_sync_check(repos):
                 stage2_str = f"{GREEN}✅ In Sync (+{data['next_ahead']} next commits){RESET}"
             else:
                 stage2_str = f"{GREEN}✅ In Sync{RESET}"
-                
+
             # Recommended Actions
             actions = []
             if data["pool_behind"] > 0:
@@ -328,16 +330,16 @@ def run_sync_check(repos):
             if data["next_behind"] > 0:
                 actions.append("🔀 Merge next")
             action_str = " and ".join(actions) if actions else "None"
-            
+
             rows.append((repo, stage1_str, stage2_str, action_str))
 
     headers = [
-        "Package", 
-        "Stage 1: pool ➔ devel:factory", 
-        "Stage 2: devel:factory ➔ devel:next", 
+        "Package",
+        "Stage 1: pool ➔ devel:factory",
+        "Stage 2: devel:factory ➔ devel:next",
         "Recommended Action"
     ]
-    
+
     w1 = max(visual_len(headers[0]), max(visual_len(r[0]) for r in rows) if rows else 0)
     w2 = max(visual_len(headers[1]), max(visual_len(r[1]) for r in rows) if rows else 0)
     w3 = max(visual_len(headers[2]), max(visual_len(r[2]) for r in rows) if rows else 0)
@@ -347,7 +349,7 @@ def run_sync_check(repos):
     print(f"### 🔄 Downstream Sync Table ({BOLD}Action Required{RESET})\n")
     print(f"| {pad_left(headers[0], w1)} | {pad_left(headers[1], w2)} | {pad_left(headers[2], w3)} | {pad_left(headers[3], w4)} |")
     print(f"| {'-'*w1} | {'-'*w2} | {'-'*w3} | {'-'*w4} |")
-    
+
     for r in rows:
         print(f"| {pad_left(r[0], w1)} | {pad_left(r[1], w2)} | {pad_left(r[2], w3)} | {pad_left(r[3], w4)} |")
 
@@ -355,14 +357,17 @@ def run_sync_check(repos):
     print(f"\n💡 {BOLD}Tip:{RESET} Try './check_sync.py --version' to check upstream releases, or '--forward' to find forwardable next branches.")
 
 
-def run_version_check(repos):
+def run_version_check(repos, branch=None):
     total = len(repos)
     # Be gentle with release-monitoring.org by using 30 parallel workers
-    print(f"Checking versions for {total} packages against release-monitoring.org (30 threads)...", file=sys.stderr)
-    
+    if branch:
+        print(f"Checking {branch} versions for {total} packages against release-monitoring.org (30 threads)...", file=sys.stderr)
+    else:
+        print(f"Checking versions for {total} packages against release-monitoring.org (30 threads)...", file=sys.stderr)
+
     results = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
-        futures = {executor.submit(check_repo_version, repo): repo for repo in repos}
+        futures = {executor.submit(check_repo_version, repo, branch): repo for repo in repos}
         completed = 0
         for future in concurrent.futures.as_completed(futures):
             repo_name, data = future.result()
@@ -376,66 +381,105 @@ def run_version_check(repos):
     up_to_date_count = 0
     api_error_count = 0
     missing_spec_count = 0
-    
+
     for repo in sorted(results.keys()):
         data = results[repo]
         if data["status"] == "error":
             missing_spec_count += 1
             continue
-            
+
         if data["status"] == "partial_error":
             api_error_count += 1
             continue
-            
-        if data["needs_update"]:
-            # Format factory columns
-            if data["factory_ver"] != data["upstream_stable"]:
-                f_local = f"{RED}{data['factory_ver']}{RESET}"
-                f_up = f"{GREEN}{data['upstream_stable']}{RESET}"
-            else:
-                f_local = f"{GREEN}{data['factory_ver']}{RESET}"
-                f_up = f"{GREEN}{data['upstream_stable']}{RESET}"
-                
-            # Format next columns
-            if data["next_ver"] != "—" and data["next_ver"] != data["upstream_latest"]:
-                n_local = f"{RED}{data['next_ver']}{RESET}"
-                n_up = f"{GREEN}{data['upstream_latest']}{RESET}"
-            else:
-                # If they match or there's no next branch
-                n_local = f"{GREEN}{data['next_ver']}{RESET}" if data["next_ver"] != "—" else "—"
-                n_up = f"{GREEN}{data['upstream_latest']}{RESET}" if data["upstream_latest"] != "—" else "—"
 
-            rows.append((
-                repo,
-                f_local,
-                f_up,
-                n_local,
-                n_up
-            ))
+        if data["needs_update"]:
+            if branch == "factory":
+                # Only factory columns
+                if data["factory_ver"] != data["upstream_stable"]:
+                    f_local = f"{RED}{data['factory_ver']}{RESET}"
+                    f_up = f"{GREEN}{data['upstream_stable']}{RESET}"
+                else:
+                    f_local = f"{GREEN}{data['factory_ver']}{RESET}"
+                    f_up = f"{GREEN}{data['upstream_stable']}{RESET}"
+                rows.append((repo, f_local, f_up))
+
+            elif branch == "next":
+                # Only next columns
+                if data["next_ver"] != "—" and data["next_ver"] != data["upstream_latest"]:
+                    n_local = f"{RED}{data['next_ver']}{RESET}"
+                    n_up = f"{GREEN}{data['upstream_latest']}{RESET}"
+                else:
+                    n_local = f"{GREEN}{data['next_ver']}{RESET}" if data["next_ver"] != "—" else "—"
+                    n_up = f"{GREEN}{data['upstream_latest']}{RESET}" if data["upstream_latest"] != "—" else "—"
+                rows.append((repo, n_local, n_up))
+
+            else:
+                # Default (both branches)
+                # Format factory columns
+                if data["factory_ver"] != data["upstream_stable"]:
+                    f_local = f"{RED}{data['factory_ver']}{RESET}"
+                    f_up = f"{GREEN}{data['upstream_stable']}{RESET}"
+                else:
+                    f_local = f"{GREEN}{data['factory_ver']}{RESET}"
+                    f_up = f"{GREEN}{data['upstream_stable']}{RESET}"
+
+                # Format next columns
+                if data["next_ver"] != "—" and data["next_ver"] != data["upstream_latest"]:
+                    n_local = f"{RED}{data['next_ver']}{RESET}"
+                    n_up = f"{GREEN}{data['upstream_latest']}{RESET}"
+                else:
+                    # If they match or there's no next branch
+                    n_local = f"{GREEN}{data['next_ver']}{RESET}" if data["next_ver"] != "—" else "—"
+                    n_up = f"{GREEN}{data['upstream_latest']}{RESET}" if data["upstream_latest"] != "—" else "—"
+
+                rows.append((
+                    repo,
+                    f_local,
+                    f_up,
+                    n_local,
+                    n_up
+                ))
         else:
             up_to_date_count += 1
 
-    headers = [
-        "Package", 
-        "Local (factory)", 
-        "Upstream (stable)", 
-        "Local (next)", 
-        "Upstream (unstable)"
-    ]
-    
-    w1 = max(visual_len(headers[0]), max(visual_len(r[0]) for r in rows) if rows else 0)
-    w2 = max(visual_len(headers[1]), max(visual_len(r[1]) for r in rows) if rows else 0)
-    w3 = max(visual_len(headers[2]), max(visual_len(r[2]) for r in rows) if rows else 0)
-    w4 = max(visual_len(headers[3]), max(visual_len(r[3]) for r in rows) if rows else 0)
-    w5 = max(visual_len(headers[4]), max(visual_len(r[4]) for r in rows) if rows else 0)
+    if branch == "factory":
+        headers = [
+            "Package",
+            "Local (factory)",
+            "Upstream (stable)"
+        ]
+    elif branch == "next":
+        headers = [
+            "Package",
+            "Local (next)",
+            "Upstream (unstable)"
+        ]
+    else:
+        headers = [
+            "Package",
+            "Local (factory)",
+            "Upstream (stable)",
+            "Local (next)",
+            "Upstream (unstable)"
+        ]
+
+    widths = []
+    for i, h in enumerate(headers):
+        w = max(visual_len(h), max(visual_len(r[i]) for r in rows) if rows else 0)
+        widths.append(w)
 
     print(f"Total Checked: {total} | Up to date: {up_to_date_count} | API errors: {api_error_count} | Missing specs: {missing_spec_count}\n")
-    print(f"### 📦 Upstream Version Sync Table ({BOLD}Updates Available{RESET})\n")
-    print(f"| {pad_left(headers[0], w1)} | {pad_left(headers[1], w2)} | {pad_left(headers[2], w3)} | {pad_left(headers[3], w4)} | {pad_left(headers[4], w5)} |")
-    print(f"| {'-'*w1} | {'-'*w2} | {'-'*w3} | {'-'*w4} | {'-'*w5} |")
-    
+    title_branch = f" ({branch})" if branch else ""
+    print(f"### 📦 Upstream Version Sync Table{title_branch} ({BOLD}Updates Available{RESET})\n")
+
+    header_str = " | ".join(pad_left(headers[i], widths[i]) for i in range(len(headers)))
+    sep_str = " | ".join('-'*widths[i] for i in range(len(headers)))
+    print(f"| {header_str} |")
+    print(f"| {sep_str} |")
+
     for r in rows:
-        print(f"| {pad_left(r[0], w1)} | {pad_left(r[1], w2)} | {pad_left(r[2], w3)} | {pad_left(r[3], w4)} | {pad_left(r[4], w5)} |")
+        row_str = " | ".join(pad_left(r[i], widths[i]) for i in range(len(headers)))
+        print(f"| {row_str} |")
 
     print(f"\n*Total packages that could use an update: {len(rows)}*")
 
@@ -443,7 +487,7 @@ def run_version_check(repos):
 def run_forward_check(repos):
     total = len(repos)
     print(f"Checking {total} packages for forwardable next branches (50 threads)...", file=sys.stderr)
-    
+
     results = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
         futures = {executor.submit(check_repo_sync, repo): repo for repo in repos}
@@ -459,7 +503,7 @@ def run_forward_check(repos):
     rows = []
     ready_count = 0
     needs_merge_count = 0
-    
+
     for repo in sorted(results.keys()):
         data = results[repo]
         if data["status"] != "success":
@@ -467,7 +511,7 @@ def run_forward_check(repos):
         if data["next_status"] != "No next branch" and data["next_status"] != "N/A":
             next_ahead = data["next_ahead"]
             next_behind = data["next_behind"]
-            
+
             if next_ahead > 0:
                 if next_behind == 0:
                     status_str = f"{GREEN}✅ Ready (Clean Forward){RESET}"
@@ -475,7 +519,7 @@ def run_forward_check(repos):
                 else:
                     status_str = f"{YELLOW}⚠️ Needs Merge first (Behind {next_behind}){RESET}"
                     needs_merge_count += 1
-                    
+
                 rows.append((
                     repo,
                     f"{GREEN}{next_ahead}{RESET}",
@@ -484,12 +528,12 @@ def run_forward_check(repos):
                 ))
 
     headers = [
-        "Package", 
-        "Commits Ahead (on next)", 
-        "Commits Behind (from factory)", 
+        "Package",
+        "Commits Ahead (on next)",
+        "Commits Behind (from factory)",
         "Forward Status"
     ]
-    
+
     w1 = max(visual_len(headers[0]), max(visual_len(r[0]) for r in rows) if rows else 0)
     w2 = max(visual_len(headers[1]), max(visual_len(r[1]) for r in rows) if rows else 0)
     w3 = max(visual_len(headers[2]), max(visual_len(r[2]) for r in rows) if rows else 0)
@@ -499,7 +543,7 @@ def run_forward_check(repos):
     print(f"### 🔀 Next-to-Factory Forwarding Table\n")
     print(f"| {pad_left(headers[0], w1)} | {pad_left(headers[1], w2)} | {pad_left(headers[2], w3)} | {pad_left(headers[3], w4)} |")
     print(f"| {'-'*w1} | {'-'*w2} | {'-'*w3} | {'-'*w4} |")
-    
+
     for r in rows:
         print(f"| {pad_left(r[0], w1)} | {pad_left(r[1], w2)} | {pad_left(r[2], w3)} | {pad_left(r[3], w4)} |")
 
@@ -514,9 +558,13 @@ def print_help():
     print("\nModes (choose exactly one):")
     print(f"  {BOLD}(default){RESET}          Checks downstream git sync status (pool ➔ devel:factory ➔ devel:next).")
     print(f"  {BOLD}--todo{RESET}             Alias for the default sync checking mode.")
-    print(f"  {BOLD}--version, -v{RESET}      Compares package versions in factory & next against release-monitoring.org.")
+    print(f"  {BOLD}--version, -v [branch]{RESET}")
+    print("                     Compares package versions in factory & next against release-monitoring.org.")
+    print("                     Optional branch: 'factory' or 'next' to filter output.")
     print(f"  {BOLD}--forward, -f{RESET}      Identifies which next branches can be cleanly forwarded to factory.")
     print("\nOptions:")
+    print(f"  {BOLD}-b, --branch <branch>{RESET}")
+    print("                     Limit version checks to a specific branch ('factory' or 'next').")
     print(f"  {BOLD}-h, --help{RESET}         Show this help message and exit.")
 
 
@@ -524,34 +572,65 @@ def main():
     if "-h" in sys.argv or "--help" in sys.argv:
         print_help()
         sys.exit(0)
-    
+
     repos = sorted([
-        d for d in os.listdir('.') 
+        d for d in os.listdir('.')
         if os.path.isdir(d) and os.path.exists(os.path.join(d, '.git'))
     ])
-    
-    show_versions = "--version" in sys.argv or "-v" in sys.argv
+
+    show_versions = False
+    version_branch = None
+
+    # Check for --version or -v with equal sign, e.g. --version=next
+    for arg in sys.argv:
+        if arg.startswith("--version=") or arg.startswith("-v="):
+            show_versions = True
+            val = arg.split("=", 1)[1].lower()
+            if val in ("next", "factory"):
+                version_branch = val
+
+    # Check for standalone --version or -v
+    if not show_versions:
+        if "--version" in sys.argv or "-v" in sys.argv:
+            show_versions = True
+
+    # Check for --branch or -b
+    for opt in ("--branch", "-b"):
+        if opt in sys.argv:
+            idx = sys.argv.index(opt)
+            if idx + 1 < len(sys.argv):
+                val = sys.argv[idx + 1].lower()
+                if val in ("next", "factory"):
+                    version_branch = val
+
+    # Check if 'next' or 'factory' is in sys.argv directly following -v/--version
+    if show_versions and not version_branch:
+        for opt in ("--version", "-v"):
+            if opt in sys.argv:
+                idx = sys.argv.index(opt)
+                if idx + 1 < len(sys.argv):
+                    val = sys.argv[idx + 1].lower()
+                    if val in ("next", "factory"):
+                        version_branch = val
+
     show_forward = "--forward" in sys.argv or "-f" in sys.argv
     show_todo = "--todo" in sys.argv
-    
+
     if show_versions:
-        run_version_check(repos)
+        run_version_check(repos, version_branch)
     elif show_forward:
         run_forward_check(repos)
     else:
         run_sync_check(repos)
+
+    sys.stdout.flush()
+    sys.stderr.flush()
 
 if __name__ == '__main__':
     try:
         main()
     except BrokenPipeError:
         # Handle BrokenPipeError gracefully when piping output to commands like head or less
-        try:
-            sys.stdout.close()
-        except Exception:
-            pass
-        try:
-            sys.stderr.close()
-        except Exception:
-            pass
-        sys.exit(0)
+        # Use os._exit(0) to bypass Python's high-level interpreter shutdown stream flushing.
+        import os
+        os._exit(0)
