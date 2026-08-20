@@ -13,7 +13,7 @@ The core tool is a globally callable dashboard that scans all package submodules
 
 ### The Three Modes:
 1. **Daily Todo Sync Status (Default):** Highlights any package out-of-sync in your downstream pipeline. It hides all "In Sync" packages, giving you a focused, high-signal task list of needed pulls, pushes, and merges.
-2. **Upstream Release Monitor (`--version` / `-v`):** Queries **release-monitoring.org (Anitya)** in parallel (using `curl` in a subprocess to bypass anti-scraper challenges). It compares your local `factory` spec versions against upstream **`stable_version`**, and your `next` spec versions against upstream **`version`** (unstable/latest), identifying what needs to be updated.
+2. **Upstream Release Monitor (`--version` / `-v` [branch]):** Queries **release-monitoring.org (Anitya)** in parallel (using `curl` in a subprocess to bypass anti-scraper challenges). It compares your local `factory` spec versions against upstream **`stable_version`**, and your `next` spec versions against upstream **`version`** (unstable/latest), identifying what needs to be updated. You can limit checks to a specific branch (e.g. `--version=next`, `-v factory`, or with `-b/--branch next`) to focus on one target and display a compact, branch-specific 3-column table.
 3. **Release Staging Planner (`--forward` / `-f`):** Checks which `next` branches carry unique staging commits ahead of `factory` and are structurally ready to be cleanly forwarded to `factory` (or warns if `next` needs a merge first).
 
 ### 🛠️ Installation:
@@ -122,6 +122,6 @@ Once configured, your maintenance workflow simplifies to this:
 | Task / Command | What Happens Under the Hood |
 | :--- | :--- |
 | **`check-sync`** | Prints a gorgeous parallel "todo list" of packages needing pulls, pushes, or merges. Hides clean ones. |
-| **`check-sync -v`** | Compares your local spec versions against upstream release-monitoring.org to spot package updates. |
+| **`check-sync -v [branch]`** | Compares local spec versions against upstream release-monitoring.org to spot updates. Optional branch (`factory` or `next`) limits checks and displays a focused 3-column table. |
 | **`check-sync -f`** | Finds which `next` branches are ready to be cleanly forwarded to `factory` (or need merging first). |
 | **`git merge origin/factory`** | **The Magic Command:** `.changes` is merged, sorted, de-duplicated, and redated; `Version:` conflicts on `.spec` are auto-resolved; `_service` and `.obsinfo` are preserved; stable tarballs are stripped from history. **All of it merges cleanly in <1s!** |
