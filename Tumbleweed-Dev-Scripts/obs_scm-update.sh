@@ -30,6 +30,12 @@ if [ ! -z "$OLD_REV" ]; then
 popd
 fi
 
+if grep '"tar".*"manual"' _service; then
+  # tar / recompress are set to manual, meaning we get a tar.xz
+  # in this case we do not package the .obscpio
+  rm *.obscpio
+fi
+
 if [ "$OLD_REV" != "$NEW_REV" ]; then
   echo "- Update to version $VERSION:" > .NEWS
   grep "^+" osc-collab.NEWS | sed 's/^+//g' >> .NEWS
