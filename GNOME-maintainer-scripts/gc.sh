@@ -3,7 +3,7 @@
 
 # --- 1. THE ADD/REMOVE PHASE ---
 # Equivalent to 'osc addremove'
-git add -A .
+git add -u . && find . -maxdepth 1 -type f -exec git add {} +
 
 # --- 2. THE PRE-CHECK PHASE ---
 CHANGES_FILE=$(ls *.changes 2>/dev/null | head -n 1)
