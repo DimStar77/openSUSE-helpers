@@ -15,7 +15,9 @@ import threading
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Gtk, Adw, GLib, GObject, Gdk
+gi.require_version('Vte', '3.91')
+gi.require_version('Pango', '1.0')
+from gi.repository import Gtk, Adw, GLib, GObject, Gdk, Vte, Pango
 
 try:
     gi.require_version('GtkSource', '5')
@@ -113,10 +115,11 @@ class SyncRow(Adw.ActionRow):
 
 class VersionRow(Gtk.ListBoxRow):
     """Custom row holding package data for the Versions tab."""
-    def __init__(self, package_name, data):
+    def __init__(self, package_name, data, parent_window):
         super().__init__()
         self.package_name = package_name
         self.data = data
+        self.parent_window = parent_window
 
         # Main horizontal box
         main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -283,14 +286,12 @@ class VersionRow(Gtk.ListBoxRow):
 
     def on_open_terminal_clicked(self, btn, popover):
         popover.popdown()
-        pkg_dir = os.path.abspath(os.path.join('.', self.package_name))
-        subprocess.Popen(['gnome-terminal', '--working-directory', pkg_dir])
+        self.parent_window.show_terminal(self.package_name)
 
     def on_run_update_clicked(self, btn, version, popover):
         popover.popdown()
-        pkg_dir = os.path.abspath(os.path.join('.', self.package_name))
-        command = f"obs_scm-update.sh {version}; exec bash"
-        subprocess.Popen(['gnome-terminal', '--working-directory', pkg_dir, '--', 'bash', '-c', command])
+        command = f"obs_scm-update.sh {version}"
+        self.parent_window.show_terminal(self.package_name, command)
 
 
 class ForwardRow(Adw.ActionRow):
@@ -472,10 +473,57 @@ class SyncWindow(Adw.ApplicationWindow):
         self.view_switcher = Adw.ViewSwitcher(stack=self.stack)
         self.header_bar.set_title_widget(self.view_switcher)
 
+        # Vertical split pane: Top is stack, Bottom is terminal drawer
+        self.main_paned = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
+        self.main_paned.set_position(450) # Split position
+        self.main_paned.set_start_child(self.stack)
+
+        # Collapsible Terminal Drawer
+        self.terminal_drawer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.terminal_drawer.set_size_request(-1, 240)
+
+        # Terminal Header
+        term_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        term_header.set_margin_start(18)
+        term_header.set_margin_end(18)
+        term_header.set_margin_top(6)
+        term_header.set_margin_bottom(6)
+
+        self.term_title_label = Gtk.Label()
+        self.term_title_label.set_hexpand(True)
+        self.term_title_label.set_halign(Gtk.Align.START)
+        self.term_title_label.set_markup("<span weight='bold'>Terminal Console</span>")
+        term_header.append(self.term_title_label)
+
+        # Hide terminal button
+        hide_btn = Gtk.Button.new_from_icon_name("window-close-symbolic")
+        hide_btn.set_tooltip_text("Hide Terminal Console")
+        hide_btn.connect("clicked", lambda btn: self.hide_terminal())
+        term_header.append(hide_btn)
+
+        self.terminal_drawer.append(term_header)
+
+        # Native Vte Terminal Widget
+        self.terminal = Vte.Terminal()
+        self.terminal.set_font(Pango.FontDescription.from_string("monospace 11"))
+        self.terminal.set_scrollback_lines(2000)
+
+        term_scroll = Gtk.ScrolledWindow()
+        term_scroll.set_hexpand(True)
+        term_scroll.set_vexpand(True)
+        term_scroll.set_child(self.terminal)
+        self.terminal_drawer.append(term_scroll)
+
+        self.main_paned.set_end_child(self.terminal_drawer)
+        self.main_paned.set_resize_end_child(True)
+
+        # Hidden by default
+        self.terminal_drawer.set_visible(False)
+
         # Top-level container
         self.toolbar_view = Adw.ToolbarView()
         self.toolbar_view.add_top_bar(self.header_bar)
-        self.toolbar_view.set_content(self.stack)
+        self.toolbar_view.set_content(self.main_paned)
         self.set_content(self.toolbar_view)
 
         # Stop background scan leak when window is closed
@@ -488,6 +536,37 @@ class SyncWindow(Adw.ApplicationWindow):
         # Cancel all pending scan futures and shutdown the pool without waiting
         self.executor.shutdown(wait=False, cancel_futures=True)
         return False # Propagate the signal to close the window
+
+    def show_terminal(self, pkg_name, command=None):
+        """Reveals the terminal drawer and spawns a shell process."""
+        self.terminal_drawer.set_visible(True)
+        pkg_dir = os.path.abspath(os.path.join('.', pkg_name))
+
+        shell = os.environ.get("SHELL", "/bin/bash")
+        argv = [shell]
+        if command:
+            argv = [shell, "-c", f"{command}; exec {shell}"]
+
+        self.term_title_label.set_markup(f"<span weight='bold'>Terminal Console - {pkg_name}</span>")
+
+        # Spawn asynchronous bash shell in the package directory
+        self.terminal.spawn_async(
+            Vte.PtyFlags.DEFAULT,
+            pkg_dir,
+            argv,
+            None,
+            GLib.SpawnFlags.DEFAULT,
+            None,
+            None,
+            -1,
+            None,
+            None,
+            None
+        )
+        self.terminal.grab_focus()
+
+    def hide_terminal(self):
+        self.terminal_drawer.set_visible(False)
 
     def refresh_all(self):
         self.start_sync_scan()
@@ -657,6 +736,7 @@ class SyncWindow(Adw.ApplicationWindow):
     def build_version_view(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 
+        # Control bar
         control_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         control_bar.set_margin_start(18)
         control_bar.set_margin_end(18)
@@ -791,7 +871,8 @@ class SyncWindow(Adw.ApplicationWindow):
         self.ver_progress_label.set_text(f"Scanning {self.ver_completed_count}/{len(self.repos)}...")
 
         if data.get("status") == "success":
-            row = VersionRow(name, data)
+            # Pass our main window instance as parent_window
+            row = VersionRow(name, data, self)
             self.ver_list_box.append(row)
 
         if self.ver_completed_count == len(self.repos):
