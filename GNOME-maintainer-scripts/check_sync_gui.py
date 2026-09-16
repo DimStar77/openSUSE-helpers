@@ -276,7 +276,7 @@ class VersionRow(Gtk.ListBoxRow):
             vbox.append(sep)
 
             # If next needs an update
-            if next_ver != "—" and next_ver != upstream_latest and upstream_latest != "—".strip():
+            if next_ver != "—" and next_ver != upstream_latest and upstream_latest != "—":
                 next_btn = Gtk.Button(label=f"Update Next to {upstream_latest} via obs_scm-update.sh")
                 next_btn.set_has_frame(False)
                 next_btn.set_halign(Gtk.Align.START)
@@ -552,28 +552,13 @@ class SyncWindow(Adw.ApplicationWindow):
         # Kick off background loading
         self.refresh_all()
 
-    def get_system_monospace_font(self):
-        """Query GNOME GSettings dynamically to load the user's custom monospace font preference."""
-        try:
-            settings = Gio.Settings.new("org.gnome.desktop.interface")
-            font_str = settings.get_string("monospace-font-name")
-            if font_str:
-                return font_str
-        except Exception:
-            pass
-        return "monospace 11"
-
     def on_close_request(self, window):
-        """Gracefully dismantles GLib timers, closes thread pools, and terminates shell children."""
-        # 1. Cancel the active GLib timeout source to let GApplication exit gracefully!
-        if hasattr(self, "timeout_id") and self.timeout_id:
-            GLib.Source.remove(self.timeout_id)
-            self.timeout_id = 0
-
-        # 2. Cancel and cleanly shutdown background scanner thread pool
+        # 1. Cancel all pending background scanner tasks
         self.executor.shutdown(wait=False, cancel_futures=True)
 
-        # 3. Forcefully terminate all running terminal shell processes to prevent process leaks!
+        # 2. Forcefully terminate all running terminal shell processes to prevent process leaks!
+        # Send SIGHUP (Hangup) first, which forces interactive shells to exit cleanly.
+        # Fall back to SIGKILL (un-catchable, absolute kill) if SIGHUP fails.
         for tab in list(self.terminal_tabs):
             shell_pid = tab.get("shell_pid")
             if shell_pid:
@@ -585,7 +570,7 @@ class SyncWindow(Adw.ApplicationWindow):
                     except Exception:
                         pass
 
-        # 4. Explicitly terminate python process to clean up GObject reference-cycle states cleanly
+        # 3. Explicitly terminate the Python interpreter process to guarantee immediate cleanup!
         os._exit(0)
 
     def get_mapped_worktree_path(self, package_name, target_branch):
@@ -596,44 +581,29 @@ class SyncWindow(Adw.ApplicationWindow):
         target_folder_name = current_folder_name
         if target_branch == "factory" and "GNOME:Next" in current_folder_name:
             target_folder_name = current_folder_name.replace("GNOME:Next", "GNOME")
-        elif target_branch == "next" and current_folder_name == "GNOME".strip():
+        elif target_branch == "next" and current_folder_name == "GNOME":
             target_folder_name = "GNOME:Next"
 
         mapped_dir = os.path.join(parent_dir, target_folder_name, package_name)
-
-        # Verify both that the directory exists and contains a valid SCM git setup to ensure worktree integrity
-        if os.path.exists(mapped_dir) and (os.path.exists(os.path.join(mapped_dir, '.git')) or os.path.isfile(os.path.join(mapped_dir, '.git'))):
+        if os.path.exists(mapped_dir):
             return mapped_dir
 
         # Fallback to local package directory
         return os.path.abspath(os.path.join('.', package_name))
 
     def is_shell_pid_active(self, shell_pid):
-        """
-        Scans /proc directly in pure Python without spawning subprocesses (pgrep).
-        Narrow exception boundaries handles microsecond PID creation/termination safely.
-        """
+        """Returns True if the shell process has active child processes running (foreground jobs)."""
         if not shell_pid:
             return False
         try:
-            target_ppid = str(shell_pid)
-            for f in os.listdir('/proc'):
-                if f.isdigit():
-                    try:
-                        with open(f"/proc/{f}/stat", "r") as stat_file:
-                            line = stat_file.readline()
-                            fields = line.split()
-                            # 4th field in /proc/<pid>/stat is the PPID
-                            if len(fields) >= 4 and fields[3] == target_ppid:
-                                return True
-                    except (FileNotFoundError, ProcessLookupError, PermissionError):
-                        # Safely skip microsecond process race conditions and system permissions
-                        continue
-                    except Exception:
-                        pass
+            # Query if any process PPID matches this shell_pid
+            res = subprocess.run(
+                ['pgrep', '-P', str(shell_pid)],
+                capture_output=True, text=True, timeout=1
+            )
+            return len(res.stdout.strip()) > 0
         except Exception:
-            pass
-        return False
+            return False
 
     def allocate_terminal(self, pkg_name, target_branch, command=None):
         """
@@ -690,9 +660,7 @@ class SyncWindow(Adw.ApplicationWindow):
         tab_box.append(tab_label)
 
         close_tab_btn = Gtk.Button.new_from_icon_name("window-close-symbolic")
-        # Apply standard GTK4/Libadwaita circular and flat visual styling classes
-        close_tab_btn.add_css_class("flat")
-        close_tab_btn.add_css_class("circular")
+        close_tab_btn.set_has_frame(False)
         close_tab_btn.set_tooltip_text("Close Tab")
         close_tab_btn.connect("clicked", lambda btn: self.close_terminal_tab(scroll))
         tab_box.append(close_tab_btn)
@@ -744,16 +712,15 @@ class SyncWindow(Adw.ApplicationWindow):
         terminal.grab_focus()
 
     def on_terminal_key_pressed(self, controller, keyval, keycode, state, terminal):
-        """Binds Ctrl+Plus (zoom in), Ctrl+Minus (zoom out), and Ctrl+0 (reset) keys to scale fonts. Masking out Gdk Locks."""
-        # Clean GDK modifiers to ignore CapsLock (LOCK_MASK) and NumLock (MOD2_MASK) states
-        clean_state = state & ~(Gdk.ModifierType.LOCK_MASK | Gdk.ModifierType.MOD2_MASK)
-        is_ctrl = (clean_state & Gdk.ModifierType.CONTROL_MASK) != 0
+        """Binds Ctrl+Plus (zoom in), Ctrl+Minus (zoom out), and Ctrl+0 (reset) keys to scale fonts dynamically."""
+        # Clean, GDK4-compliant bitwise AND isolates standard CONTROL_MASK natively
+        is_ctrl = (state & Gdk.ModifierType.CONTROL_MASK) != 0
         if is_ctrl:
             current_scale = terminal.get_font_scale()
-            if keyval in (Gdk.KEY_plus, Gdk.KEY_equal):
+            if keyval in (Gdk.KEY_plus, Gdk.KEY_equal, Gdk.KEY_KP_Add):
                 terminal.set_font_scale(min(4.0, current_scale + 0.1))
                 return True
-            elif keyval in (Gdk.KEY_minus, Gdk.KEY_underscore):
+            elif keyval in (Gdk.KEY_minus, Gdk.KEY_underscore, Gdk.KEY_KP_Subtract):
                 terminal.set_font_scale(max(0.5, current_scale - 0.1))
                 return True
             elif keyval in (Gdk.KEY_0, Gdk.KEY_KP_0):
@@ -868,6 +835,17 @@ class SyncWindow(Adw.ApplicationWindow):
     def hide_terminal(self):
         self.terminal_drawer.set_visible(False)
 
+    def get_system_monospace_font(self):
+        """Query GNOME GSettings dynamically to load the user's custom monospace font preference."""
+        try:
+            settings = Gio.Settings.new("org.gnome.desktop.interface")
+            font_str = settings.get_string("monospace-font-name")
+            if font_str:
+                return font_str
+        except Exception:
+            pass
+        return "monospace 11"
+
     def refresh_all(self):
         self.start_sync_scan()
         self.start_version_scan()
@@ -910,7 +888,7 @@ class SyncWindow(Adw.ApplicationWindow):
 
         box.append(control_bar)
 
-        # List box container
+        # Scrolled window (recovers 100% of the screen height for clean repository listings!)
         scroll = Gtk.ScrolledWindow()
         scroll.set_hexpand(True)
         scroll.set_vexpand(True)
@@ -918,6 +896,7 @@ class SyncWindow(Adw.ApplicationWindow):
         self.sync_list_box = Gtk.ListBox()
         self.sync_list_box.set_filter_func(self.sync_filter_func)
         self.sync_list_box.connect("row-activated", self.on_sync_row_activated)
+
         scroll.set_child(self.sync_list_box)
         box.append(scroll)
 
