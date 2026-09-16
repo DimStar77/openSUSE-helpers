@@ -25,7 +25,7 @@ RE_VERSION_2 = re.compile(r'(\d+)([\._])(\d+)')
 
 def get_service_revision(pkg_dir: str) -> Optional[str]:
     """Parse the package's local _service file to find the revision parameter for the main obs_scm service.
-    
+
     Catches specific XML parsing and OS access errors to prevent silencing unrelated runtime bugs.
     """
     service_path = os.path.join(pkg_dir, '_service')
@@ -82,7 +82,7 @@ def guess_update_revision(current_revision: Optional[str], target_version: str) 
 
     if match:
         separator = match.group(2) # '.' or '_'
-        
+
         start_idx = match.start()
         end_idx = match.end()
         prefix = current_revision[:start_idx]
@@ -399,12 +399,12 @@ class VersionRow(Gtk.ListBoxRow):
 
     def on_run_update_clicked(self, btn, branch, version, popover):
         popover.popdown()
-        
+
         # Try to resolve package directory and find current _service revision
         pkg_dir = os.path.join('.', self.package_name)
         current_revision = get_service_revision(pkg_dir)
         guessed_revision, confidence_err = guess_update_revision(current_revision, version)
-        
+
         if guessed_revision and not confidence_err:
             # We are confident! Run the update with the guessed revision parameter
             command = f"obs_scm-update.sh {shlex.quote(guessed_revision)}"
@@ -422,7 +422,7 @@ class VersionRow(Gtk.ListBoxRow):
             lines.append(f"   Suggested target version:     \033[1;32m{version}\033[0m")
             lines.append("")
             lines.append("👉 \033[1mRun obs_scm-update.sh manually with your preferred parameter.\033[0m")
-            
+
             # Safely chain the echos with proper shell quoting
             hint_msg = " && ".join(f"echo {shlex.quote(line)}" for line in lines)
             self.parent_window.allocate_terminal(self.package_name, branch, hint_msg)
@@ -1155,7 +1155,7 @@ class SyncWindow(Adw.ApplicationWindow):
                 self.fwd_list_box.insert(new_row, idx)
             else:
                 self.fwd_list_box.append(new_row)
-        
+
         self.fwd_list_box.invalidate_filter()
 
     # --- TAB 1: SYNC VIEW ---
