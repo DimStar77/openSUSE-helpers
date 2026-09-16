@@ -244,21 +244,29 @@ class VersionRow(Gtk.ListBoxRow):
         vbox.set_margin_top(8)
         vbox.set_margin_bottom(8)
 
-        # Term Option
-        term_btn = Gtk.Button(label="Open Terminal Here")
-        term_btn.set_has_frame(False)
-        term_btn.set_halign(Gtk.Align.START)
-        term_btn.connect("clicked", self.on_open_terminal_clicked, popover)
-        vbox.append(term_btn)
-
-        # Check for _service file
-        pkg_dir = os.path.join('.', self.package_name)
-        has_service = os.path.exists(os.path.join(pkg_dir, '_service'))
-
+        # Term Options (Explicit branch-specific terminal folders)
         factory_ver = self.data.get("factory_ver", "N/A")
         next_ver = self.data.get("next_ver", "—")
         upstream_stable = self.data.get("upstream_stable", "N/A")
         upstream_latest = self.data.get("upstream_latest", "—")
+
+        # 1. Open Terminal in Next Worktree
+        term_next_btn = Gtk.Button(label="Open Terminal in Next Worktree")
+        term_next_btn.set_has_frame(False)
+        term_next_btn.set_halign(Gtk.Align.START)
+        term_next_btn.connect("clicked", self.on_open_terminal_clicked, "next", popover)
+        vbox.append(term_next_btn)
+
+        # 2. Open Terminal in Factory Worktree
+        term_fac_btn = Gtk.Button(label="Open Terminal in Factory Worktree")
+        term_fac_btn.set_has_frame(False)
+        term_fac_btn.set_halign(Gtk.Align.START)
+        term_fac_btn.connect("clicked", self.on_open_terminal_clicked, "factory", popover)
+        vbox.append(term_fac_btn)
+
+        # Check for _service file
+        pkg_dir = os.path.join('.', self.package_name)
+        has_service = os.path.exists(os.path.join(pkg_dir, '_service'))
 
         if has_service:
             # Separator
@@ -270,7 +278,7 @@ class VersionRow(Gtk.ListBoxRow):
                 next_btn = Gtk.Button(label=f"Update Next to {upstream_latest} via obs_scm-update.sh")
                 next_btn.set_has_frame(False)
                 next_btn.set_halign(Gtk.Align.START)
-                next_btn.connect("clicked", self.on_run_update_clicked, upstream_latest, popover)
+                next_btn.connect("clicked", self.on_run_update_clicked, "next", upstream_latest, popover)
                 vbox.append(next_btn)
 
             # If factory needs an update
@@ -278,20 +286,20 @@ class VersionRow(Gtk.ListBoxRow):
                 fac_btn = Gtk.Button(label=f"Update Factory to {upstream_stable} via obs_scm-update.sh")
                 fac_btn.set_has_frame(False)
                 fac_btn.set_halign(Gtk.Align.START)
-                fac_btn.connect("clicked", self.on_run_update_clicked, upstream_stable, popover)
+                fac_btn.connect("clicked", self.on_run_update_clicked, "factory", upstream_stable, popover)
                 vbox.append(fac_btn)
 
         popover.set_child(vbox)
         popover.popup()
 
-    def on_open_terminal_clicked(self, btn, popover):
+    def on_open_terminal_clicked(self, btn, branch, popover):
         popover.popdown()
-        self.parent_window.show_terminal(self.package_name)
+        self.parent_window.show_terminal(self.package_name, branch)
 
-    def on_run_update_clicked(self, btn, version, popover):
+    def on_run_update_clicked(self, btn, branch, version, popover):
         popover.popdown()
         command = f"obs_scm-update.sh {version}"
-        self.parent_window.show_terminal(self.package_name, command)
+        self.parent_window.show_terminal(self.package_name, branch, command)
 
 
 class ForwardRow(Adw.ActionRow):
@@ -480,7 +488,7 @@ class SyncWindow(Adw.ApplicationWindow):
 
         # Collapsible Terminal Drawer
         self.terminal_drawer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.terminal_drawer.set_size_request(-1, 240)
+        self.terminal_drawer.set_size_request(-1, 280)
 
         # Terminal Header
         term_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -492,7 +500,7 @@ class SyncWindow(Adw.ApplicationWindow):
         self.term_title_label = Gtk.Label()
         self.term_title_label.set_hexpand(True)
         self.term_title_label.set_halign(Gtk.Align.START)
-        self.term_title_label.set_markup("<span weight='bold'>Terminal Console</span>")
+        self.term_title_label.set_markup("<span weight='bold'>Terminal Console Drawer</span>")
         term_header.append(self.term_title_label)
 
         # Hide terminal button
@@ -503,16 +511,13 @@ class SyncWindow(Adw.ApplicationWindow):
 
         self.terminal_drawer.append(term_header)
 
-        # Native Vte Terminal Widget
-        self.terminal = Vte.Terminal()
-        self.terminal.set_font(Pango.FontDescription.from_string("monospace 11"))
-        self.terminal.set_scrollback_lines(2000)
-
-        term_scroll = Gtk.ScrolledWindow()
-        term_scroll.set_hexpand(True)
-        term_scroll.set_vexpand(True)
-        term_scroll.set_child(self.terminal)
-        self.terminal_drawer.append(term_scroll)
+        # Native Vte Tabbed Notebook Widget
+        self.notebook = Gtk.Notebook()
+        self.notebook.set_hexpand(True)
+        self.notebook.set_vexpand(True)
+        self.notebook.set_scrollable(True)
+        self.notebook.set_show_border(True)
+        self.terminal_drawer.append(self.notebook)
 
         self.main_paned.set_end_child(self.terminal_drawer)
         self.main_paned.set_resize_end_child(True)
@@ -537,22 +542,62 @@ class SyncWindow(Adw.ApplicationWindow):
         self.executor.shutdown(wait=False, cancel_futures=True)
         return False # Propagate the signal to close the window
 
-    def show_terminal(self, pkg_name, command=None):
-        """Reveals the terminal drawer and spawns a shell process."""
+    def get_mapped_worktree_path(self, package_name, target_branch):
+        """Maps current project path parent GNOME:Next to GNOME for worktree builds."""
+        current_dir = os.path.abspath('.')
+        parent_dir, current_folder_name = os.path.split(current_dir)
+
+        target_folder_name = current_folder_name
+        if target_branch == "factory" and "GNOME:Next" in current_folder_name:
+            target_folder_name = current_folder_name.replace("GNOME:Next", "GNOME")
+        elif target_branch == "next" and current_folder_name == "GNOME":
+            target_folder_name = "GNOME:Next"
+
+        mapped_dir = os.path.join(parent_dir, target_folder_name, package_name)
+        if os.path.exists(mapped_dir):
+            return mapped_dir
+
+        # Fallback to local package directory
+        return os.path.abspath(os.path.join('.', package_name))
+
+    def show_terminal(self, pkg_name, target_branch, command=None):
+        """Spawns a new VTE terminal tab inside the Gtk.Notebook drawer, supporting worktree directory resolution."""
         self.terminal_drawer.set_visible(True)
-        pkg_dir = os.path.abspath(os.path.join('.', pkg_name))
+        resolved_dir = self.get_mapped_worktree_path(pkg_name, target_branch)
+
+        # Create a new terminal instance
+        terminal = Vte.Terminal()
+        terminal.set_font(Pango.FontDescription.from_string("monospace 11"))
+        terminal.set_scrollback_lines(2000)
+
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_child(terminal)
+
+        # Build tab label box
+        tab_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+
+        label_text = f"{pkg_name} ({target_branch})"
+        tab_label = Gtk.Label(label=label_text)
+        tab_box.append(tab_label)
+
+        close_tab_btn = Gtk.Button.new_from_icon_name("window-close-symbolic")
+        close_tab_btn.set_has_frame(False)
+        close_tab_btn.set_tooltip_text("Close Tab")
+        close_tab_btn.connect("clicked", lambda btn: self.close_terminal_tab(scroll))
+        tab_box.append(close_tab_btn)
+
+        # Append tab page
+        page_index = self.notebook.append_page(scroll, tab_box)
+        self.notebook.set_current_page(page_index)
 
         shell = os.environ.get("SHELL", "/bin/bash")
         argv = [shell]
         if command:
             argv = [shell, "-c", f"{command}; exec {shell}"]
 
-        self.term_title_label.set_markup(f"<span weight='bold'>Terminal Console - {pkg_name}</span>")
-
-        # Spawn asynchronous bash shell in the package directory
-        self.terminal.spawn_async(
+        terminal.spawn_async(
             Vte.PtyFlags.DEFAULT,
-            pkg_dir,
+            resolved_dir,
             argv,
             None,
             GLib.SpawnFlags.DEFAULT,
@@ -563,7 +608,15 @@ class SyncWindow(Adw.ApplicationWindow):
             None,
             None
         )
-        self.terminal.grab_focus()
+        terminal.grab_focus()
+
+    def close_terminal_tab(self, page_widget):
+        page_num = self.notebook.page_num(page_widget)
+        if page_num != -1:
+            self.notebook.remove_page(page_num)
+
+        if self.notebook.get_n_pages() == 0:
+            self.hide_terminal()
 
     def hide_terminal(self):
         self.terminal_drawer.set_visible(False)
