@@ -1,3 +1,4 @@
+import threading
 #!/usr/bin/env python3
 """
 openSUSE Workspace Downstream Sync Backend
@@ -15,6 +16,64 @@ import concurrent.futures
 import unicodedata
 import configparser
 import requests
+
+_active_processes_lock = threading.Lock()
+_active_processes = []
+
+def run_tracked(args, **kwargs):
+    import subprocess
+    with _active_processes_lock:
+        if _active_processes is None:
+            raise RuntimeError("Subprocess spawning blocked during teardown")
+        if "capture_output" in kwargs and kwargs["capture_output"]:
+            kwargs.pop("capture_output")
+            kwargs["stdout"] = subprocess.PIPE
+            kwargs["stderr"] = subprocess.PIPE
+            
+        p = subprocess.Popen(args, **kwargs)
+        _active_processes.append(p)
+        
+    try:
+        stdout, stderr = p.communicate()
+        retcode = p.poll()
+        if "check" in kwargs and kwargs["check"] and retcode:
+            raise subprocess.CalledProcessError(retcode, args, output=stdout, stderr=stderr)
+            
+        class CompletedProcess:
+            def __init__(self, args, returncode, stdout, stderr):
+                self.args = args
+                self.returncode = returncode
+                self.stdout = stdout
+                self.stderr = stderr
+        return CompletedProcess(args, retcode, stdout, stderr)
+    finally:
+        with _active_processes_lock:
+            if _active_processes is not None and p in _active_processes:
+                _active_processes.remove(p)
+
+def terminate_all_subprocesses():
+    global _active_processes
+    with _active_processes_lock:
+        if _active_processes is None:
+            return
+        procs = list(_active_processes)
+        _active_processes = None
+        
+    for p in procs:
+        try:
+            p.terminate()
+        except Exception:
+            pass
+            
+    for p in procs:
+        try:
+            p.wait(timeout=0.2)
+        except Exception:
+            try:
+                p.kill()
+            except Exception:
+                pass
+
 
 # ANSI Color Codes
 GREEN = "\x1b[32m"
@@ -159,7 +218,7 @@ def check_repo_sync(repo_name):
 
     # 1. Fetch latest state from origin (src.opensuse.org/<devel_project>/<repo>)
     try:
-        subprocess.run(
+        run_tracked(
             ['git', '-C', repo_path, 'fetch', '--quiet', 'origin'],
             check=True, capture_output=True
         )
@@ -168,7 +227,7 @@ def check_repo_sync(repo_name):
 
     # 2. Check if origin/factory exists locally
     try:
-        subprocess.run(
+        run_tracked(
             ['git', '-C', repo_path, 'show-ref', '--verify', '--quiet', 'refs/remotes/origin/factory'],
             check=True, capture_output=True
         )
@@ -184,7 +243,7 @@ def check_repo_sync(repo_name):
 
     # 3. Check if origin/next exists locally
     try:
-        subprocess.run(
+        run_tracked(
             ['git', '-C', repo_path, 'show-ref', '--verify', '--quiet', 'refs/remotes/origin/next'],
             check=True, capture_output=True
         )
@@ -200,12 +259,12 @@ def check_repo_sync(repo_name):
     pool_behind = 0
 
     try:
-        subprocess.run(
+        run_tracked(
             ['git', '-C', repo_path, 'fetch', '--quiet', pool_url, 'factory'],
             check=True, capture_output=True, text=True
         )
         # Compare origin/factory and FETCH_HEAD (pool/factory)
-        res = subprocess.run(
+        res = run_tracked(
             ['git', '-C', repo_path, 'rev-list', '--left-right', '--count', 'origin/factory...FETCH_HEAD'],
             check=True, capture_output=True, text=True
         )
@@ -240,7 +299,7 @@ def check_repo_sync(repo_name):
 
     if has_origin_next:
         try:
-            res_next = subprocess.run(
+            res_next = run_tracked(
                 ['git', '-C', repo_path, 'rev-list', '--left-right', '--count', 'origin/factory...origin/next'],
                 check=True, capture_output=True, text=True
             )
@@ -283,7 +342,7 @@ def check_repo_version(repo_name, branch=None):
 
     # 1. Fetch latest state from origin (src.opensuse.org/<devel_project>/<repo>)
     try:
-        subprocess.run(
+        run_tracked(
             ['git', '-C', repo_path, 'fetch', '--quiet', 'origin'],
             check=True, capture_output=True
         )
@@ -310,7 +369,7 @@ def check_repo_version(repo_name, branch=None):
     factory_ver = None
     if branch is None or branch == "factory":
         try:
-            res = subprocess.run(
+            res = run_tracked(
                 ['git', '-C', repo_path, 'show', f'refs/remotes/origin/factory:{spec_file}'],
                 check=True, capture_output=True, text=True
             )
@@ -325,7 +384,7 @@ def check_repo_version(repo_name, branch=None):
     next_ver = None
     if branch is None or branch == "next":
         try:
-            res = subprocess.run(
+            res = run_tracked(
                 ['git', '-C', repo_path, 'show', f'refs/remotes/origin/next:{spec_file}'],
                 check=True, capture_output=True, text=True
             )
@@ -393,7 +452,7 @@ def get_git_diff(repo_name):
     """
     repo_path = os.path.join('.', repo_name)
     try:
-        res = subprocess.run(
+        res = run_tracked(
             ['git', '-C', repo_path, 'diff', 'origin/factory...origin/next'],
             capture_output=True, text=True, check=True
         )

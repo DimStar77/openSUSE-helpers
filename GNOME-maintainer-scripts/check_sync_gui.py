@@ -429,11 +429,11 @@ class SyncDiffDialog(Gtk.Window):
                 # Fetch pool/factory first to ensure FETCH_HEAD is correct
                 gitea_name = sb.get_gitea_repo_name(repo_path, self.package_name)
                 pool_url = f"https://src.opensuse.org/pool/{gitea_name}.git"
-                subprocess.run(
+                sb.run_tracked(
                     ['git', '-C', repo_path, 'fetch', '--quiet', pool_url, 'factory'],
                     check=True, capture_output=True
                 )
-                res = subprocess.run(
+                res = sb.run_tracked(
                     ['git', '-C', repo_path, 'diff', 'origin/factory...FETCH_HEAD'],
                     check=True, capture_output=True, text=True
                 )
@@ -444,11 +444,11 @@ class SyncDiffDialog(Gtk.Window):
                 comparison_desc = f"local Factory vs Pool (Upstream)  [Ahead by {pool_ahead} commits]"
                 gitea_name = sb.get_gitea_repo_name(repo_path, self.package_name)
                 pool_url = f"https://src.opensuse.org/pool/{gitea_name}.git"
-                subprocess.run(
+                sb.run_tracked(
                     ['git', '-C', repo_path, 'fetch', '--quiet', pool_url, 'factory'],
                     check=True, capture_output=True
                 )
-                res = subprocess.run(
+                res = sb.run_tracked(
                     ['git', '-C', repo_path, 'diff', 'FETCH_HEAD...origin/factory'],
                     check=True, capture_output=True, text=True
                 )
@@ -457,7 +457,7 @@ class SyncDiffDialog(Gtk.Window):
                     diff_text = "No differences in spec files or sources detected."
             elif next_behind > 0:
                 comparison_desc = f"local Next vs local Factory  [Next behind by {next_behind} commits]"
-                res = subprocess.run(
+                res = sb.run_tracked(
                     ['git', '-C', repo_path, 'diff', 'origin/next...origin/factory'],
                     check=True, capture_output=True, text=True
                 )
@@ -795,14 +795,22 @@ class SyncWindow(Adw.ApplicationWindow):
     def on_terminal_spawned(self, terminal, pid, error, tab_state):
         if error is None:
             tab_state["shell_pid"] = pid
-            # Trigger immediate monitor update to capture initial state
             GLib.idle_add(self.monitor_terminals)
         else:
-            print(f"VTE spawn failed: {error}", file=sys.stderr)
-            sys.stderr.flush()
+            # Blocker 5: Close dead tab page instantly and notify the user via a Toast Overlay
+            scroll_widget = tab_state.get("scroll_widget")
+            if scroll_widget:
+                GLib.idle_add(self.close_terminal_tab, scroll_widget)
+
+            toast = Adw.Toast.new(f"Terminal spawn failed: {error.message}")
+            self.toast_overlay.add_toast(toast)
 
     def monitor_terminals(self):
         """Polls active terminal PIDs every 1.5 seconds, flashing state changes, reaping zombie processes, and displaying completed Toasts."""
+        # Blocker 8: Force immediate GSource destruction to prevent re-registration leaks during close
+        if not hasattr(self, "timeout_id") or not self.timeout_id:
+            return False
+
         for tab in list(self.terminal_tabs):
             shell_pid = tab.get("shell_pid")
             if not shell_pid:
