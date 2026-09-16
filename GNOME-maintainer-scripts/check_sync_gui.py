@@ -188,6 +188,12 @@ class VersionRow(Gtk.ListBoxRow):
         main_box.append(suffix_box)
         self.set_child(main_box)
 
+        # Right-click gesture detector (Button 3 is right-click)
+        gesture = Gtk.GestureClick.new()
+        gesture.set_button(3)
+        gesture.connect("released", self.on_right_click)
+        self.add_controller(gesture)
+
     def set_branch_filter(self, filter_mode):
         # 0 = Both, 1 = Factory, 2 = Next
         if filter_mode == 0:
@@ -215,6 +221,76 @@ class VersionRow(Gtk.ListBoxRow):
         project_name = self.data.get("project", package_name)
         url = f"https://release-monitoring.org/project/{project_name}/"
         webbrowser.open(url)
+
+    def on_right_click(self, gesture, n_press, x, y):
+        popover = Gtk.Popover()
+        popover.set_parent(self)
+
+        # Position at the clicked point
+        rect = Gdk.Rectangle()
+        rect.x = int(x)
+        rect.y = int(y)
+        rect.width = 1
+        rect.height = 1
+        popover.set_pointing_to(rect)
+
+        # Popover layout
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        vbox.set_margin_start(8)
+        vbox.set_margin_end(8)
+        vbox.set_margin_top(8)
+        vbox.set_margin_bottom(8)
+
+        # Term Option
+        term_btn = Gtk.Button(label="Open Terminal Here")
+        term_btn.set_has_frame(False)
+        term_btn.set_halign(Gtk.Align.START)
+        term_btn.connect("clicked", self.on_open_terminal_clicked, popover)
+        vbox.append(term_btn)
+
+        # Check for _service file
+        pkg_dir = os.path.join('.', self.package_name)
+        has_service = os.path.exists(os.path.join(pkg_dir, '_service'))
+
+        factory_ver = self.data.get("factory_ver", "N/A")
+        next_ver = self.data.get("next_ver", "—")
+        upstream_stable = self.data.get("upstream_stable", "N/A")
+        upstream_latest = self.data.get("upstream_latest", "—")
+
+        if has_service:
+            # Separator
+            sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+            vbox.append(sep)
+
+            # If next needs an update
+            if next_ver != "—" and next_ver != upstream_latest and upstream_latest != "—":
+                next_btn = Gtk.Button(label=f"Update Next to {upstream_latest} via obs_scm-update.sh")
+                next_btn.set_has_frame(False)
+                next_btn.set_halign(Gtk.Align.START)
+                next_btn.connect("clicked", self.on_run_update_clicked, upstream_latest, popover)
+                vbox.append(next_btn)
+
+            # If factory needs an update
+            if factory_ver != upstream_stable and factory_ver != "N/A" and upstream_stable != "N/A":
+                fac_btn = Gtk.Button(label=f"Update Factory to {upstream_stable} via obs_scm-update.sh")
+                fac_btn.set_has_frame(False)
+                fac_btn.set_halign(Gtk.Align.START)
+                fac_btn.connect("clicked", self.on_run_update_clicked, upstream_stable, popover)
+                vbox.append(fac_btn)
+
+        popover.set_child(vbox)
+        popover.popup()
+
+    def on_open_terminal_clicked(self, btn, popover):
+        popover.popdown()
+        pkg_dir = os.path.abspath(os.path.join('.', self.package_name))
+        subprocess.Popen(['gnome-terminal', '--working-directory', pkg_dir])
+
+    def on_run_update_clicked(self, btn, version, popover):
+        popover.popdown()
+        pkg_dir = os.path.abspath(os.path.join('.', self.package_name))
+        command = f"obs_scm-update.sh {version}; exec bash"
+        subprocess.Popen(['gnome-terminal', '--working-directory', pkg_dir, '--', 'bash', '-c', command])
 
 
 class ForwardRow(Adw.ActionRow):
