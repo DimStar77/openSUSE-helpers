@@ -15,6 +15,7 @@ import signal
 import re
 import shlex
 import xml.etree.ElementTree as ET
+from typing import Optional, Tuple
 
 # Pre-compiled regular expressions for high-performance matching and pattern analysis
 RE_HEX_40 = re.compile(r'^[0-9a-fA-F]{40}$')
@@ -22,9 +23,10 @@ RE_HEX_SHORT = re.compile(r'^[0-9a-fA-F]{7,12}$')
 RE_VERSION_3 = re.compile(r'(\d+)([\._])(\d+)\2(\d+)')
 RE_VERSION_2 = re.compile(r'(\d+)([\._])(\d+)')
 
-def get_service_revision(pkg_dir):
-    """
-    Parses the package's local _service file to find the revision parameter for the main obs_scm service.
+def get_service_revision(pkg_dir: str) -> Optional[str]:
+    """Parse the package's local _service file to find the revision parameter for the main obs_scm service.
+    
+    Catches specific XML parsing and OS access errors to prevent silencing unrelated runtime bugs.
     """
     service_path = os.path.join(pkg_dir, '_service')
     if not os.path.exists(service_path):
@@ -45,14 +47,13 @@ def get_service_revision(pkg_dir):
                 for param in service.findall('param'):
                     if param.get('name') == 'revision':
                         return param.text.strip() if param.text else None
-    except Exception:
+    except (ET.ParseError, PermissionError, OSError):
         pass
     return None
 
-def guess_update_revision(current_revision, target_version):
-    """
-    Analyzes the pattern of the current revision in _service (e.g. 'v9.1.2', 'appstream_glib_0_8_4')
-    and matches it to target_version to produce a guessed revision, or returns confidence message.
+def guess_update_revision(current_revision: Optional[str], target_version: str) -> Tuple[Optional[str], Optional[str]]:
+    """Analyze the pattern of the current revision in _service (e.g. 'v9.1.2')
+    and match it to target_version to produce a guessed revision, or return a confidence message.
     """
     if not current_revision:
         return target_version, None
