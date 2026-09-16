@@ -22,6 +22,7 @@ _active_processes = []
 
 def run_tracked(args, **kwargs):
     import subprocess
+    check = kwargs.pop("check", False)
     with _active_processes_lock:
         if _active_processes is None:
             raise RuntimeError("Subprocess spawning blocked during teardown")
@@ -29,16 +30,16 @@ def run_tracked(args, **kwargs):
             kwargs.pop("capture_output")
             kwargs["stdout"] = subprocess.PIPE
             kwargs["stderr"] = subprocess.PIPE
-            
+
         p = subprocess.Popen(args, **kwargs)
         _active_processes.append(p)
-        
+
     try:
         stdout, stderr = p.communicate()
         retcode = p.poll()
-        if "check" in kwargs and kwargs["check"] and retcode:
+        if check and retcode:
             raise subprocess.CalledProcessError(retcode, args, output=stdout, stderr=stderr)
-            
+
         class CompletedProcess:
             def __init__(self, args, returncode, stdout, stderr):
                 self.args = args
@@ -62,13 +63,13 @@ def terminate_all_subprocesses():
             return
         procs = list(_active_processes)
         _active_processes = None
-        
+
     for p in procs:
         try:
             p.terminate()
         except Exception:
             pass
-            
+
     for p in procs:
         try:
             p.wait(timeout=0.2)
