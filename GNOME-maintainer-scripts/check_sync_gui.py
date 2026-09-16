@@ -551,6 +551,7 @@ class SyncWindow(Adw.ApplicationWindow):
         self.notebook.set_vexpand(True)
         self.notebook.set_scrollable(True)
         self.notebook.set_show_border(True)
+        self.notebook.connect("switch-page", self.on_notebook_switch_page)
         self.terminal_drawer.append(self.notebook)
 
         self.main_paned.set_end_child(self.terminal_drawer)
@@ -745,7 +746,8 @@ class SyncWindow(Adw.ApplicationWindow):
             "tab_label": tab_label,
             "key_controller": key_controller,
             "shell_pid": None,
-            "was_active": False
+            "was_active": False,
+            "active_toast": None
         }
         self.terminal_tabs.append(tab_state)
 
@@ -869,11 +871,28 @@ class SyncWindow(Adw.ApplicationWindow):
                 tab["was_active"] = False
                 label_widget.set_text(f"{base_lbl} ✅")
 
-                # Render floating Libadwaita Toast alert
-                toast = Adw.Toast.new(f"Task completed in tab: {pkg_name} ({branch})")
-                toast.set_button_label("Focus Tab")
-                toast.connect("button-clicked", self.on_toast_clicked, tab["scroll_widget"])
-                self.toast_overlay.add_toast(toast)
+                # Suppress the toast if the user is already viewing the completed tab
+                page_idx = self.notebook.page_num(tab["scroll_widget"])
+                is_current_and_visible = (
+                    self.terminal_drawer.props.visible and
+                    page_idx != -1 and
+                    self.notebook.get_current_page() == page_idx
+                )
+                if not is_current_and_visible:
+                    # Dismiss any existing toast for this tab first just in case
+                    if tab.get("active_toast"):
+                        try:
+                            tab["active_toast"].dismiss()
+                        except Exception:
+                            pass
+                        tab["active_toast"] = None
+
+                    toast = Adw.Toast.new(f"Task completed in tab: {pkg_name} ({branch})")
+                    toast.set_button_label("Focus Tab")
+                    toast.connect("button-clicked", self.on_toast_clicked, tab["scroll_widget"])
+                    toast.connect("dismissed", lambda t: tab.update({"active_toast": None}))
+                    self.toast_overlay.add_toast(toast)
+                    tab["active_toast"] = toast
 
         return True # Return True to keep the periodic GLib timer alive
 
@@ -882,6 +901,19 @@ class SyncWindow(Adw.ApplicationWindow):
         if page_num != -1:
             self.notebook.set_current_page(page_num)
             self.terminal_drawer.set_visible(True)
+
+    def on_notebook_switch_page(self, notebook, page, page_num):
+        """When switching pages, dismiss the toast of the newly focused page."""
+        for tab in self.terminal_tabs:
+            if tab["scroll_widget"] == page:
+                active_toast = tab.get("active_toast")
+                if active_toast:
+                    try:
+                        active_toast.dismiss()
+                    except Exception:
+                        pass
+                    tab["active_toast"] = None
+                break
 
     def close_terminal_tab(self, page_widget):
         page_num = self.notebook.page_num(page_widget)
