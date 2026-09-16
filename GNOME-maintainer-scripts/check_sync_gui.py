@@ -883,7 +883,7 @@ class SyncWindow(Adw.ApplicationWindow):
 
 class SyncApp(Adw.Application):
     def __init__(self):
-        super().__init__(application=app_id if hasattr(self, "app_id") else "org.opensuse.gnome.sync_dashboard")
+        super().__init__(application_id="org.opensuse.gnome.sync_dashboard")
         
     def do_activate(self):
         win = SyncWindow(self)
