@@ -475,6 +475,36 @@ def get_gitea_pr_url(repo_name):
     owner, gitea_name = get_gitea_owner_and_repo(repo_path, repo_name)
     return f"https://src.opensuse.org/{owner}/{gitea_name}/compare/factory...next"
 
+def create_gitea_pr(repo_name, title, description):
+    """
+    Create a Gitea pull request from 'next' to 'factory' using the 'tea' CLI utility.
+    """
+    import shutil
+    repo_path = os.path.join('.', repo_name)
+    try:
+        if shutil.which("tea") is None:
+            return False, "Error: 'tea' CLI utility is not installed on the system."
+
+        cmd = [
+            "tea", "pulls", "create",
+            "--repo", repo_path,
+            "--head", "next",
+            "--base", "factory",
+            "--title", title,
+            "--description", description
+        ]
+
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if res.returncode == 0:
+            return True, res.stdout.strip()
+        else:
+            err = res.stderr.strip() or res.stdout.strip()
+            return False, f"Gitea error: {err}"
+    except subprocess.TimeoutExpired:
+        return False, "Gitea error: The 'tea' command timed out after 30 seconds."
+    except Exception as e:
+        return False, f"Exception occurred: {str(e)}"
+
 def strip_ansi(text):
     """Strip ANSI escape sequences from text for accurate visual width calculations."""
     ansi_escape = re.compile(r'\x1b\[[0-9;]*m')

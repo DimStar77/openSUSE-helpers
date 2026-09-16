@@ -447,13 +447,240 @@ class ForwardRow(Adw.ActionRow):
         self.set_subtitle(f"Commits Ahead: {self.next_ahead} | Behind: {self.next_behind}")
 
         # PR Status Suffix Badge
-        pr_label = Gtk.Label()
+        self.pr_label = Gtk.Label()
         if self.has_pr:
-            pr_label.set_markup(f"<span foreground='green' weight='bold'>PR #{self.pr_number}</span>")
+            self.pr_label.set_markup(f"<span foreground='green' weight='bold'>PR #{self.pr_number}</span>")
         else:
-            pr_label.set_markup("<span foreground='red'>No PR</span>")
+            self.pr_label.set_markup("<span foreground='red'>No PR</span>")
 
-        self.add_suffix(pr_label)
+        self.add_suffix(self.pr_label)
+
+    def update_pr_state(self, pr_data):
+        self.has_pr = pr_data.get("has_pr", False)
+        self.pr_number = pr_data.get("number")
+        self.pr_url = pr_data.get("url")
+
+        if self.has_pr:
+            self.pr_label.set_markup(f"<span foreground='green' weight='bold'>PR #{self.pr_number}</span>")
+        else:
+            self.pr_label.set_markup("<span foreground='red'>No PR</span>")
+
+    def update_row_data(self, sync_data, pr_data):
+        """Update the row data, subtitle, and badge in-place to prevent selection loss."""
+        self.sync_data = sync_data
+        self.pr_data = pr_data
+
+        self.next_ahead = sync_data.get("next_ahead", 0)
+        self.next_behind = sync_data.get("next_behind", 0)
+        self.has_pr = pr_data.get("has_pr", False)
+        self.pr_number = pr_data.get("number", None)
+        self.pr_url = pr_data.get("url", None)
+
+        self.set_subtitle(f"Commits Ahead: {self.next_ahead} | Behind: {self.next_behind}")
+
+        if self.has_pr:
+            self.pr_label.set_markup(f"<span foreground='green' weight='bold'>PR #{self.pr_number}</span>")
+        else:
+            self.pr_label.set_markup("<span foreground='red'>No PR</span>")
+
+
+class SyncCreatePRDialog(Gtk.Window):
+    """Modal dialog to prefill, review branch changes, and programmatically create a Gitea PR."""
+    def __init__(self, parent, package_name):
+        super().__init__(transient_for=parent, modal=True, title=f"Create Pull Request - {package_name}")
+        self.set_default_size(840, 680)
+
+        self.package_name = package_name
+        self.parent = parent
+        self.is_destroyed = False
+
+        self.connect("destroy", self.on_destroy)
+
+        # Main layout
+        main_layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        main_layout.set_margin_top(12)
+        main_layout.set_margin_bottom(12)
+        main_layout.set_margin_start(18)
+        main_layout.set_margin_end(18)
+
+        # Header Title
+        title_lbl = Gtk.Label(halign=Gtk.Align.START)
+        title_lbl.set_markup(f"<span size='large' weight='bold'>Prefill Pull Request for {package_name}</span>")
+        main_layout.append(title_lbl)
+
+        # Grid for prefilled branch mapping & PR Title
+        grid = Gtk.Grid(column_spacing=18, row_spacing=12)
+        grid.set_margin_top(6)
+        grid.set_margin_bottom(6)
+
+        # 1. Source Branch (Head)
+        src_lbl = Gtk.Label(halign=Gtk.Align.START)
+        src_lbl.set_markup("<span weight='bold'>Source Branch (Head):</span>")
+        src_val = Gtk.Label(label="next", halign=Gtk.Align.START)
+        grid.attach(src_lbl, 0, 0, 1, 1)
+        grid.attach(src_val, 1, 0, 1, 1)
+
+        # 2. Target Branch (Base)
+        tgt_lbl = Gtk.Label(halign=Gtk.Align.START)
+        tgt_lbl.set_markup("<span weight='bold'>Target Branch (Base):</span>")
+        tgt_val = Gtk.Label(label="factory", halign=Gtk.Align.START)
+        grid.attach(tgt_lbl, 2, 0, 1, 1)
+        grid.attach(tgt_val, 3, 0, 1, 1)
+
+        # 3. PR Title
+        title_input_lbl = Gtk.Label(halign=Gtk.Align.START)
+        title_input_lbl.set_markup("<span weight='bold'>PR Title:</span>")
+        self.title_entry = Gtk.Entry()
+        self.title_entry.set_hexpand(True)
+        self.title_entry.set_text(f"Forward next to factory: {package_name}")
+        grid.attach(title_input_lbl, 0, 1, 1, 1)
+        grid.attach(self.title_entry, 1, 1, 3, 1)
+
+        # 4. PR Description
+        desc_input_lbl = Gtk.Label(halign=Gtk.Align.START)
+        desc_input_lbl.set_markup("<span weight='bold'>Description:</span>")
+
+        self.desc_buffer = Gtk.TextBuffer()
+        self.desc_buffer.set_text(f"Automated next-to-factory branch forwarding for {package_name} via GNOME Sync Dashboard.")
+        self.desc_view = Gtk.TextView(buffer=self.desc_buffer)
+        self.desc_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+
+        desc_scroll = Gtk.ScrolledWindow()
+        desc_scroll.set_child(self.desc_view)
+        desc_scroll.set_size_request(-1, 80)
+        grid.attach(desc_input_lbl, 0, 2, 1, 1)
+        grid.attach(desc_scroll, 1, 2, 3, 1)
+
+        main_layout.append(grid)
+
+        # Diff View Label
+        diff_lbl = Gtk.Label(halign=Gtk.Align.START)
+        diff_lbl.set_markup("<span size='medium' weight='bold'>Review Branch Changes (Diff):</span>")
+        main_layout.append(diff_lbl)
+
+        # Diff View Scrolled Window
+        diff_scroll = Gtk.ScrolledWindow()
+        diff_scroll.set_hexpand(True)
+        diff_scroll.set_vexpand(True)
+
+        if GtkSource:
+            lang_manager = GtkSource.LanguageManager.get_default()
+            lang = lang_manager.get_language('diff')
+            self.diff_buffer = GtkSource.Buffer()
+            self.diff_buffer.set_language(lang)
+            self.diff_buffer.set_highlight_syntax(True)
+            self.diff_view = GtkSource.View(buffer=self.diff_buffer)
+            self.diff_view.set_show_line_numbers(True)
+            self.diff_view.set_highlight_current_line(True)
+        else:
+            self.diff_buffer = Gtk.TextBuffer()
+            self.diff_view = Gtk.TextView(buffer=self.diff_buffer)
+
+        self.diff_view.set_monospace(True)
+        self.diff_view.set_editable(False)
+        diff_scroll.set_child(self.diff_view)
+        main_layout.append(diff_scroll)
+
+        # Footer Button Action Bar
+        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        footer.set_halign(Gtk.Align.END)
+
+        cancel_btn = Gtk.Button(label="Cancel")
+        cancel_btn.connect("clicked", lambda btn: self.destroy())
+        footer.append(cancel_btn)
+
+        self.create_btn = Gtk.Button(label="Create Pull Request")
+        self.create_btn.add_css_class("suggested-action")
+        self.create_btn.connect("clicked", self.on_create_pr_clicked)
+        footer.append(self.create_btn)
+
+        main_layout.append(footer)
+        self.set_child(main_layout)
+
+        # Start loading diff asynchronously
+        self.diff_buffer.set_text("Connecting to pool & loading differences...")
+        parent.executor.submit(self.load_diff_data)
+
+    def on_destroy(self, widget):
+        self.is_destroyed = True
+
+    def load_diff_data(self):
+        diff_text = sb.get_git_diff(self.package_name)
+        GLib.idle_add(self.update_diff_text, diff_text)
+
+    def update_diff_text(self, text):
+        if not self.is_destroyed:
+            self.diff_buffer.set_text(text)
+
+    def on_create_pr_clicked(self, btn):
+        title = self.title_entry.get_text().strip()
+
+        start_iter = self.desc_buffer.get_start_iter()
+        end_iter = self.desc_buffer.get_end_iter()
+        description = self.desc_buffer.get_text(start_iter, end_iter, True).strip()
+
+        if not title:
+            toast = Adw.Toast.new("Pull Request title cannot be empty.")
+            self.parent.toast_overlay.add_toast(toast)
+            return
+
+        self.create_btn.set_sensitive(False)
+        self.create_btn.set_label("Creating PR...")
+        self.title_entry.set_sensitive(False)
+        self.desc_view.set_sensitive(False)
+
+        # Final pre-submit double-check to prevent race conditions
+        self.parent.executor.submit(self.run_bg_pre_submit_check, title, description)
+
+    def run_bg_pre_submit_check(self, title, description):
+        _, pr_data = sb.check_repo_pr(self.package_name)
+        GLib.idle_add(self.on_pre_submit_check_result, pr_data, title, description)
+
+    def on_pre_submit_check_result(self, pr_data, title, description):
+        if self.is_destroyed:
+            return
+
+        if pr_data.get("has_pr"):
+            # A PR was created in the meantime by someone else!
+            toast = Adw.Toast.new("A Pull Request has just been created by someone else!")
+            pr_url = pr_data.get("url")
+            if pr_url:
+                toast.set_button_label("Open PR")
+                toast.connect("button-clicked", lambda t, u: webbrowser.open(u), pr_url)
+            self.parent.toast_overlay.add_toast(toast)
+            self.destroy()
+            self.parent.refresh_single_package(self.package_name)
+        else:
+            # No existing PR, proceed to submit!
+            self.parent.executor.submit(self.run_bg_create_pr, title, description)
+
+    def run_bg_create_pr(self, title, description):
+        success, res_msg = sb.create_gitea_pr(self.package_name, title, description)
+        GLib.idle_add(self.on_pr_created_result, success, res_msg)
+
+    def on_pr_created_result(self, success, res_msg):
+        if self.is_destroyed:
+            return
+
+        if success:
+            toast = Adw.Toast.new("Pull Request created successfully!")
+            url_match = re.search(r'https?://[^\s]+', res_msg)
+            if url_match:
+                pr_url = url_match.group(0)
+                toast.set_button_label("Open PR")
+                toast.connect("button-clicked", lambda t, u: webbrowser.open(u), pr_url)
+
+            self.parent.toast_overlay.add_toast(toast)
+            self.destroy()
+            self.parent.refresh_single_package(self.package_name)
+        else:
+            self.create_btn.set_sensitive(True)
+            self.create_btn.set_label("Create Pull Request")
+            self.title_entry.set_sensitive(True)
+            self.desc_view.set_sensitive(True)
+
+            toast = Adw.Toast.new(f"Failed to create PR: {res_msg}")
+            self.parent.toast_overlay.add_toast(toast)
 
 
 class SyncDiffDialog(Gtk.Window):
@@ -1135,26 +1362,39 @@ class SyncWindow(Adw.ApplicationWindow):
         GLib.idle_add(self.update_forward_row_single, repo, sync_data, pr_data)
 
     def update_forward_row_single(self, name, sync_data, pr_data):
-        # Find and remove any existing row first
+        # Search for existing row
         idx = 0
-        removed = False
+        found_row = None
         while True:
             row = self.fwd_list_box.get_row_at_index(idx)
             if not row:
                 break
             if hasattr(row, "package_name") and row.package_name == name:
-                self.fwd_list_box.remove(row)
-                removed = True
+                found_row = row
                 break
             idx += 1
 
         next_ahead = sync_data.get("next_ahead", 0)
-        if next_ahead > 0:
-            new_row = ForwardRow(name, sync_data, pr_data)
-            if removed:
-                self.fwd_list_box.insert(new_row, idx)
+
+        if found_row:
+            if next_ahead > 0:
+                # Update in-place to avoid selection loss!
+                found_row.update_row_data(sync_data, pr_data)
+
+                # If this row is the currently selected one, we should also update the self.pr_btn label!
+                selected_row = self.fwd_list_box.get_selected_row()
+                if selected_row == found_row:
+                    if found_row.has_pr:
+                        self.pr_btn.set_label("Show Pull Request")
+                    else:
+                        self.pr_btn.set_label("Create Pull Request")
             else:
-                self.fwd_list_box.append(new_row)
+                # If there are no more next_ahead commits, we remove the row
+                self.fwd_list_box.remove(found_row)
+        elif next_ahead > 0:
+            # Append new row
+            new_row = ForwardRow(name, sync_data, pr_data)
+            self.fwd_list_box.append(new_row)
 
         self.fwd_list_box.invalidate_filter()
 
@@ -1734,11 +1974,18 @@ class SyncWindow(Adw.ApplicationWindow):
         if not row:
             self.detail_stack.set_visible_child(self.empty_page)
             self.pr_btn.set_sensitive(False)
+            self.pr_btn.set_label("Create Pull Request")
             return
 
         self.detail_stack.set_visible_child_name("diff")
         self.pr_btn.set_sensitive(True)
         self.current_selected_package = row.package_name
+
+        if row.has_pr:
+            self.pr_btn.set_label("Show Pull Request")
+        else:
+            self.pr_btn.set_label("Create Pull Request")
+
         self.diff_title_label.set_markup(
             f"<span size='large' weight='bold'>Diff for {row.package_name}</span>   "
             f"<span size='small' foreground='gray'>({row.next_ahead} commits ahead)</span>"
@@ -1757,8 +2004,49 @@ class SyncWindow(Adw.ApplicationWindow):
 
     def on_create_pr_clicked(self, btn):
         if hasattr(self, "current_selected_package"):
-            url = sb.get_gitea_pr_url(self.current_selected_package)
-            webbrowser.open(url)
+            row = self.fwd_list_box.get_selected_row()
+            if row and row.has_pr and row.pr_url:
+                webbrowser.open(row.pr_url)
+                return
+
+            # Disable button and show checking state
+            self.pr_btn.set_sensitive(False)
+            self.pr_btn.set_label("Checking Gitea...")
+
+            # Run Gitea check in background
+            self.executor.submit(self.run_bg_pre_create_check, self.current_selected_package)
+
+    def run_bg_pre_create_check(self, package_name):
+        _, pr_data = sb.check_repo_pr(package_name)
+        GLib.idle_add(self.on_pre_create_check_result, package_name, pr_data)
+
+    def on_pre_create_check_result(self, package_name, pr_data):
+        if not hasattr(self, "current_selected_package") or self.current_selected_package != package_name:
+            return
+
+        # Restore button state
+        self.pr_btn.set_sensitive(True)
+
+        has_pr = pr_data.get("has_pr", False)
+        if has_pr:
+            # Update row in-place!
+            row = self.fwd_list_box.get_selected_row()
+            if row and row.package_name == package_name:
+                row.update_pr_state(pr_data)
+                self.pr_btn.set_label("Show Pull Request")
+
+            # Show Toast
+            toast = Adw.Toast.new("A Pull Request already exists on Gitea!")
+            pr_url = pr_data.get("url")
+            if pr_url:
+                toast.set_button_label("Open PR")
+                toast.connect("button-clicked", lambda t, u: webbrowser.open(u), pr_url)
+            self.toast_overlay.add_toast(toast)
+        else:
+            self.pr_btn.set_label("Create Pull Request")
+            # Open the dialog!
+            dialog = SyncCreatePRDialog(self, package_name)
+            dialog.present()
 
 
 class SyncApp(Adw.Application):
