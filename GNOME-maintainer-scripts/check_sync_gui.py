@@ -48,16 +48,32 @@ class DaemonThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
         finally:
             threading.Thread = orig_thread
 
-class SyncRow(Adw.ActionRow):
-    """Custom row holding package data for the Sync tab."""
+class SyncRow(Gtk.ListBoxRow):
+    """Custom row holding package sync data for the Sync tab."""
     def __init__(self, package_name, data):
         super().__init__()
         self.package_name = package_name
         self.data = data
-        self.set_title(package_name)
-        self.set_activatable(True) # Ensure row responds to activation
 
-        # Build status label
+        # Main horizontal box
+        main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        main_box.set_margin_start(18)
+        main_box.set_margin_end(18)
+        main_box.set_margin_top(12)
+        main_box.set_margin_bottom(12)
+
+        # Left side: Title and structured Grid
+        left_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        left_box.set_hexpand(True)
+
+        # Package Title
+        title_label = Gtk.Label(halign=Gtk.Align.START)
+        title_label.set_markup(f"<span size='medium' weight='bold'>{package_name}</span>")
+        left_box.append(title_label)
+
+        # Structured Grid
+        grid = Gtk.Grid(column_spacing=48, row_spacing=4)
+
         pool_status = data.get("pool_status", "unknown")
         pool_ahead = data.get("pool_ahead", 0)
         pool_behind = data.get("pool_behind", 0)
@@ -65,54 +81,52 @@ class SyncRow(Adw.ActionRow):
         next_ahead = data.get("next_ahead", 0)
         next_behind = data.get("next_behind", 0)
 
-        # Detail text
-        actions = []
-        if pool_behind > 0:
-            actions.append("Pull Pool")
-        if pool_ahead > 0:
-            actions.append("Submit Pool")
-        if next_behind > 0:
-            actions.append("Merge Next")
+        # Column 1: Stage 1 (Pool Sync)
+        s1_title = Gtk.Label(halign=Gtk.Align.START)
+        s1_title.set_markup("<span size='small' foreground='gray'>Pool Sync (Stage 1)</span>")
+        grid.attach(s1_title, 0, 0, 1, 1)
 
-        action_text = " & ".join(actions) if actions else "In Sync"
-        self.set_subtitle(f"Action: {action_text}   (Double-click to view Diff)")
-
-        # Build badges/pills as suffixes
-        badge_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-
-        # Stage 1 Badge
-        s1_label = Gtk.Label()
+        s1_val = Gtk.Label(halign=Gtk.Align.START)
         if pool_behind > 0 and pool_ahead > 0:
-            s1_label.set_markup(f"<span foreground='red'>Diverged (B:{pool_behind}/A:{pool_ahead})</span>")
+            s1_val.set_markup(f"<span weight='bold' foreground='red'>Diverged</span> <span size='small' foreground='gray'>(B:{pool_behind}/A:{pool_ahead})</span>")
         elif pool_behind > 0:
-            s1_label.set_markup(f"<span foreground='orange'>Behind {pool_behind}</span>")
+            s1_val.set_markup(f"<span weight='bold' foreground='orange'>Behind Pool by {pool_behind} commits</span>")
         elif pool_ahead > 0:
-            s1_label.set_markup(f"<span foreground='cyan'>Ahead {pool_ahead}</span>")
+            s1_val.set_markup(f"<span weight='bold' foreground='cyan'>Ahead of Pool by {pool_ahead} commits</span>")
         elif pool_status == "Not in Pool":
-            s1_label.set_markup("<span foreground='yellow'>Not in Pool</span>")
+            s1_val.set_markup("<span foreground='yellow'>Not in Gitea Pool</span>")
         else:
-            s1_label.set_markup("<span foreground='green'>Stage 1 OK</span>")
-        badge_box.append(s1_label)
+            s1_val.set_markup("<span foreground='green'>Fully In Sync</span>")
+        grid.attach(s1_val, 0, 1, 1, 1)
 
-        # Separator
-        sep = Gtk.Label(label="|")
-        badge_box.append(sep)
+        # Column 2: Stage 2 (Next Sync)
+        s2_title = Gtk.Label(halign=Gtk.Align.START)
+        s2_title.set_markup("<span size='small' foreground='gray'>Next Branch Sync (Stage 2)</span>")
+        grid.attach(s2_title, 1, 0, 1, 1)
 
-        # Stage 2 Badge
-        s2_label = Gtk.Label()
+        s2_val = Gtk.Label(halign=Gtk.Align.START)
         if next_behind > 0 and next_ahead > 0:
-            s2_label.set_markup(f"<span foreground='red'>Diverged (B:{next_behind}/A:{next_ahead})</span>")
+            s2_val.set_markup(f"<span weight='bold' foreground='red'>Diverged</span> <span size='small' foreground='gray'>(B:{next_behind}/A:{next_ahead})</span>")
         elif next_behind > 0:
-            s2_label.set_markup(f"<span foreground='orange'>Behind {next_behind}</span>")
+            s2_val.set_markup(f"<span weight='bold' foreground='orange'>Next behind Factory by {next_behind} commits</span>")
         elif next_ahead > 0:
-            s2_label.set_markup(f"<span foreground='green'>Ahead {next_ahead} (ok)</span>")
-        elif next_status == "No next branch":
-            s2_label.set_markup("<span foreground='gray'>No next branch</span>")
+            s2_val.set_markup(f"<span foreground='green'>Next ahead of Factory by {next_ahead} commits (ok)</span>")
+        elif next_status == "No next branch".strip():
+            s2_val.set_markup("<span foreground='gray'>No Next Branch</span>")
         else:
-            s2_label.set_markup("<span foreground='green'>Stage 2 OK</span>")
-        badge_box.append(s2_label)
+            s2_val.set_markup("<span foreground='green'>Fully In Sync</span>")
+        grid.attach(s2_val, 1, 1, 1, 1)
 
-        self.add_suffix(badge_box)
+        left_box.append(grid)
+        main_box.append(left_box)
+
+        # Right side: Icon/Action hint (Double click details)
+        info_icon = Gtk.Image.new_from_icon_name("document-properties-symbolic")
+        info_icon.set_tooltip_text("Double-click to view Diff")
+        info_icon.set_valign(Gtk.Align.CENTER)
+        main_box.append(info_icon)
+
+        self.set_child(main_box)
 
 
 class VersionRow(Gtk.ListBoxRow):
@@ -341,6 +355,9 @@ class SyncDiffDialog(Gtk.Window):
         self.package_name = package_name
         self.data = data
         self.parent = parent
+        self.is_destroyed = False # Blocker 2: track destroyed state defensively!
+
+        self.connect("destroy", self.on_destroy)
 
         # Main layout
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -392,6 +409,9 @@ class SyncDiffDialog(Gtk.Window):
         # Start background load
         self.buffer.set_text("Connecting to pool & loading differences...")
         parent.executor.submit(self.load_diff_data)
+
+    def on_destroy(self, widget):
+        self.is_destroyed = True
 
     def load_diff_data(self):
         pool_status = self.data.get("pool_status", "unknown")
@@ -450,11 +470,14 @@ class SyncDiffDialog(Gtk.Window):
         except Exception as e:
             diff_text = f"Error performing git diff: {str(e)}"
 
-        GLib.idle_add(self.update_ui, comparison_desc, diff_text)
+        # Blocker 2: check if window was closed asynchronously before scheduling GMainLoop idle frame
+        if not self.is_destroyed:
+            GLib.idle_add(self.update_ui, comparison_desc, diff_text)
 
     def update_ui(self, desc, text):
-        self.title_label.set_markup(f"<span size='large' weight='bold'>{desc}</span>")
-        self.buffer.set_text(text)
+        if not self.is_destroyed:
+            self.title_label.set_markup(f"<span size='large' weight='bold'>{desc}</span>")
+            self.buffer.set_text(text)
 
 
 class SyncWindow(Adw.ApplicationWindow):
@@ -552,13 +575,31 @@ class SyncWindow(Adw.ApplicationWindow):
         # Kick off background loading
         self.refresh_all()
 
+    def get_system_monospace_font(self):
+        """Query GNOME GSettings dynamically to load the user's monospace font preference defensively."""
+        # Allan's Blocker 3: Verify GSettings schema existence defensively before instantiating to avoid noisy C-warnings
+        try:
+            schemas = Gio.Settings.list_schemas()
+            if "org.gnome.desktop.interface" in schemas:
+                settings = Gio.Settings.new("org.gnome.desktop.interface")
+                font_str = settings.get_string("monospace-font-name")
+                if font_str:
+                    return font_str
+        except Exception:
+            pass
+        return "monospace 11"
+
     def on_close_request(self, window):
-        # 1. Cancel all pending background scanner tasks
+        """Gracefully dismantles GLib timers, closes thread pools, and terminates shell children."""
+        # 1. Cancel the active GLib timeout source to let GApplication exit gracefully!
+        if hasattr(self, "timeout_id") and self.timeout_id:
+            GLib.Source.remove(self.timeout_id)
+            self.timeout_id = 0
+
+        # 2. Cancel and cleanly shutdown background scanner thread pool
         self.executor.shutdown(wait=False, cancel_futures=True)
 
-        # 2. Forcefully terminate all running terminal shell processes to prevent process leaks!
-        # Send SIGHUP (Hangup) first, which forces interactive shells to exit cleanly.
-        # Fall back to SIGKILL (un-catchable, absolute kill) if SIGHUP fails.
+        # 3. Forcefully terminate all running terminal shell processes to prevent process leaks!
         for tab in list(self.terminal_tabs):
             shell_pid = tab.get("shell_pid")
             if shell_pid:
@@ -570,7 +611,7 @@ class SyncWindow(Adw.ApplicationWindow):
                     except Exception:
                         pass
 
-        # 3. Explicitly terminate the Python interpreter process to guarantee immediate cleanup!
+        # 4. Explicitly terminate python process to clean up GObject reference-cycle states cleanly
         os._exit(0)
 
     def get_mapped_worktree_path(self, package_name, target_branch):
@@ -581,29 +622,44 @@ class SyncWindow(Adw.ApplicationWindow):
         target_folder_name = current_folder_name
         if target_branch == "factory" and "GNOME:Next" in current_folder_name:
             target_folder_name = current_folder_name.replace("GNOME:Next", "GNOME")
-        elif target_branch == "next" and current_folder_name == "GNOME":
+        elif target_branch == "next" and current_folder_name == "GNOME".strip():
             target_folder_name = "GNOME:Next"
 
         mapped_dir = os.path.join(parent_dir, target_folder_name, package_name)
-        if os.path.exists(mapped_dir):
+
+        # Verify both that the directory exists and contains a valid SCM git setup to ensure worktree integrity
+        if os.path.exists(mapped_dir) and (os.path.exists(os.path.join(mapped_dir, '.git')) or os.path.isfile(os.path.join(mapped_dir, '.git'))):
             return mapped_dir
 
         # Fallback to local package directory
         return os.path.abspath(os.path.join('.', package_name))
 
     def is_shell_pid_active(self, shell_pid):
-        """Returns True if the shell process has active child processes running (foreground jobs)."""
+        """
+        Scans /proc directly in pure Python without spawning subprocesses (pgrep).
+        Narrow exception boundaries handles microsecond PID creation/termination safely.
+        """
         if not shell_pid:
             return False
         try:
-            # Query if any process PPID matches this shell_pid
-            res = subprocess.run(
-                ['pgrep', '-P', str(shell_pid)],
-                capture_output=True, text=True, timeout=1
-            )
-            return len(res.stdout.strip()) > 0
+            target_ppid = str(shell_pid)
+            for f in os.listdir('/proc'):
+                if f.isdigit():
+                    try:
+                        with open(f"/proc/{f}/stat", "r") as stat_file:
+                            line = stat_file.readline()
+                            fields = line.split()
+                            # 4th field in /proc/<pid>/stat is the PPID
+                            if len(fields) >= 4 and fields[3] == target_ppid:
+                                return True
+                    except (FileNotFoundError, ProcessLookupError, PermissionError):
+                        # Safely skip microsecond process race conditions and system permissions
+                        continue
+                    except Exception:
+                        pass
         except Exception:
-            return False
+            pass
+        return False
 
     def allocate_terminal(self, pkg_name, target_branch, command=None):
         """
@@ -660,7 +716,9 @@ class SyncWindow(Adw.ApplicationWindow):
         tab_box.append(tab_label)
 
         close_tab_btn = Gtk.Button.new_from_icon_name("window-close-symbolic")
-        close_tab_btn.set_has_frame(False)
+        # Apply standard GTK4/Libadwaita circular and flat visual styling classes
+        close_tab_btn.add_css_class("flat")
+        close_tab_btn.add_css_class("circular")
         close_tab_btn.set_tooltip_text("Close Tab")
         close_tab_btn.connect("clicked", lambda btn: self.close_terminal_tab(scroll))
         tab_box.append(close_tab_btn)
@@ -669,7 +727,12 @@ class SyncWindow(Adw.ApplicationWindow):
         page_index = self.notebook.append_page(scroll, tab_box)
         self.notebook.set_current_page(page_index)
 
-        # Register tab inside our state tracker
+        # Event controller for dynamic font size zooming (Ctrl+Plus / Ctrl+Minus / Ctrl+0)
+        key_controller = Gtk.EventControllerKey.new()
+        key_controller.connect("key-pressed", self.on_terminal_key_pressed, terminal)
+        terminal.add_controller(key_controller)
+
+        # Register tab inside our state tracker, keeping track of controllers to break reference cycles on destroy!
         tab_state = {
             "scroll_widget": scroll,
             "terminal": terminal,
@@ -677,6 +740,7 @@ class SyncWindow(Adw.ApplicationWindow):
             "target_branch": target_branch,
             "base_label": f"{pkg_name} ({target_branch}){suffix}",
             "tab_label": tab_label,
+            "key_controller": key_controller,
             "shell_pid": None,
             "was_active": False
         }
@@ -684,11 +748,6 @@ class SyncWindow(Adw.ApplicationWindow):
 
         # Connect child-exited signal to close the tab page automatically on 'exit'
         terminal.connect("child-exited", self.on_terminal_child_exited, scroll)
-
-        # Event controller for dynamic font size zooming (Ctrl+Plus / Ctrl+Minus / Ctrl+0)
-        key_controller = Gtk.EventControllerKey.new()
-        key_controller.connect("key-pressed", self.on_terminal_key_pressed, terminal)
-        terminal.add_controller(key_controller)
 
         shell = os.environ.get("SHELL", "/bin/bash")
         argv = [shell]
@@ -712,11 +771,12 @@ class SyncWindow(Adw.ApplicationWindow):
         terminal.grab_focus()
 
     def on_terminal_key_pressed(self, controller, keyval, keycode, state, terminal):
-        """Binds Ctrl+Plus (zoom in), Ctrl+Minus (zoom out), and Ctrl+0 (reset) keys to scale fonts dynamically."""
-        # Clean, GDK4-compliant bitwise AND isolates standard CONTROL_MASK natively
+        """Binds Ctrl+Plus (zoom in), Ctrl+Minus (zoom out), and Ctrl+0 (reset) keys. Support Shift modifiers defensively."""
+        # Clean Gdk4 bitwise AND check cleanly isolates CONTROL_MASK
         is_ctrl = (state & Gdk.ModifierType.CONTROL_MASK) != 0
         if is_ctrl:
             current_scale = terminal.get_font_scale()
+            # Allan's Blocker 4: Support both standard plus/equal AND Ctrl+Shift+= (which evaluates as KEY_equal with Shift layer)
             if keyval in (Gdk.KEY_plus, Gdk.KEY_equal, Gdk.KEY_KP_Add):
                 terminal.set_font_scale(min(4.0, current_scale + 0.1))
                 return True
@@ -818,8 +878,17 @@ class SyncWindow(Adw.ApplicationWindow):
                     except Exception:
                         pass
 
-                # Explicitly unparent/destroy widgets to release memory immediately
+                # Matthias's Blocker 1: Explicitly unparent, remove controllers, and destroy Vte.Terminal widget
+                # to cleanly break the GObject reference-cycle and free the memory instantly!
                 try:
+                    terminal = tab.get("terminal")
+                    controller = tab.get("key_controller")
+                    if terminal and controller:
+                        terminal.remove_controller(controller)
+
+                    if terminal:
+                        terminal.destroy()
+
                     tab["terminal"] = None
                     tab["scroll_widget"].unparent()
                 except Exception:
@@ -834,17 +903,6 @@ class SyncWindow(Adw.ApplicationWindow):
 
     def hide_terminal(self):
         self.terminal_drawer.set_visible(False)
-
-    def get_system_monospace_font(self):
-        """Query GNOME GSettings dynamically to load the user's custom monospace font preference."""
-        try:
-            settings = Gio.Settings.new("org.gnome.desktop.interface")
-            font_str = settings.get_string("monospace-font-name")
-            if font_str:
-                return font_str
-        except Exception:
-            pass
-        return "monospace 11"
 
     def refresh_all(self):
         self.start_sync_scan()
@@ -873,6 +931,12 @@ class SyncWindow(Adw.ApplicationWindow):
         self.sync_filter_toggle.set_active(True)
         self.sync_filter_toggle.connect("toggled", lambda cb: self.sync_list_box.invalidate_filter())
         control_bar.append(self.sync_filter_toggle)
+
+        # Help / Legend Popover Button
+        self.legend_btn = Gtk.Button.new_from_icon_name("help-about-symbolic")
+        self.legend_btn.set_tooltip_text("Show Sync Workflow Legend")
+        self.legend_btn.connect("clicked", self.on_legend_btn_clicked)
+        control_bar.append(self.legend_btn)
 
         # Refresh Button
         refresh_btn = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
@@ -904,6 +968,39 @@ class SyncWindow(Adw.ApplicationWindow):
         self.stack.add_titled_with_icon(
             box, "sync", "Repository Sync", "folder-download-symbolic"
         )
+
+    def on_legend_btn_clicked(self, btn):
+        """Pops up a modern, elegant, and interactive workflow legend panel on demand."""
+        popover = Gtk.Popover()
+        popover.set_parent(btn)
+
+        legend_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        legend_box.set_margin_start(16)
+        legend_box.set_margin_end(16)
+        legend_box.set_margin_top(16)
+        legend_box.set_margin_bottom(16)
+        legend_box.set_size_request(450, -1) # Set comfortable reading width
+
+        legend_title = Gtk.Label(halign=Gtk.Align.START)
+        legend_title.set_markup("<span weight='bold' size='medium'>ℹ️ openSUSE GNOME Sync Workflow Legend</span>")
+        legend_box.append(legend_title)
+
+        legend_desc = Gtk.Label(halign=Gtk.Align.START)
+        legend_desc.set_justify(Gtk.Justification.LEFT)
+        legend_desc.set_wrap(True)
+        legend_desc.set_markup(
+            "<span weight='bold'>Pool Sync (Stage 1):</span> Monitors alignment between local Factory checkouts and Gitea's central package pool.\n"
+            "   • <span foreground='orange' weight='bold'>Behind Pool</span>: SCM changes exist in the pool—pull them to catch up.\n"
+            "   • <span foreground='cyan' weight='bold'>Ahead of Pool</span>: Local Factory has local commits not yet in the pool—submit them.\n\n"
+            "<span weight='bold'>Next Branch Sync (Stage 2):</span> Monitors alignment between the unstable next track and stable factory branch.\n"
+            "   • <span foreground='orange' weight='bold'>Next behind Factory</span>: Next is missing commits from Factory—merge factory ➔ next.\n"
+            "   • <span foreground='green' weight='bold'>Next ahead of Factory</span>: Next has additional developmental commits checked in (OK).\n\n"
+            "<span foreground='gray' size='small'>Double-click any repository row to review its sync git diff in-app.</span>"
+        )
+        legend_box.append(legend_desc)
+
+        popover.set_child(legend_box)
+        popover.popup()
 
     def sync_filter_func(self, row):
         # 1. Search text filter
