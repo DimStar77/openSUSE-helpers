@@ -579,8 +579,8 @@ class SyncWindow(Adw.ApplicationWindow):
         """Query GNOME GSettings dynamically to load the user's monospace font preference defensively."""
         # Allan's Blocker 3: Verify GSettings schema existence defensively before instantiating to avoid noisy C-warnings
         try:
-            schemas = Gio.Settings.list_schemas()
-            if "org.gnome.desktop.interface" in schemas:
+            schema_source = Gio.SettingsSchemaSource.get_default()
+            if schema_source and schema_source.lookup("org.gnome.desktop.interface", True) is not None:
                 settings = Gio.Settings.new("org.gnome.desktop.interface")
                 font_str = settings.get_string("monospace-font-name")
                 if font_str:
