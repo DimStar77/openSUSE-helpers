@@ -143,28 +143,28 @@ class VersionRow(Gtk.ListBoxRow):
         upstream_latest = data.get("upstream_latest", "—")
 
         # Column 1: Factory
-        f_title = Gtk.Label(halign=Gtk.Align.START)
-        f_title.set_markup("<span size='small' foreground='gray'>Factory (Stable Track)</span>")
-        grid.attach(f_title, 0, 0, 1, 1)
+        self.f_title = Gtk.Label(halign=Gtk.Align.START)
+        self.f_title.set_markup("<span size='small' foreground='gray'>Factory (Stable Track)</span>")
+        grid.attach(self.f_title, 0, 0, 1, 1)
 
-        f_val = Gtk.Label(halign=Gtk.Align.START)
+        self.f_val = Gtk.Label(halign=Gtk.Align.START)
         if factory_ver != upstream_stable and factory_ver != "N/A" and upstream_stable != "N/A":
-            f_val.set_markup(f"<span weight='bold' foreground='red'>{factory_ver}</span>  ➔  <span weight='bold' foreground='green'>{upstream_stable}</span>")
+            self.f_val.set_markup(f"<span weight='bold' foreground='red'>{factory_ver}</span>  ➔  <span weight='bold' foreground='green'>{upstream_stable}</span>")
         else:
-            f_val.set_markup(f"<span foreground='gray'>{factory_ver} (In Sync)</span>")
-        grid.attach(f_val, 0, 1, 1, 1)
+            self.f_val.set_markup(f"<span foreground='gray'>{factory_ver} (In Sync)</span>")
+        grid.attach(self.f_val, 0, 1, 1, 1)
 
         # Column 2: Next
-        n_title = Gtk.Label(halign=Gtk.Align.START)
-        n_title.set_markup("<span size='small' foreground='gray'>Next (Unstable Track)</span>")
-        grid.attach(n_title, 1, 0, 1, 1)
+        self.n_title = Gtk.Label(halign=Gtk.Align.START)
+        self.n_title.set_markup("<span size='small' foreground='gray'>Next (Unstable Track)</span>")
+        grid.attach(self.n_title, 1, 0, 1, 1)
 
-        n_val = Gtk.Label(halign=Gtk.Align.START)
+        self.n_val = Gtk.Label(halign=Gtk.Align.START)
         if next_ver != "—" and next_ver != upstream_latest and upstream_latest != "—":
-            n_val.set_markup(f"<span weight='bold' foreground='red'>{next_ver}</span>  ➔  <span weight='bold' foreground='green'>{upstream_latest}</span>")
+            self.n_val.set_markup(f"<span weight='bold' foreground='red'>{next_ver}</span>  ➔  <span weight='bold' foreground='green'>{upstream_latest}</span>")
         else:
-            n_val.set_markup(f"<span foreground='gray'>{next_ver} (In Sync)</span>" if next_ver != "—" else "<span foreground='gray'>—</span>")
-        grid.attach(n_val, 1, 1, 1, 1)
+            self.n_val.set_markup(f"<span foreground='gray'>{next_ver} (In Sync)</span>" if next_ver != "—" else "<span foreground='gray'>—</span>")
+        grid.attach(self.n_val, 1, 1, 1, 1)
 
         left_box.append(grid)
         main_box.append(left_box)
@@ -187,6 +187,24 @@ class VersionRow(Gtk.ListBoxRow):
 
         main_box.append(suffix_box)
         self.set_child(main_box)
+
+    def set_branch_filter(self, filter_mode):
+        # 0 = Both, 1 = Factory, 2 = Next
+        if filter_mode == 0:
+            self.f_title.set_visible(True)
+            self.f_val.set_visible(True)
+            self.n_title.set_visible(True)
+            self.n_val.set_visible(True)
+        elif filter_mode == 1:
+            self.f_title.set_visible(True)
+            self.f_val.set_visible(True)
+            self.n_title.set_visible(False)
+            self.n_val.set_visible(False)
+        elif filter_mode == 2:
+            self.f_title.set_visible(False)
+            self.f_val.set_visible(False)
+            self.n_title.set_visible(True)
+            self.n_val.set_visible(True)
 
     def on_copy_clicked(self, btn, version):
         clipboard = Gdk.Display.get_default().get_clipboard()
@@ -581,6 +599,11 @@ class SyncWindow(Adw.ApplicationWindow):
         self.ver_filter_toggle.connect("toggled", lambda cb: self.ver_list_box.invalidate_filter())
         control_bar.append(self.ver_filter_toggle)
 
+        # Branch Filter DropDown (Both, Factory only, Next only)
+        self.ver_branch_dropdown = Gtk.DropDown.new_from_strings(["Both Branches", "Factory Only", "Next Only"])
+        self.ver_branch_dropdown.connect("notify::selected", self.on_ver_branch_changed)
+        control_bar.append(self.ver_branch_dropdown)
+
         # Refresh Button
         refresh_btn = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
         refresh_btn.connect("clicked", lambda btn: self.start_version_scan())
@@ -616,12 +639,36 @@ class SyncWindow(Adw.ApplicationWindow):
         if search_text and search_text not in row.package_name.lower():
             return False
 
-        # 2. Needs update checkbox filter
+        # 2. Branch and needs update filter
         only_needs_update = self.ver_filter_toggle.get_active()
-        if only_needs_update and not row.data.get("needs_update", False):
-            return False
+        filter_mode = self.ver_branch_dropdown.get_selected() # 0 = Both, 1 = Factory, 2 = Next
+
+        # Apply visibility filter to row columns on the fly!
+        row.set_branch_filter(filter_mode)
+
+        if only_needs_update:
+            factory_ver = row.data.get("factory_ver", "N/A")
+            next_ver = row.data.get("next_ver", "—")
+            upstream_stable = row.data.get("upstream_stable", "N/A")
+            upstream_latest = row.data.get("upstream_latest", "—")
+
+            f_needs = factory_ver != upstream_stable and factory_ver != "N/A" and upstream_stable != "N/A"
+            n_needs = next_ver != "—" and next_ver != upstream_latest and upstream_latest != "—"
+
+            if filter_mode == 0:
+                # Both branches: show if either needs update
+                return f_needs or n_needs
+            elif filter_mode == 1:
+                # Factory only: show if factory needs update
+                return f_needs
+            elif filter_mode == 2:
+                # Next only: show if next needs update
+                return n_needs
 
         return True
+
+    def on_ver_branch_changed(self, dropdown, pspec):
+        self.ver_list_box.invalidate_filter()
 
     def start_version_scan(self):
         while True:
