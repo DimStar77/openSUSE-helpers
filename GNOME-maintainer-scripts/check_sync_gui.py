@@ -35,6 +35,8 @@ except ValueError:
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), 'helpers'))
 import sync_backend as sb
 
+
+
 class DaemonThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
     """ThreadPoolExecutor that forces all spawned worker threads to be daemon threads."""
     def _adjust_thread_count(self):
@@ -484,6 +486,7 @@ class SyncWindow(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="GNOME Sync Dashboard")
         self.set_default_size(1100, 720)
+        self.set_icon_name("preferences-system-network")
 
         # Core data
         self.repos = sorted([
@@ -1523,13 +1526,15 @@ class SyncWindow(Adw.ApplicationWindow):
 
 class SyncApp(Adw.Application):
     def __init__(self):
-        super().__init__(application_id="org.opensuse.gnome.sync_dashboard")
+        super().__init__(application_id=None)
 
     def do_activate(self):
         win = SyncWindow(self)
         win.present()
 
 if __name__ == '__main__':
+    GLib.set_prgname("GNOME Sync Dashboard")
+    GLib.set_application_name("GNOME Sync Dashboard")
     app = SyncApp()
     sys.argv = [sys.argv[0]]  # Strip extra args to prevent GTK app parsing issues
     sys.exit(app.run(sys.argv))
