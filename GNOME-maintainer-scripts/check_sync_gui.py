@@ -898,6 +898,7 @@ class SyncWindow(Adw.ApplicationWindow):
                         terminal.destroy()
 
                     tab["terminal"] = None
+                    tab["scroll_widget"].set_child(None)
                     tab["scroll_widget"].unparent()
                 except Exception:
                     pass

@@ -45,6 +45,10 @@ def run_tracked(args, **kwargs):
                 self.returncode = returncode
                 self.stdout = stdout
                 self.stderr = stderr
+            def check_returncode(self):
+                import subprocess
+                if self.returncode:
+                    raise subprocess.CalledProcessError(self.returncode, self.args, self.stdout, self.stderr)
         return CompletedProcess(args, retcode, stdout, stderr)
     finally:
         with _active_processes_lock:
