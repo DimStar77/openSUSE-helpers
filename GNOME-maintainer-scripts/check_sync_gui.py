@@ -12,6 +12,81 @@ import concurrent.futures
 import webbrowser
 import threading
 import signal
+import re
+import xml.etree.ElementTree as ET
+
+def get_service_revision(pkg_dir):
+    """
+    Parses the package's local _service file to find the revision parameter for the main obs_scm service.
+    """
+    service_path = os.path.join(pkg_dir, '_service')
+    if not os.path.exists(service_path):
+        return None
+    try:
+        tree = ET.parse(service_path)
+        root = tree.getroot()
+        for service in root.findall('service'):
+            if service.get('name') == 'obs_scm':
+                # Check versionformat to avoid sub-gitmodules
+                versionformat = None
+                for param in service.findall('param'):
+                    if param.get('name') == 'versionformat':
+                        versionformat = param.text
+                if versionformat == '0.gitmodule':
+                    continue
+                # Main obs_scm service! Get its revision
+                for param in service.findall('param'):
+                    if param.get('name') == 'revision':
+                        return param.text.strip() if param.text else None
+    except Exception:
+        pass
+    return None
+
+def guess_update_revision(current_revision, target_version):
+    """
+    Analyzes the pattern of the current revision in _service (e.g. 'v9.1.2', 'appstream_glib_0_8_4')
+    and matches it to target_version to produce a guessed revision, or returns confidence message.
+    """
+    if not current_revision:
+        return target_version, None
+
+    current_revision = current_revision.strip()
+    target_version = target_version.strip()
+
+    # 1. Check if the current revision is a full Git commit SHA (40 hex chars)
+    if re.match(r'^[0-9a-fA-F]{40}$', current_revision):
+        return None, f"tracks a specific Git commit SHA ({current_revision[:8]})"
+
+    # 2. Check if the current revision is a short Git commit SHA (7-12 hex chars)
+    if re.match(r'^[0-9a-fA-F]{7,12}$', current_revision):
+        return None, f"tracks a short Git commit SHA ({current_revision})"
+
+    # 3. Check if the current revision is a static development branch name
+    if current_revision in ['master', 'main', 'stable', 'factory', 'next', 'develop', 'development', 'trunk']:
+        return None, f"tracks a static development branch ('{current_revision}')"
+
+    # 4. Try to match version patterns with dot or underscore separators
+    # Check 3-part versions first (e.g. X.Y.Z or X_Y_Z)
+    match = re.search(r'(\d+)([\._])(\d+)\2(\d+)', current_revision)
+    if not match:
+        # Check 2-part versions (e.g. X.Y or X_Y)
+        match = re.search(r'(\d+)([\._])(\d+)', current_revision)
+
+    if match:
+        separator = match.group(2) # '.' or '_'
+        
+        start_idx = match.start()
+        end_idx = match.end()
+        prefix = current_revision[:start_idx]
+        suffix = current_revision[end_idx:]
+
+        # Format the target version with the same separator
+        new_ver_str = target_version.replace('.', separator)
+        guessed_revision = f"{prefix}{new_ver_str}{suffix}"
+        return guessed_revision, None
+
+    # If no version-like digits and separators were found, we are not confident
+    return None, f"contains an unrecognized pattern ('{current_revision}')"
 
 import gi
 gi.require_version('Gtk', '4.0')
@@ -316,8 +391,27 @@ class VersionRow(Gtk.ListBoxRow):
 
     def on_run_update_clicked(self, btn, branch, version, popover):
         popover.popdown()
-        command = f"obs_scm-update.sh {version}"
-        self.parent_window.allocate_terminal(self.package_name, branch, command)
+        
+        # Try to resolve package directory and find current _service revision
+        pkg_dir = os.path.join('.', self.package_name)
+        current_revision = get_service_revision(pkg_dir)
+        guessed_revision, confidence_err = guess_update_revision(current_revision, version)
+        
+        if guessed_revision and not confidence_err:
+            # We are confident! Run the update with the guessed revision parameter
+            command = f"obs_scm-update.sh {guessed_revision}"
+            self.parent_window.allocate_terminal(self.package_name, branch, command)
+        else:
+            # Not confident! Provide a helpful terminal hint and drop to interactive shell
+            hint_msg = f"echo '⚠️  Unable to confidently guess target revision for {self.package_name}.'"
+            if confidence_err:
+                hint_msg += f" && echo '   Reason: _service {confidence_err}.'"
+            if current_revision:
+                hint_msg += f" && echo '   Current revision in _service: {current_revision}'"
+            hint_msg += f" && echo '   Suggested target version: {version}'"
+            hint_msg += f" && echo '' && echo '👉 Run obs_scm-update.sh manually with your preferred parameter.'"
+            
+            self.parent_window.allocate_terminal(self.package_name, branch, hint_msg)
 
 
 class ForwardRow(Adw.ActionRow):
