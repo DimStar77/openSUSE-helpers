@@ -10,6 +10,7 @@ import sys
 import subprocess
 import concurrent.futures
 import webbrowser
+import threading
 
 import gi
 gi.require_version('Gtk', '4.0')
@@ -29,6 +30,19 @@ except ValueError:
 # Make sure we can import sync_backend from helpers/ by resolving symlinks
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), 'helpers'))
 import sync_backend as sb
+
+class DaemonThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
+    """ThreadPoolExecutor that forces all spawned worker threads to be daemon threads."""
+    def _adjust_thread_count(self):
+        orig_thread = threading.Thread
+        def daemon_thread(*args, **kwargs):
+            kwargs['daemon'] = True
+            return orig_thread(*args, **kwargs)
+        threading.Thread = daemon_thread
+        try:
+            super()._adjust_thread_count()
+        finally:
+            threading.Thread = orig_thread
 
 class SyncRow(Adw.ActionRow):
     """Custom row holding package data for the Sync tab."""
@@ -306,14 +320,7 @@ class SyncWindow(Adw.ApplicationWindow):
         ])
         
         # Background workers configured with daemon threads so they terminate on exit
-        def make_thread_daemon():
-            import threading
-            threading.current_thread().daemon = True
-
-        self.executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=50,
-            initializer=make_thread_daemon
-        )
+        self.executor = DaemonThreadPoolExecutor(max_workers=50)
         
         # UI components
         self.stack = Adw.ViewStack()
