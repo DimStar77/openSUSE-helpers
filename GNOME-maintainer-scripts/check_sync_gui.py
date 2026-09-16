@@ -11,12 +11,14 @@ import subprocess
 import concurrent.futures
 import webbrowser
 import threading
+import signal
 
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 gi.require_version('Vte', '3.91')
 gi.require_version('Pango', '1.0')
+gi.require_version('Gdk', '4.0')
 from gi.repository import Gtk, Adw, GLib, GObject, Gdk, Vte, Pango
 
 try:
@@ -548,9 +550,25 @@ class SyncWindow(Adw.ApplicationWindow):
         self.refresh_all()
 
     def on_close_request(self, window):
-        # Cancel all pending scan futures and shutdown the pool without waiting
+        # 1. Cancel all pending background scanner tasks
         self.executor.shutdown(wait=False, cancel_futures=True)
-        return False # Propagate the signal to close the window
+
+        # 2. Forcefully terminate all running terminal shell processes to prevent process leaks!
+        # Send SIGHUP (Hangup) first, which forces interactive shells to exit cleanly.
+        # Fall back to SIGKILL (un-catchable, absolute kill) if SIGHUP fails.
+        for tab in list(self.terminal_tabs):
+            shell_pid = tab.get("shell_pid")
+            if shell_pid:
+                try:
+                    os.kill(shell_pid, signal.SIGHUP)
+                except Exception:
+                    try:
+                        os.kill(shell_pid, signal.SIGKILL)
+                    except Exception:
+                        pass
+
+        # 3. Explicitly terminate the Python interpreter process to guarantee immediate cleanup!
+        os._exit(0)
 
     def get_mapped_worktree_path(self, package_name, target_branch):
         """Maps current project path parent GNOME:Next to GNOME for worktree builds."""
@@ -607,7 +625,6 @@ class SyncWindow(Adw.ApplicationWindow):
                     self.notebook.set_current_page(page_num)
                     if command:
                         # Feed the command directly to the running shell
-                        # We append \n to simulate pressing Enter
                         tab["terminal"].feed_child(f"{command}\n".encode('utf-8'))
                     tab["terminal"].grab_focus()
                     return
@@ -662,6 +679,14 @@ class SyncWindow(Adw.ApplicationWindow):
         }
         self.terminal_tabs.append(tab_state)
 
+        # Connect child-exited signal to close the tab page automatically on 'exit'
+        terminal.connect("child-exited", self.on_terminal_child_exited, scroll)
+
+        # Event controller for dynamic font size zooming (Ctrl+Plus / Ctrl+Minus / Ctrl+0)
+        key_controller = Gtk.EventControllerKey.new()
+        key_controller.connect("key-pressed", self.on_terminal_key_pressed, terminal)
+        terminal.add_controller(key_controller)
+
         shell = os.environ.get("SHELL", "/bin/bash")
         argv = [shell]
         if command:
@@ -683,16 +708,37 @@ class SyncWindow(Adw.ApplicationWindow):
         )
         terminal.grab_focus()
 
+    def on_terminal_key_pressed(self, controller, keyval, keycode, state, terminal):
+        """Binds Ctrl+Plus (zoom in), Ctrl+Minus (zoom out), and Ctrl+0 (reset) keys to scale fonts."""
+        is_ctrl = (state & Gdk.ModifierType.CONTROL_MASK) != 0
+        if is_ctrl:
+            current_scale = terminal.get_font_scale()
+            if keyval in (Gdk.KEY_plus, Gdk.KEY_equal):
+                terminal.set_font_scale(min(4.0, current_scale + 0.1))
+                return True
+            elif keyval in (Gdk.KEY_minus, Gdk.KEY_underscore):
+                terminal.set_font_scale(max(0.5, current_scale - 0.1))
+                return True
+            elif keyval in (Gdk.KEY_0, Gdk.KEY_KP_0):
+                terminal.set_font_scale(1.0)
+                return True
+        return False
+
+    def on_terminal_child_exited(self, terminal, status, scroll_widget):
+        """Typing 'exit' or shell process terminating automatically closes the tab page safely."""
+        GLib.idle_add(self.close_terminal_tab, scroll_widget)
+
     def on_terminal_spawned(self, terminal, pid, error, tab_state):
         if error is None:
             tab_state["shell_pid"] = pid
             # Trigger immediate monitor update to capture initial state
             GLib.idle_add(self.monitor_terminals)
         else:
-            print(f"VTE spawn failed: {error}")
+            print(f"VTE spawn failed: {error}", file=sys.stderr)
+            sys.stderr.flush()
 
     def monitor_terminals(self):
-        """Polls active terminal PIDs every 1.5 seconds, flashing state changes and displaying completed Toasts."""
+        """Polls active terminal PIDs every 1.5 seconds, flashing state changes, reaping zombie processes, and displaying completed Toasts."""
         for tab in list(self.terminal_tabs):
             shell_pid = tab.get("shell_pid")
             if not shell_pid:
@@ -703,6 +749,23 @@ class SyncWindow(Adw.ApplicationWindow):
                 if tab in self.terminal_tabs:
                     self.terminal_tabs.remove(tab)
                 continue
+
+            # --- NON-BLOCKING PROCESS REAPING (os.waitpid) ---
+            # Resolves Python multi-threading hijacking SIGCHLD and blocking VTE child-exited emissions!
+            try:
+                reaped_pid, status = os.waitpid(shell_pid, os.WNOHANG)
+                if reaped_pid == shell_pid:
+                    # The shell has exited! Reap it from the system and close the tab instantly!
+                    tab["shell_pid"] = None # Reset PID immediately to prevent duplicate triggers
+                    GLib.idle_add(self.close_terminal_tab, tab["scroll_widget"])
+                    continue
+            except ChildProcessError:
+                # Process is already reaped or gone! Close tab
+                tab["shell_pid"] = None # Reset PID immediately to prevent duplicate triggers
+                GLib.idle_add(self.close_terminal_tab, tab["scroll_widget"])
+                continue
+            except Exception:
+                pass
 
             is_active = self.is_shell_pid_active(shell_pid)
             was_active = tab["was_active"]
@@ -743,6 +806,13 @@ class SyncWindow(Adw.ApplicationWindow):
         # Clean terminal_tabs registry
         for tab in list(self.terminal_tabs):
             if tab["scroll_widget"] == page_widget:
+                # Forcefully SIGKILL/SIGHUP the shell process if it's still alive when tab is closed manually!
+                shell_pid = tab.get("shell_pid")
+                if shell_pid:
+                    try:
+                        os.kill(shell_pid, signal.SIGHUP)
+                    except Exception:
+                        pass
                 if tab in self.terminal_tabs:
                     self.terminal_tabs.remove(tab)
                 break
