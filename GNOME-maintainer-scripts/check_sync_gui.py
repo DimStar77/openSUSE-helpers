@@ -19,7 +19,7 @@ gi.require_version('Adw', '1')
 gi.require_version('Vte', '3.91')
 gi.require_version('Pango', '1.0')
 gi.require_version('Gdk', '4.0')
-from gi.repository import Gtk, Adw, GLib, GObject, Gdk, Vte, Pango
+from gi.repository import Gtk, Adw, GLib, GObject, Gdk, Vte, Pango, Gio
 
 try:
     gi.require_version('GtkSource', '5')
@@ -107,7 +107,7 @@ class SyncRow(Adw.ActionRow):
         elif next_ahead > 0:
             s2_label.set_markup(f"<span foreground='green'>Ahead {next_ahead} (ok)</span>")
         elif next_status == "No next branch":
-            s2_label.set_markup("<span>No next branch</span>")
+            s2_label.set_markup("<span foreground='gray'>No next branch</span>")
         else:
             s2_label.set_markup("<span foreground='green'>Stage 2 OK</span>")
         badge_box.append(s2_label)
@@ -276,7 +276,7 @@ class VersionRow(Gtk.ListBoxRow):
             vbox.append(sep)
 
             # If next needs an update
-            if next_ver != "—" and next_ver != upstream_latest and upstream_latest != "—":
+            if next_ver != "—" and next_ver != upstream_latest and upstream_latest != "—".strip():
                 next_btn = Gtk.Button(label=f"Update Next to {upstream_latest} via obs_scm-update.sh")
                 next_btn.set_has_frame(False)
                 next_btn.set_halign(Gtk.Align.START)
@@ -284,7 +284,7 @@ class VersionRow(Gtk.ListBoxRow):
                 vbox.append(next_btn)
 
             # If factory needs an update
-            if factory_ver != upstream_stable and factory_ver != "N/A" and upstream_stable != "N/A":
+            if factory_ver != "N/A" and factory_ver != upstream_stable and upstream_stable != "N/A":
                 fac_btn = Gtk.Button(label=f"Update Factory to {upstream_stable} via obs_scm-update.sh")
                 fac_btn.set_has_frame(False)
                 fac_btn.set_halign(Gtk.Align.START)
@@ -474,6 +474,9 @@ class SyncWindow(Adw.ApplicationWindow):
         # Open tab registry for active monitoring and deduplication
         self.terminal_tabs = []
 
+        # Load user's preferred monospace font dynamically from GNOME GSettings
+        self.monospace_font = self.get_system_monospace_font()
+
         # UI components
         self.stack = Adw.ViewStack()
 
@@ -544,18 +547,33 @@ class SyncWindow(Adw.ApplicationWindow):
         self.connect("close-request", self.on_close_request)
 
         # Periodic GLib timer: checks terminal process states every 1.5 seconds
-        GLib.timeout_add(1500, self.monitor_terminals)
+        self.timeout_id = GLib.timeout_add(1500, self.monitor_terminals)
 
         # Kick off background loading
         self.refresh_all()
 
+    def get_system_monospace_font(self):
+        """Query GNOME GSettings dynamically to load the user's custom monospace font preference."""
+        try:
+            settings = Gio.Settings.new("org.gnome.desktop.interface")
+            font_str = settings.get_string("monospace-font-name")
+            if font_str:
+                return font_str
+        except Exception:
+            pass
+        return "monospace 11"
+
     def on_close_request(self, window):
-        # 1. Cancel all pending background scanner tasks
+        """Gracefully dismantles GLib timers, closes thread pools, and terminates shell children."""
+        # 1. Cancel the active GLib timeout source to let GApplication exit gracefully!
+        if hasattr(self, "timeout_id") and self.timeout_id:
+            GLib.Source.remove(self.timeout_id)
+            self.timeout_id = 0
+
+        # 2. Cancel and cleanly shutdown background scanner thread pool
         self.executor.shutdown(wait=False, cancel_futures=True)
 
-        # 2. Forcefully terminate all running terminal shell processes to prevent process leaks!
-        # Send SIGHUP (Hangup) first, which forces interactive shells to exit cleanly.
-        # Fall back to SIGKILL (un-catchable, absolute kill) if SIGHUP fails.
+        # 3. Forcefully terminate all running terminal shell processes to prevent process leaks!
         for tab in list(self.terminal_tabs):
             shell_pid = tab.get("shell_pid")
             if shell_pid:
@@ -567,7 +585,7 @@ class SyncWindow(Adw.ApplicationWindow):
                     except Exception:
                         pass
 
-        # 3. Explicitly terminate the Python interpreter process to guarantee immediate cleanup!
+        # 4. Explicitly terminate python process to clean up GObject reference-cycle states cleanly
         os._exit(0)
 
     def get_mapped_worktree_path(self, package_name, target_branch):
@@ -578,29 +596,44 @@ class SyncWindow(Adw.ApplicationWindow):
         target_folder_name = current_folder_name
         if target_branch == "factory" and "GNOME:Next" in current_folder_name:
             target_folder_name = current_folder_name.replace("GNOME:Next", "GNOME")
-        elif target_branch == "next" and current_folder_name == "GNOME":
+        elif target_branch == "next" and current_folder_name == "GNOME".strip():
             target_folder_name = "GNOME:Next"
 
         mapped_dir = os.path.join(parent_dir, target_folder_name, package_name)
-        if os.path.exists(mapped_dir):
+
+        # Verify both that the directory exists and contains a valid SCM git setup to ensure worktree integrity
+        if os.path.exists(mapped_dir) and (os.path.exists(os.path.join(mapped_dir, '.git')) or os.path.isfile(os.path.join(mapped_dir, '.git'))):
             return mapped_dir
 
         # Fallback to local package directory
         return os.path.abspath(os.path.join('.', package_name))
 
     def is_shell_pid_active(self, shell_pid):
-        """Returns True if the shell process has active child processes running (foreground jobs)."""
+        """
+        Scans /proc directly in pure Python without spawning subprocesses (pgrep).
+        Narrow exception boundaries handles microsecond PID creation/termination safely.
+        """
         if not shell_pid:
             return False
         try:
-            # Query if any process PPID matches this shell_pid
-            res = subprocess.run(
-                ['pgrep', '-P', str(shell_pid)],
-                capture_output=True, text=True, timeout=1
-            )
-            return len(res.stdout.strip()) > 0
+            target_ppid = str(shell_pid)
+            for f in os.listdir('/proc'):
+                if f.isdigit():
+                    try:
+                        with open(f"/proc/{f}/stat", "r") as stat_file:
+                            line = stat_file.readline()
+                            fields = line.split()
+                            # 4th field in /proc/<pid>/stat is the PPID
+                            if len(fields) >= 4 and fields[3] == target_ppid:
+                                return True
+                    except (FileNotFoundError, ProcessLookupError, PermissionError):
+                        # Safely skip microsecond process race conditions and system permissions
+                        continue
+                    except Exception:
+                        pass
         except Exception:
-            return False
+            pass
+        return False
 
     def allocate_terminal(self, pkg_name, target_branch, command=None):
         """
@@ -643,7 +676,7 @@ class SyncWindow(Adw.ApplicationWindow):
 
         # Create a new terminal instance
         terminal = Vte.Terminal()
-        terminal.set_font(Pango.FontDescription.from_string("monospace 11"))
+        terminal.set_font(Pango.FontDescription.from_string(self.monospace_font))
         terminal.set_scrollback_lines(2000)
 
         scroll = Gtk.ScrolledWindow()
@@ -657,7 +690,9 @@ class SyncWindow(Adw.ApplicationWindow):
         tab_box.append(tab_label)
 
         close_tab_btn = Gtk.Button.new_from_icon_name("window-close-symbolic")
-        close_tab_btn.set_has_frame(False)
+        # Apply standard GTK4/Libadwaita circular and flat visual styling classes
+        close_tab_btn.add_css_class("flat")
+        close_tab_btn.add_css_class("circular")
         close_tab_btn.set_tooltip_text("Close Tab")
         close_tab_btn.connect("clicked", lambda btn: self.close_terminal_tab(scroll))
         tab_box.append(close_tab_btn)
@@ -709,8 +744,10 @@ class SyncWindow(Adw.ApplicationWindow):
         terminal.grab_focus()
 
     def on_terminal_key_pressed(self, controller, keyval, keycode, state, terminal):
-        """Binds Ctrl+Plus (zoom in), Ctrl+Minus (zoom out), and Ctrl+0 (reset) keys to scale fonts."""
-        is_ctrl = (state & Gdk.ModifierType.CONTROL_MASK) != 0
+        """Binds Ctrl+Plus (zoom in), Ctrl+Minus (zoom out), and Ctrl+0 (reset) keys to scale fonts. Masking out Gdk Locks."""
+        # Clean GDK modifiers to ignore CapsLock (LOCK_MASK) and NumLock (MOD2_MASK) states
+        clean_state = state & ~(Gdk.ModifierType.LOCK_MASK | Gdk.ModifierType.MOD2_MASK)
+        is_ctrl = (clean_state & Gdk.ModifierType.CONTROL_MASK) != 0
         if is_ctrl:
             current_scale = terminal.get_font_scale()
             if keyval in (Gdk.KEY_plus, Gdk.KEY_equal):
@@ -803,7 +840,7 @@ class SyncWindow(Adw.ApplicationWindow):
         if page_num != -1:
             self.notebook.remove_page(page_num)
 
-        # Clean terminal_tabs registry
+        # Clean terminal_tabs registry and destroy/unparent the GObject reference-cycle safely
         for tab in list(self.terminal_tabs):
             if tab["scroll_widget"] == page_widget:
                 # Forcefully SIGKILL/SIGHUP the shell process if it's still alive when tab is closed manually!
@@ -813,6 +850,14 @@ class SyncWindow(Adw.ApplicationWindow):
                         os.kill(shell_pid, signal.SIGHUP)
                     except Exception:
                         pass
+
+                # Explicitly unparent/destroy widgets to release memory immediately
+                try:
+                    tab["terminal"] = None
+                    tab["scroll_widget"].unparent()
+                except Exception:
+                    pass
+
                 if tab in self.terminal_tabs:
                     self.terminal_tabs.remove(tab)
                 break
@@ -1321,7 +1366,7 @@ class SyncWindow(Adw.ApplicationWindow):
         if sync_data.get("status") == "success" and sync_data.get("next_status") != "No next branch":
             next_ahead = sync_data.get("next_ahead", 0)
             if next_ahead > 0:
-                # 2. Check Gitea PR status (only for those actually ahead)
+                # 2. Check Gitea PR status (only for those active)
                 _, pr_data = sb.check_repo_pr(repo)
         GLib.idle_add(self.add_forward_result, repo, sync_data, pr_data)
 
