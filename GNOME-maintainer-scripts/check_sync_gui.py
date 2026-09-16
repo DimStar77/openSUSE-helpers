@@ -294,12 +294,12 @@ class VersionRow(Gtk.ListBoxRow):
 
     def on_open_terminal_clicked(self, btn, branch, popover):
         popover.popdown()
-        self.parent_window.show_terminal(self.package_name, branch)
+        self.parent_window.allocate_terminal(self.package_name, branch)
 
     def on_run_update_clicked(self, btn, branch, version, popover):
         popover.popdown()
         command = f"obs_scm-update.sh {version}"
-        self.parent_window.show_terminal(self.package_name, branch, command)
+        self.parent_window.allocate_terminal(self.package_name, branch, command)
 
 
 class ForwardRow(Adw.ActionRow):
@@ -469,6 +469,9 @@ class SyncWindow(Adw.ApplicationWindow):
         # Background workers configured with daemon threads so they terminate on exit
         self.executor = DaemonThreadPoolExecutor(max_workers=50)
 
+        # Open tab registry for active monitoring and deduplication
+        self.terminal_tabs = []
+
         # UI components
         self.stack = Adw.ViewStack()
 
@@ -529,10 +532,17 @@ class SyncWindow(Adw.ApplicationWindow):
         self.toolbar_view = Adw.ToolbarView()
         self.toolbar_view.add_top_bar(self.header_bar)
         self.toolbar_view.set_content(self.main_paned)
-        self.set_content(self.toolbar_view)
+
+        # Wrap everything inside an Adw.ToastOverlay for floating notifications
+        self.toast_overlay = Adw.ToastOverlay()
+        self.toast_overlay.set_child(self.toolbar_view)
+        self.set_content(self.toast_overlay)
 
         # Stop background scan leak when window is closed
         self.connect("close-request", self.on_close_request)
+
+        # Periodic GLib timer: checks terminal process states every 1.5 seconds
+        GLib.timeout_add(1500, self.monitor_terminals)
 
         # Kick off background loading
         self.refresh_all()
@@ -560,9 +570,58 @@ class SyncWindow(Adw.ApplicationWindow):
         # Fallback to local package directory
         return os.path.abspath(os.path.join('.', package_name))
 
-    def show_terminal(self, pkg_name, target_branch, command=None):
-        """Spawns a new VTE terminal tab inside the Gtk.Notebook drawer, supporting worktree directory resolution."""
+    def is_shell_pid_active(self, shell_pid):
+        """Returns True if the shell process has active child processes running (foreground jobs)."""
+        if not shell_pid:
+            return False
+        try:
+            # Query if any process PPID matches this shell_pid
+            res = subprocess.run(
+                ['pgrep', '-P', str(shell_pid)],
+                capture_output=True, text=True, timeout=1
+            )
+            return len(res.stdout.strip()) > 0
+        except Exception:
+            return False
+
+    def allocate_terminal(self, pkg_name, target_branch, command=None):
+        """
+        Deduplicates terminal tabs.
+        If an IDLE terminal tab already exists for this package/branch combo, switches focus to it.
+        If it is ACTIVE/BUSY (running a command), spawns a new separate tab with an incremented counter.
+        """
         self.terminal_drawer.set_visible(True)
+
+        # Scan existing open tabs
+        matching_tabs = [
+            tab for tab in self.terminal_tabs
+            if tab["pkg_name"] == pkg_name and tab["target_branch"] == target_branch
+        ]
+
+        # Check if any matching tab is currently idle
+        for tab in matching_tabs:
+            if not self.is_shell_pid_active(tab["shell_pid"]):
+                # Found an idle tab! Focus it and run the command if provided
+                page_num = self.notebook.page_num(tab["scroll_widget"])
+                if page_num != -1:
+                    self.notebook.set_current_page(page_num)
+                    if command:
+                        # Feed the command directly to the running shell
+                        # We append \n to simulate pressing Enter
+                        tab["terminal"].feed_child(f"{command}\n".encode('utf-8'))
+                    tab["terminal"].grab_focus()
+                    return
+
+        # Otherwise, if none are idle or none exist, spawn a fresh new tab!
+        suffix = ""
+        if matching_tabs:
+            # Add an incremented counter to distinguish parallel active tabs
+            suffix = f" [{len(matching_tabs) + 1}]"
+
+        self.show_terminal(pkg_name, target_branch, command, suffix)
+
+    def show_terminal(self, pkg_name, target_branch, command=None, suffix=""):
+        """Spawns a new VTE terminal tab inside the Gtk.Notebook drawer, supporting worktree directory resolution."""
         resolved_dir = self.get_mapped_worktree_path(pkg_name, target_branch)
 
         # Create a new terminal instance
@@ -576,7 +635,7 @@ class SyncWindow(Adw.ApplicationWindow):
         # Build tab label box
         tab_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
 
-        label_text = f"{pkg_name} ({target_branch})"
+        label_text = f"{pkg_name} ({target_branch}){suffix}"
         tab_label = Gtk.Label(label=label_text)
         tab_box.append(tab_label)
 
@@ -590,11 +649,25 @@ class SyncWindow(Adw.ApplicationWindow):
         page_index = self.notebook.append_page(scroll, tab_box)
         self.notebook.set_current_page(page_index)
 
+        # Register tab inside our state tracker
+        tab_state = {
+            "scroll_widget": scroll,
+            "terminal": terminal,
+            "pkg_name": pkg_name,
+            "target_branch": target_branch,
+            "base_label": f"{pkg_name} ({target_branch}){suffix}",
+            "tab_label": tab_label,
+            "shell_pid": None,
+            "was_active": False
+        }
+        self.terminal_tabs.append(tab_state)
+
         shell = os.environ.get("SHELL", "/bin/bash")
         argv = [shell]
         if command:
             argv = [shell, "-c", f"{command}; exec {shell}"]
 
+        # Spawn the shell and capture its PID inside our callback
         terminal.spawn_async(
             Vte.PtyFlags.DEFAULT,
             resolved_dir,
@@ -605,15 +678,74 @@ class SyncWindow(Adw.ApplicationWindow):
             None,
             -1,
             None,
-            None,
-            None
+            self.on_terminal_spawned,
+            tab_state
         )
         terminal.grab_focus()
+
+    def on_terminal_spawned(self, terminal, pid, error, tab_state):
+        if error is None:
+            tab_state["shell_pid"] = pid
+            # Trigger immediate monitor update to capture initial state
+            GLib.idle_add(self.monitor_terminals)
+        else:
+            print(f"VTE spawn failed: {error}")
+
+    def monitor_terminals(self):
+        """Polls active terminal PIDs every 1.5 seconds, flashing state changes and displaying completed Toasts."""
+        for tab in list(self.terminal_tabs):
+            shell_pid = tab.get("shell_pid")
+            if not shell_pid:
+                continue
+
+            # If the page was removed from the notebook, clear it from registry
+            if self.notebook.page_num(tab["scroll_widget"]) == -1:
+                if tab in self.terminal_tabs:
+                    self.terminal_tabs.remove(tab)
+                continue
+
+            is_active = self.is_shell_pid_active(shell_pid)
+            was_active = tab["was_active"]
+
+            pkg_name = tab["pkg_name"]
+            branch = tab["target_branch"]
+            label_widget = tab["tab_label"]
+            base_lbl = tab["base_label"]
+
+            if is_active and not was_active:
+                # Process started running!
+                tab["was_active"] = True
+                label_widget.set_text(f"{base_lbl} ⚙️")
+            elif not is_active and was_active:
+                # Process completed!
+                tab["was_active"] = False
+                label_widget.set_text(f"{base_lbl} ✅")
+
+                # Render floating Libadwaita Toast alert
+                toast = Adw.Toast.new(f"Task completed in tab: {pkg_name} ({branch})")
+                toast.set_button_label("Focus Tab")
+                toast.connect("button-clicked", self.on_toast_clicked, tab["scroll_widget"])
+                self.toast_overlay.add_toast(toast)
+
+        return True # Return True to keep the periodic GLib timer alive
+
+    def on_toast_clicked(self, toast, scroll_widget):
+        page_num = self.notebook.page_num(scroll_widget)
+        if page_num != -1:
+            self.notebook.set_current_page(page_num)
+            self.terminal_drawer.set_visible(True)
 
     def close_terminal_tab(self, page_widget):
         page_num = self.notebook.page_num(page_widget)
         if page_num != -1:
             self.notebook.remove_page(page_num)
+
+        # Clean terminal_tabs registry
+        for tab in list(self.terminal_tabs):
+            if tab["scroll_widget"] == page_widget:
+                if tab in self.terminal_tabs:
+                    self.terminal_tabs.remove(tab)
+                break
 
         if self.notebook.get_n_pages() == 0:
             self.hide_terminal()
