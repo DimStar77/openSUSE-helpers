@@ -797,6 +797,16 @@ class SyncWindow(Adw.ApplicationWindow):
 
     def on_terminal_spawned(self, terminal, pid, error, tab_state):
         if error is None:
+            # Check if the tab was closed while spawn was pending!
+            # If so, kill the orphaned process immediately to prevent any shell background leaks.
+            scroll_widget = tab_state.get("scroll_widget")
+            if scroll_widget and self.notebook.page_num(scroll_widget) == -1:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except Exception:
+                    pass
+                return
+
             tab_state["shell_pid"] = pid
             GLib.idle_add(self.monitor_terminals)
         else:

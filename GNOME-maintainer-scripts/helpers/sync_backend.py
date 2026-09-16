@@ -23,6 +23,8 @@ _active_processes = []
 def run_tracked(args, **kwargs):
     import subprocess
     check = kwargs.pop("check", False)
+    timeout = kwargs.pop("timeout", None)
+    input_data = kwargs.pop("input", None)
     with _active_processes_lock:
         if _active_processes is None:
             raise RuntimeError("Subprocess spawning blocked during teardown")
@@ -35,7 +37,7 @@ def run_tracked(args, **kwargs):
         _active_processes.append(p)
 
     try:
-        stdout, stderr = p.communicate()
+        stdout, stderr = p.communicate(input=input_data, timeout=timeout)
         retcode = p.poll()
         if check and retcode:
             raise subprocess.CalledProcessError(retcode, args, output=stdout, stderr=stderr)
