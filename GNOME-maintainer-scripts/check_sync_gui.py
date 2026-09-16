@@ -923,6 +923,7 @@ class SyncWindow(Adw.ApplicationWindow):
         # Clean terminal_tabs registry and destroy/unparent the GObject reference-cycle safely
         for tab in list(self.terminal_tabs):
             if tab["scroll_widget"] == page_widget:
+                pkg_name = tab["pkg_name"]
                 # Forcefully SIGKILL/SIGHUP the shell process if it's still alive when tab is closed manually!
                 shell_pid = tab.get("shell_pid")
                 if shell_pid:
@@ -950,6 +951,9 @@ class SyncWindow(Adw.ApplicationWindow):
 
                 if tab in self.terminal_tabs:
                     self.terminal_tabs.remove(tab)
+
+                # Automatically refresh single package on terminal tab close
+                self.refresh_single_package(pkg_name)
                 break
 
         if self.notebook.get_n_pages() == 0:
@@ -962,6 +966,89 @@ class SyncWindow(Adw.ApplicationWindow):
         self.start_sync_scan()
         self.start_version_scan()
         self.start_forwarding_scan()
+
+    def refresh_single_package(self, pkg_name):
+        """Asynchronously triggers background checks for a single package and updates its row in all relevant lists."""
+        if not self.repos or pkg_name not in self.repos:
+            return
+
+        try:
+            self.executor.submit(self.run_bg_sync_single, pkg_name)
+            self.executor.submit(self.run_bg_version_single, pkg_name)
+            self.executor.submit(self.run_bg_forward_single, pkg_name)
+        except RuntimeError:
+            pass
+
+    def run_bg_sync_single(self, repo):
+        name, data = sb.check_repo_sync(repo)
+        GLib.idle_add(self.update_sync_row_single, name, data)
+
+    def update_sync_row_single(self, name, data):
+        if data.get("status") == "success":
+            idx = 0
+            while True:
+                row = self.sync_list_box.get_row_at_index(idx)
+                if not row:
+                    break
+                if hasattr(row, "package_name") and row.package_name == name:
+                    self.sync_list_box.remove(row)
+                    new_row = SyncRow(name, data)
+                    self.sync_list_box.insert(new_row, idx)
+                    self.sync_list_box.invalidate_filter()
+                    break
+                idx += 1
+
+    def run_bg_version_single(self, repo):
+        name, data = sb.check_repo_version(repo)
+        GLib.idle_add(self.update_version_row_single, name, data)
+
+    def update_version_row_single(self, name, data):
+        if data.get("status") == "success":
+            idx = 0
+            while True:
+                row = self.ver_list_box.get_row_at_index(idx)
+                if not row:
+                    break
+                if hasattr(row, "package_name") and row.package_name == name:
+                    self.ver_list_box.remove(row)
+                    new_row = VersionRow(name, data, self)
+                    self.ver_list_box.insert(new_row, idx)
+                    self.ver_list_box.invalidate_filter()
+                    break
+                idx += 1
+
+    def run_bg_forward_single(self, repo):
+        _, sync_data = sb.check_repo_sync(repo)
+        pr_data = {"has_pr": False}
+        if sync_data.get("status") == "success" and sync_data.get("next_status") != "No next branch":
+            next_ahead = sync_data.get("next_ahead", 0)
+            if next_ahead > 0:
+                _, pr_data = sb.check_repo_pr(repo)
+        GLib.idle_add(self.update_forward_row_single, repo, sync_data, pr_data)
+
+    def update_forward_row_single(self, name, sync_data, pr_data):
+        # Find and remove any existing row first
+        idx = 0
+        removed = False
+        while True:
+            row = self.fwd_list_box.get_row_at_index(idx)
+            if not row:
+                break
+            if hasattr(row, "package_name") and row.package_name == name:
+                self.fwd_list_box.remove(row)
+                removed = True
+                break
+            idx += 1
+
+        next_ahead = sync_data.get("next_ahead", 0)
+        if next_ahead > 0:
+            new_row = ForwardRow(name, sync_data, pr_data)
+            if removed:
+                self.fwd_list_box.insert(new_row, idx)
+            else:
+                self.fwd_list_box.append(new_row)
+        
+        self.fwd_list_box.invalidate_filter()
 
     # --- TAB 1: SYNC VIEW ---
     def build_sync_view(self):
