@@ -13,7 +13,14 @@ import webbrowser
 import threading
 import signal
 import re
+import shlex
 import xml.etree.ElementTree as ET
+
+# Pre-compiled regular expressions for high-performance matching and pattern analysis
+RE_HEX_40 = re.compile(r'^[0-9a-fA-F]{40}$')
+RE_HEX_SHORT = re.compile(r'^[0-9a-fA-F]{7,12}$')
+RE_VERSION_3 = re.compile(r'(\d+)([\._])(\d+)\2(\d+)')
+RE_VERSION_2 = re.compile(r'(\d+)([\._])(\d+)')
 
 def get_service_revision(pkg_dir):
     """
@@ -32,7 +39,7 @@ def get_service_revision(pkg_dir):
                 for param in service.findall('param'):
                     if param.get('name') == 'versionformat':
                         versionformat = param.text
-                if versionformat == '0.gitmodule':
+                if versionformat is not None and versionformat.strip() == '0.gitmodule':
                     continue
                 # Main obs_scm service! Get its revision
                 for param in service.findall('param'):
@@ -54,11 +61,11 @@ def guess_update_revision(current_revision, target_version):
     target_version = target_version.strip()
 
     # 1. Check if the current revision is a full Git commit SHA (40 hex chars)
-    if re.match(r'^[0-9a-fA-F]{40}$', current_revision):
+    if RE_HEX_40.match(current_revision):
         return None, f"tracks a specific Git commit SHA ({current_revision[:8]})"
 
     # 2. Check if the current revision is a short Git commit SHA (7-12 hex chars)
-    if re.match(r'^[0-9a-fA-F]{7,12}$', current_revision):
+    if RE_HEX_SHORT.match(current_revision):
         return None, f"tracks a short Git commit SHA ({current_revision})"
 
     # 3. Check if the current revision is a static development branch name
@@ -67,10 +74,10 @@ def guess_update_revision(current_revision, target_version):
 
     # 4. Try to match version patterns with dot or underscore separators
     # Check 3-part versions first (e.g. X.Y.Z or X_Y_Z)
-    match = re.search(r'(\d+)([\._])(\d+)\2(\d+)', current_revision)
+    match = RE_VERSION_3.search(current_revision)
     if not match:
         # Check 2-part versions (e.g. X.Y or X_Y)
-        match = re.search(r'(\d+)([\._])(\d+)', current_revision)
+        match = RE_VERSION_2.search(current_revision)
 
     if match:
         separator = match.group(2) # '.' or '_'
@@ -399,18 +406,24 @@ class VersionRow(Gtk.ListBoxRow):
         
         if guessed_revision and not confidence_err:
             # We are confident! Run the update with the guessed revision parameter
-            command = f"obs_scm-update.sh {guessed_revision}"
+            command = f"obs_scm-update.sh {shlex.quote(guessed_revision)}"
             self.parent_window.allocate_terminal(self.package_name, branch, command)
         else:
-            # Not confident! Provide a helpful terminal hint and drop to interactive shell
-            hint_msg = f"echo '⚠️  Unable to confidently guess target revision for {self.package_name}.'"
+            # Not confident! Provide a helpful ANSI-colored terminal hint and drop to interactive shell
+            title_text = f"⚠️  Unable to confidently guess target revision for {self.package_name}."
+            lines = [
+                f"\033[1;33m{title_text}\033[0m",
+            ]
             if confidence_err:
-                hint_msg += f" && echo '   Reason: _service {confidence_err}.'"
+                lines.append(f"   Reason: _service {confidence_err}.")
             if current_revision:
-                hint_msg += f" && echo '   Current revision in _service: {current_revision}'"
-            hint_msg += f" && echo '   Suggested target version: {version}'"
-            hint_msg += f" && echo '' && echo '👉 Run obs_scm-update.sh manually with your preferred parameter.'"
+                lines.append(f"   Current revision in _service: \033[1m{current_revision}\033[0m")
+            lines.append(f"   Suggested target version:     \033[1;32m{version}\033[0m")
+            lines.append("")
+            lines.append("👉 \033[1mRun obs_scm-update.sh manually with your preferred parameter.\033[0m")
             
+            # Safely chain the echos with proper shell quoting
+            hint_msg = " && ".join(f"echo {shlex.quote(line)}" for line in lines)
             self.parent_window.allocate_terminal(self.package_name, branch, hint_msg)
 
 
