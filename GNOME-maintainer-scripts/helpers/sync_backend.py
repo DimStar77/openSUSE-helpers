@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 openSUSE Workspace Downstream Sync Backend
-Houses core logic for checking repo sync states, querying Gitea API for PRs, 
+Houses core logic for checking repo sync states, querying Gitea API for PRs,
 and querying release-monitoring.org for upstream versions.
 Shared between CLI and GUI frontends.
 """
@@ -31,7 +31,7 @@ def get_gitea_repo_name(repo_path, default_name):
     """
     try:
         git_path = os.path.join(repo_path, '.git')
-        
+
         # Resolve actual git directory (handles submodules where .git is a file)
         if os.path.isfile(git_path):
             with open(git_path, 'r') as f:
@@ -53,12 +53,12 @@ def get_gitea_repo_name(repo_path, default_name):
         if os.path.exists(config_path):
             config = configparser.ConfigParser()
             config.read(config_path)
-            
+
             # Extract origin remote URL
             remote_origin = 'remote "origin"'
             if remote_origin in config and 'url' in config[remote_origin]:
                 url = config[remote_origin]['url'].strip()
-                
+
                 # Parse out repository name
                 if url.endswith('.git'):
                     url = url[:-4]
@@ -102,7 +102,7 @@ def get_gitea_owner_and_repo(repo_path, default_name):
         if os.path.exists(config_path):
             config = configparser.ConfigParser()
             config.read(config_path)
-            
+
             remote_origin = 'remote "origin"'
             if remote_origin in config and 'url' in config[remote_origin]:
                 url = config[remote_origin]['url'].strip()
@@ -110,7 +110,7 @@ def get_gitea_owner_and_repo(repo_path, default_name):
                     url = url[:-4]
                 if url.endswith('/'):
                     url = url[:-1]
-                
+
                 # Replace colon with slash to simplify parsing ssh urls
                 url = url.replace(':', '/')
                 parts = [p for p in url.split('/') if p]
@@ -128,7 +128,7 @@ def check_repo_pr(repo_name):
     """
     repo_path = os.path.join('.', repo_name)
     owner, gitea_name = get_gitea_owner_and_repo(repo_path, repo_name)
-    
+
     url = f"https://src.opensuse.org/api/v1/repos/{owner}/{gitea_name}/pulls?state=open"
     try:
         res_curl = subprocess.run(

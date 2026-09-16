@@ -279,7 +279,7 @@ def run_forward_check(repos, show_pr=False, only_no_pr=False):
 
             if next_ahead > 0:
                 pr_info = pr_status.get(repo, {"has_pr": False, "url": None, "number": None})
-                
+
                 # If filtering for only no PR, skip repositories that have a pending PR!
                 if only_no_pr and pr_info["has_pr"]:
                     continue
@@ -297,7 +297,7 @@ def run_forward_check(repos, show_pr=False, only_no_pr=False):
                         pr_display = f"{sb.GREEN}Yes (PR #{pr_info['number']}){sb.RESET}"
                     else:
                         pr_display = f"{sb.RED}No{sb.RESET}"
-                    
+
                     rows.append((
                         repo,
                         f"{sb.GREEN}{next_ahead}{sb.RESET}",
@@ -336,7 +336,7 @@ def run_forward_check(repos, show_pr=False, only_no_pr=False):
 
     print(f"Total Packages: {total} | Ready to Forward: {ready_count} | Needs Merge: {needs_merge_count}\n")
     print(f"### 🔀 Next-to-Factory Forwarding Table\n")
-    
+
     header_str = " | ".join(sb.pad_left(headers[i], widths[i]) for i in range(len(headers)))
     sep_str = " | ".join('-'*widths[i] for i in range(len(headers)))
     print(f"| {header_str} |")
