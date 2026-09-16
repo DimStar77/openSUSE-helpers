@@ -14,6 +14,7 @@ import subprocess
 import concurrent.futures
 import unicodedata
 import configparser
+import requests
 
 # ANSI Color Codes
 GREEN = "\x1b[32m"
@@ -130,22 +131,21 @@ def check_repo_pr(repo_name):
     owner, gitea_name = get_gitea_owner_and_repo(repo_path, repo_name)
 
     url = f"https://src.opensuse.org/api/v1/repos/{owner}/{gitea_name}/pulls?state=open"
+    headers = {'User-Agent': 'curl/8.0.1'}
     try:
-        res_curl = subprocess.run(
-            ['curl', '-s', '-m', '10', url],
-            capture_output=True, text=True, check=True
-        )
-        data = json.loads(res_curl.stdout)
-        if isinstance(data, list):
-            for pr in data:
-                base_ref = pr.get("base", {}).get("ref")
-                head_ref = pr.get("head", {}).get("ref")
-                if base_ref == "factory" and head_ref == "next":
-                    return repo_name, {
-                        "has_pr": True,
-                        "url": pr.get("html_url"),
-                        "number": pr.get("number")
-                    }
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if isinstance(data, list):
+                for pr in data:
+                    base_ref = pr.get("base", {}).get("ref")
+                    head_ref = pr.get("head", {}).get("ref")
+                    if base_ref == "factory" and head_ref == "next":
+                        return repo_name, {
+                            "has_pr": True,
+                            "url": pr.get("html_url"),
+                            "number": pr.get("number")
+                        }
     except Exception:
         pass
     return repo_name, {
@@ -336,29 +336,28 @@ def check_repo_version(repo_name, branch=None):
         except subprocess.CalledProcessError:
             pass
 
-    # 5. Query release-monitoring.org for upstream versions (using curl to bypass challenge)
+    # 5. Query release-monitoring.org for upstream versions (spoofing curl User-Agent)
     upstream_stable = None
     upstream_latest = None
 
     url = f"https://release-monitoring.org/api/v2/packages/?name={repo_name}&distribution=openSUSE"
+    headers = {'User-Agent': 'curl/8.0.1'}
     try:
-        res_curl = subprocess.run(
-            ['curl', '-s', '-m', '10', url],
-            capture_output=True, text=True, check=True
-        )
-        data = json.loads(res_curl.stdout)
-        items = data.get("items", [])
-        if items:
-            exact_item = None
-            for item in items:
-                if item.get("name") == repo_name:
-                    exact_item = item
-                    break
-            if not exact_item:
-                exact_item = items[0]
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            items = data.get("items", [])
+            if items:
+                exact_item = None
+                for item in items:
+                    if item.get("name") == repo_name:
+                        exact_item = item
+                        break
+                if not exact_item:
+                    exact_item = items[0]
 
-            upstream_stable = exact_item.get("stable_version")
-            upstream_latest = exact_item.get("version")
+                upstream_stable = exact_item.get("stable_version")
+                upstream_latest = exact_item.get("version")
     except Exception:
         # If API is unreachable or rate-limited, we report partial error but keep spec versions
         return repo_name, {
