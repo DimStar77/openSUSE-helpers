@@ -339,6 +339,7 @@ def check_repo_version(repo_name, branch=None):
     # 5. Query release-monitoring.org for upstream versions (spoofing curl User-Agent)
     upstream_stable = None
     upstream_latest = None
+    exact_item = None
 
     url = f"https://release-monitoring.org/api/v2/packages/?name={repo_name}&distribution=openSUSE"
     headers = {'User-Agent': 'curl/8.0.1'}
@@ -382,7 +383,8 @@ def check_repo_version(repo_name, branch=None):
         "next_ver": next_ver or "—",
         "upstream_stable": upstream_stable or "N/A",
         "upstream_latest": upstream_latest or "—",
-        "needs_update": needs_update
+        "needs_update": needs_update,
+        "project": exact_item.get("project") if exact_item else repo_name
     }
 
 def get_git_diff(repo_name):

@@ -193,7 +193,9 @@ class VersionRow(Gtk.ListBoxRow):
         clipboard.set(version)
 
     def on_web_clicked(self, btn, package_name):
-        url = f"https://release-monitoring.org/packages/?name={package_name}"
+        # Retrieve the resolved project name from our backend results data
+        project_name = self.data.get("project", package_name)
+        url = f"https://release-monitoring.org/project/{project_name}/"
         webbrowser.open(url)
 
 
