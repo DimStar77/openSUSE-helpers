@@ -223,59 +223,54 @@ class VersionRow(Gtk.ListBoxRow):
         self.parent_window = parent_window
 
         # Main horizontal box
-        main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=24)
         main_box.set_margin_start(18)
         main_box.set_margin_end(18)
-        main_box.set_margin_top(12)
-        main_box.set_margin_bottom(12)
-
-        # Left side: Title and our structured Grid!
-        left_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        left_box.set_hexpand(True)
+        main_box.set_margin_top(4)
+        main_box.set_margin_bottom(4)
 
         # Package Title
         title_label = Gtk.Label(halign=Gtk.Align.START)
         title_label.set_markup(f"<span size='medium' weight='bold'>{package_name}</span>")
-        left_box.append(title_label)
-
-        # Structured Grid
-        grid = Gtk.Grid(column_spacing=48, row_spacing=4)
+        title_label.set_ellipsize(Pango.EllipsizeMode.END)
+        title_label.set_hexpand(True)
+        title_label.set_xalign(0.0)
+        parent_window.sg_pkg.add_widget(title_label)
+        main_box.append(title_label)
 
         factory_ver = data.get("factory_ver", "N/A")
         next_ver = data.get("next_ver", "—")
         upstream_stable = data.get("upstream_stable", "N/A")
         upstream_latest = data.get("upstream_latest", "—")
 
-        # Column 1: Factory
-        self.f_title = Gtk.Label(halign=Gtk.Align.START)
-        self.f_title.set_markup("<span size='small' foreground='gray'>Factory (Stable Track)</span>")
-        grid.attach(self.f_title, 0, 0, 1, 1)
-
+        # Column 1: Factory Value
         self.f_val = Gtk.Label(halign=Gtk.Align.START)
         if factory_ver != upstream_stable and factory_ver != "N/A" and upstream_stable != "N/A":
             self.f_val.set_markup(f"<span weight='bold' foreground='red'>{factory_ver}</span>  ➔  <span weight='bold' foreground='green'>{upstream_stable}</span>")
         else:
             self.f_val.set_markup(f"<span foreground='gray'>{factory_ver} (In Sync)</span>")
-        grid.attach(self.f_val, 0, 1, 1, 1)
+        self.f_val.set_hexpand(True)
+        self.f_val.set_xalign(0.0)
+        parent_window.sg_fac.add_widget(self.f_val)
+        main_box.append(self.f_val)
 
-        # Column 2: Next
-        self.n_title = Gtk.Label(halign=Gtk.Align.START)
-        self.n_title.set_markup("<span size='small' foreground='gray'>Next (Unstable Track)</span>")
-        grid.attach(self.n_title, 1, 0, 1, 1)
-
+        # Column 2: Next Value
         self.n_val = Gtk.Label(halign=Gtk.Align.START)
         if next_ver != "—" and next_ver != upstream_latest and upstream_latest != "—":
             self.n_val.set_markup(f"<span weight='bold' foreground='red'>{next_ver}</span>  ➔  <span weight='bold' foreground='green'>{upstream_latest}</span>")
         else:
             self.n_val.set_markup(f"<span foreground='gray'>{next_ver} (In Sync)</span>" if next_ver != "—" else "<span foreground='gray'>—</span>")
-        grid.attach(self.n_val, 1, 1, 1, 1)
-
-        left_box.append(grid)
-        main_box.append(left_box)
+        self.n_val.set_hexpand(True)
+        self.n_val.set_xalign(0.0)
+        parent_window.sg_nxt.add_widget(self.n_val)
+        main_box.append(self.n_val)
 
         # Right side: Suffix action buttons (vertically centered)
         suffix_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         suffix_box.set_valign(Gtk.Align.CENTER)
+        suffix_box.set_halign(Gtk.Align.END)
+        suffix_box.set_hexpand(False)
+        parent_window.sg_act.add_widget(suffix_box)
 
         # Copy Version Button
         copy_btn = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
@@ -301,19 +296,13 @@ class VersionRow(Gtk.ListBoxRow):
     def set_branch_filter(self, filter_mode):
         # 0 = Both, 1 = Factory, 2 = Next
         if filter_mode == 0:
-            self.f_title.set_visible(True)
             self.f_val.set_visible(True)
-            self.n_title.set_visible(True)
             self.n_val.set_visible(True)
         elif filter_mode == 1:
-            self.f_title.set_visible(True)
             self.f_val.set_visible(True)
-            self.n_title.set_visible(False)
             self.n_val.set_visible(False)
         elif filter_mode == 2:
-            self.f_title.set_visible(False)
             self.f_val.set_visible(False)
-            self.n_title.set_visible(True)
             self.n_val.set_visible(True)
 
     def on_copy_clicked(self, btn, version):
@@ -1406,8 +1395,8 @@ class SyncWindow(Adw.ApplicationWindow):
         control_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         control_bar.set_margin_start(18)
         control_bar.set_margin_end(18)
-        control_bar.set_margin_top(12)
-        control_bar.set_margin_bottom(6)
+        control_bar.set_margin_top(8)
+        control_bar.set_margin_bottom(3)
 
         # Search Entry
         self.sync_search = Gtk.SearchEntry()
@@ -1605,8 +1594,8 @@ class SyncWindow(Adw.ApplicationWindow):
         control_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         control_bar.set_margin_start(18)
         control_bar.set_margin_end(18)
-        control_bar.set_margin_top(12)
-        control_bar.set_margin_bottom(6)
+        control_bar.set_margin_top(8)
+        control_bar.set_margin_bottom(3)
 
         # Search Entry
         self.ver_search = Gtk.SearchEntry()
@@ -1638,6 +1627,50 @@ class SyncWindow(Adw.ApplicationWindow):
         control_bar.append(self.ver_progress_label)
 
         box.append(control_bar)
+
+        # SizeGroups for uniform column alignment across list
+        self.sg_pkg = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
+        self.sg_fac = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
+        self.sg_nxt = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
+        self.sg_act = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
+
+        # Header Box
+        header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=24)
+        header_box.set_margin_start(18)
+        header_box.set_margin_end(18)
+        header_box.set_margin_top(4)
+        header_box.set_margin_bottom(4)
+
+        lbl_pkg = Gtk.Label(label="Package", halign=Gtk.Align.START)
+        lbl_pkg.set_markup("<span weight='bold'>Package</span>")
+        lbl_pkg.set_hexpand(True)
+        lbl_pkg.set_xalign(0.0)
+        self.sg_pkg.add_widget(lbl_pkg)
+        header_box.append(lbl_pkg)
+
+        self.lbl_fac = Gtk.Label(label="Factory (Stable)", halign=Gtk.Align.START)
+        self.lbl_fac.set_markup("<span weight='bold'>Factory (Stable)</span>")
+        self.lbl_fac.set_hexpand(True)
+        self.lbl_fac.set_xalign(0.0)
+        self.sg_fac.add_widget(self.lbl_fac)
+        header_box.append(self.lbl_fac)
+
+        self.lbl_nxt = Gtk.Label(label="Next (Unstable)", halign=Gtk.Align.START)
+        self.lbl_nxt.set_markup("<span weight='bold'>Next (Unstable)</span>")
+        self.lbl_nxt.set_hexpand(True)
+        self.lbl_nxt.set_xalign(0.0)
+        self.sg_nxt.add_widget(self.lbl_nxt)
+        header_box.append(self.lbl_nxt)
+
+        lbl_act = Gtk.Label(label="Actions", halign=Gtk.Align.END)
+        lbl_act.set_markup("<span weight='bold'>Actions</span>")
+        lbl_act.set_hexpand(False)
+        lbl_act.set_xalign(1.0)
+        self.sg_act.add_widget(lbl_act)
+        header_box.append(lbl_act)
+
+        box.append(header_box)
+        box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
 
         # List box container
         scroll = Gtk.ScrolledWindow()
@@ -1689,6 +1722,16 @@ class SyncWindow(Adw.ApplicationWindow):
         return True
 
     def on_ver_branch_changed(self, dropdown, pspec):
+        filter_mode = self.ver_branch_dropdown.get_selected()
+        if filter_mode == 0:
+            self.lbl_fac.set_visible(True)
+            self.lbl_nxt.set_visible(True)
+        elif filter_mode == 1:
+            self.lbl_fac.set_visible(True)
+            self.lbl_nxt.set_visible(False)
+        elif filter_mode == 2:
+            self.lbl_fac.set_visible(False)
+            self.lbl_nxt.set_visible(True)
         self.ver_list_box.invalidate_filter()
 
     def start_version_scan(self):
