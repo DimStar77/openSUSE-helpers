@@ -272,12 +272,6 @@ class VersionRow(Gtk.ListBoxRow):
         suffix_box.set_hexpand(False)
         parent_window.sg_act.add_widget(suffix_box)
 
-        # Copy Version Button
-        copy_btn = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
-        copy_btn.set_tooltip_text("Copy Upstream Stable Version")
-        copy_btn.connect("clicked", self.on_copy_clicked, upstream_stable)
-        suffix_box.append(copy_btn)
-
         # Open Upstream Page Button
         web_btn = Gtk.Button.new_from_icon_name("web-browser-symbolic")
         web_btn.set_tooltip_text("Open Release Monitoring Page")
@@ -304,10 +298,6 @@ class VersionRow(Gtk.ListBoxRow):
         elif filter_mode == 2:
             self.f_val.set_visible(False)
             self.n_val.set_visible(True)
-
-    def on_copy_clicked(self, btn, version):
-        clipboard = Gdk.Display.get_default().get_clipboard()
-        clipboard.set(version)
 
     def on_web_clicked(self, btn, package_name):
         # Retrieve the resolved project name from our backend results data
