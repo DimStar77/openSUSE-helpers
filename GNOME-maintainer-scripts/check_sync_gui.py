@@ -13,6 +13,30 @@ import webbrowser
 import threading
 import signal
 import re
+import time
+
+import gi
+gi.require_version('Gtk', '4.0')
+gi.require_version('Adw', '1')
+gi.require_version('Vte', '3.91')
+gi.require_version('Pango', '1.0')
+gi.require_version('Gdk', '4.0')
+from gi.repository import Gtk, Adw, GLib, GObject, Gdk, Vte, Pango, Gio
+
+try:
+    gi.require_version('GtkSource', '5')
+    from gi.repository import GtkSource
+except ValueError:
+    try:
+        gi.require_version('GtkSource', '4')
+        from gi.repository import GtkSource
+    except ValueError:
+        GtkSource = None
+
+# Make sure we can import sync_backend from helpers/ by resolving symlinks
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), 'helpers'))
+import sync_backend as sb
+
 import shlex
 import xml.etree.ElementTree as ET
 from typing import Optional, Tuple
@@ -96,29 +120,6 @@ def guess_update_revision(current_revision: Optional[str], target_version: str) 
     # If no version-like digits and separators were found, we are not confident
     return None, f"contains an unrecognized pattern ('{current_revision}')"
 
-import gi
-gi.require_version('Gtk', '4.0')
-gi.require_version('Adw', '1')
-gi.require_version('Vte', '3.91')
-gi.require_version('Pango', '1.0')
-gi.require_version('Gdk', '4.0')
-from gi.repository import Gtk, Adw, GLib, GObject, Gdk, Vte, Pango, Gio
-
-try:
-    gi.require_version('GtkSource', '5')
-    from gi.repository import GtkSource
-except ValueError:
-    try:
-        gi.require_version('GtkSource', '4')
-        from gi.repository import GtkSource
-    except ValueError:
-        GtkSource = None
-
-# Make sure we can import sync_backend from helpers/ by resolving symlinks
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), 'helpers'))
-import sync_backend as sb
-
-
 
 class DaemonThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
     """ThreadPoolExecutor that forces all spawned worker threads to be daemon threads."""
@@ -133,533 +134,128 @@ class DaemonThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
         finally:
             threading.Thread = orig_thread
 
-class SyncRow(Gtk.ListBoxRow):
-    """Custom row holding package sync data for the Sync tab."""
-    def __init__(self, package_name, data):
+
+class PackageRow(Gtk.ListBoxRow):
+    """Unified master list row representing a single package with multi-stage status badges."""
+    def __init__(self, package_name, parent_window):
         super().__init__()
         self.package_name = package_name
-        self.data = data
-
-        # Main horizontal box
-        main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        main_box.set_margin_start(18)
-        main_box.set_margin_end(18)
-        main_box.set_margin_top(12)
-        main_box.set_margin_bottom(12)
-
-        # Left side: Title and structured Grid
-        left_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        left_box.set_hexpand(True)
-
-        # Package Title
-        title_label = Gtk.Label(halign=Gtk.Align.START)
-        title_label.set_markup(f"<span size='medium' weight='bold'>{package_name}</span>")
-        left_box.append(title_label)
-
-        # Structured Grid
-        grid = Gtk.Grid(column_spacing=48, row_spacing=4)
-
-        pool_status = data.get("pool_status", "unknown")
-        pool_ahead = data.get("pool_ahead", 0)
-        pool_behind = data.get("pool_behind", 0)
-        next_status = data.get("next_status", "unknown")
-        next_ahead = data.get("next_ahead", 0)
-        next_behind = data.get("next_behind", 0)
-
-        # Column 1: Stage 1 (Pool Sync)
-        s1_title = Gtk.Label(halign=Gtk.Align.START)
-        s1_title.set_markup("<span size='small' foreground='gray'>Pool Sync (Stage 1)</span>")
-        grid.attach(s1_title, 0, 0, 1, 1)
-
-        s1_val = Gtk.Label(halign=Gtk.Align.START)
-        if pool_behind > 0 and pool_ahead > 0:
-            s1_val.set_markup(f"<span weight='bold' foreground='red'>Diverged</span> <span size='small' foreground='gray'>(B:{pool_behind}/A:{pool_ahead})</span>")
-        elif pool_behind > 0:
-            s1_val.set_markup(f"<span weight='bold' foreground='orange'>Behind Pool by {pool_behind} commits</span>")
-        elif pool_ahead > 0:
-            s1_val.set_markup(f"<span weight='bold' foreground='cyan'>Ahead of Pool by {pool_ahead} commits</span>")
-        elif pool_status == "Not in Pool":
-            s1_val.set_markup("<span foreground='yellow'>Not in Gitea Pool</span>")
-        else:
-            s1_val.set_markup("<span foreground='green'>Fully In Sync</span>")
-        grid.attach(s1_val, 0, 1, 1, 1)
-
-        # Column 2: Stage 2 (Next Sync)
-        s2_title = Gtk.Label(halign=Gtk.Align.START)
-        s2_title.set_markup("<span size='small' foreground='gray'>Next Branch Sync (Stage 2)</span>")
-        grid.attach(s2_title, 1, 0, 1, 1)
-
-        s2_val = Gtk.Label(halign=Gtk.Align.START)
-        if next_behind > 0 and next_ahead > 0:
-            s2_val.set_markup(f"<span weight='bold' foreground='red'>Diverged</span> <span size='small' foreground='gray'>(B:{next_behind}/A:{next_ahead})</span>")
-        elif next_behind > 0:
-            s2_val.set_markup(f"<span weight='bold' foreground='orange'>Next behind Factory by {next_behind} commits</span>")
-        elif next_ahead > 0:
-            s2_val.set_markup(f"<span foreground='green'>Next ahead of Factory by {next_ahead} commits (ok)</span>")
-        elif next_status == "No next branch".strip():
-            s2_val.set_markup("<span foreground='gray'>No Next Branch</span>")
-        else:
-            s2_val.set_markup("<span foreground='green'>Fully In Sync</span>")
-        grid.attach(s2_val, 1, 1, 1, 1)
-
-        left_box.append(grid)
-        main_box.append(left_box)
-
-        # Right side: Icon/Action hint (Double click details)
-        info_icon = Gtk.Image.new_from_icon_name("document-properties-symbolic")
-        info_icon.set_tooltip_text("Double-click to view Diff")
-        info_icon.set_valign(Gtk.Align.CENTER)
-        main_box.append(info_icon)
-
-        self.set_child(main_box)
-
-
-class VersionRow(Gtk.ListBoxRow):
-    """Custom row holding package data for the Versions tab."""
-    def __init__(self, package_name, data, parent_window):
-        super().__init__()
-        self.package_name = package_name
-        self.data = data
         self.parent_window = parent_window
 
         # Main horizontal box
-        main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=24)
-        main_box.set_margin_start(18)
-        main_box.set_margin_end(18)
-        main_box.set_margin_top(4)
-        main_box.set_margin_bottom(4)
+        main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        main_box.set_margin_start(12)
+        main_box.set_margin_end(12)
+        main_box.set_margin_top(8)
+        main_box.set_margin_bottom(8)
+
+        # Left side: Text details
+        text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        text_box.set_hexpand(True)
 
         # Package Title
-        title_label = Gtk.Label(halign=Gtk.Align.START)
-        title_label.set_markup(f"<span size='medium' weight='bold'>{package_name}</span>")
-        title_label.set_ellipsize(Pango.EllipsizeMode.END)
-        title_label.set_hexpand(True)
-        title_label.set_xalign(0.0)
-        parent_window.sg_pkg.add_widget(title_label)
-        main_box.append(title_label)
+        self.name_label = Gtk.Label(halign=Gtk.Align.START)
+        self.name_label.set_markup(f"<span weight='bold'>{package_name}</span>")
+        self.name_label.set_ellipsize(Pango.EllipsizeMode.END)
+        text_box.append(self.name_label)
 
-        factory_ver = data.get("factory_ver", "N/A")
-        next_ver = data.get("next_ver", "—")
-        upstream_stable = data.get("upstream_stable", "N/A")
-        upstream_latest = data.get("upstream_latest", "—")
+        # Subtitle for status text
+        self.sub_label = Gtk.Label(halign=Gtk.Align.START)
+        self.sub_label.set_markup("<span size='small' foreground='gray'>Pending scan...</span>")
+        self.sub_label.set_ellipsize(Pango.EllipsizeMode.END)
+        text_box.append(self.sub_label)
 
-        # Column 1: Factory Value
-        self.f_val = Gtk.Label(halign=Gtk.Align.START)
-        if factory_ver != upstream_stable and factory_ver != "N/A" and upstream_stable != "N/A":
-            self.f_val.set_markup(f"<span weight='bold' foreground='red'>{factory_ver}</span>  ➔  <span weight='bold' foreground='green'>{upstream_stable}</span>")
-        else:
-            self.f_val.set_markup(f"<span foreground='gray'>{factory_ver} (In Sync)</span>")
-        self.f_val.set_hexpand(True)
-        self.f_val.set_xalign(0.0)
-        parent_window.sg_fac.add_widget(self.f_val)
-        main_box.append(self.f_val)
+        main_box.append(text_box)
 
-        # Column 2: Next Value
-        self.n_val = Gtk.Label(halign=Gtk.Align.START)
-        if next_ver != "—" and next_ver != upstream_latest and upstream_latest != "—":
-            self.n_val.set_markup(f"<span weight='bold' foreground='red'>{next_ver}</span>  ➔  <span weight='bold' foreground='green'>{upstream_latest}</span>")
-        else:
-            self.n_val.set_markup(f"<span foreground='gray'>{next_ver} (In Sync)</span>" if next_ver != "—" else "<span foreground='gray'>—</span>")
-        self.n_val.set_hexpand(True)
-        self.n_val.set_xalign(0.0)
-        parent_window.sg_nxt.add_widget(self.n_val)
-        main_box.append(self.n_val)
+        # Right side: Badges container
+        self.badges_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.badges_box.set_valign(Gtk.Align.CENTER)
+        main_box.append(self.badges_box)
 
-        # Right side: Suffix action buttons (vertically centered)
-        suffix_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        suffix_box.set_valign(Gtk.Align.CENTER)
-        suffix_box.set_halign(Gtk.Align.END)
-        suffix_box.set_hexpand(False)
-        parent_window.sg_act.add_widget(suffix_box)
-
-        # Open Upstream Page Button
-        web_btn = Gtk.Button.new_from_icon_name("web-browser-symbolic")
-        web_btn.set_tooltip_text("Open Release Monitoring Page")
-        web_btn.connect("clicked", self.on_web_clicked, package_name)
-        suffix_box.append(web_btn)
-
-        main_box.append(suffix_box)
         self.set_child(main_box)
 
-        # Right-click gesture detector (Button 3 is right-click)
-        gesture = Gtk.GestureClick.new()
-        gesture.set_button(3)
-        gesture.connect("released", self.on_right_click)
-        self.add_controller(gesture)
+    def create_badge(self, text, color):
+        label = Gtk.Label()
+        label.set_margin_start(6)
+        label.set_margin_end(6)
+        label.set_margin_top(2)
+        label.set_margin_bottom(2)
 
-    def set_branch_filter(self, filter_mode):
-        # 0 = Both, 1 = Factory, 2 = Next
-        if filter_mode == 0:
-            self.f_val.set_visible(True)
-            self.n_val.set_visible(True)
-        elif filter_mode == 1:
-            self.f_val.set_visible(True)
-            self.n_val.set_visible(False)
-        elif filter_mode == 2:
-            self.f_val.set_visible(False)
-            self.n_val.set_visible(True)
+        color_map = {
+            "orange": "#ff9f0a",
+            "yellow": "#f5c211",
+            "cyan": "#00d2ff",
+            "red": "#ff453a",
+            "green": "#30d158",
+            "purple": "#bf5af2",
+            "gray": "#8e8e93"
+        }
+        hex_color = color_map.get(color, "gray")
 
-    def on_web_clicked(self, btn, package_name):
-        # Retrieve the resolved project name from our backend results data
-        project_name = self.data.get("project", package_name)
-        url = f"https://release-monitoring.org/project/{project_name}/"
-        webbrowser.open(url)
+        label.set_markup(f"<span size='x-small' weight='bold' foreground='black' background='{hex_color}'>  {text}  </span>")
+        return label
 
-    def on_right_click(self, gesture, n_press, x, y):
-        popover = Gtk.Popover()
-        popover.set_parent(self)
+    def update_ui(self, sync_data, version_data, pr_data):
+        # Clear existing badges
+        while True:
+            child = self.badges_box.get_first_child()
+            if not child:
+                break
+            self.badges_box.remove(child)
 
-        # Position at the clicked point
-        rect = Gdk.Rectangle()
-        rect.x = int(x)
-        rect.y = int(y)
-        rect.width = 1
-        rect.height = 1
-        popover.set_pointing_to(rect)
+        subtitle_parts = []
 
-        # Popover layout
-        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        vbox.set_margin_start(8)
-        vbox.set_margin_end(8)
-        vbox.set_margin_top(8)
-        vbox.set_margin_bottom(8)
+        # 1. Sync & Gitea Pool state
+        if sync_data:
+            pool_behind = sync_data.get("pool_behind", 0)
+            pool_ahead = sync_data.get("pool_ahead", 0)
+            pool_status = sync_data.get("pool_status", "unknown")
+            next_ahead = sync_data.get("next_ahead", 0)
+            next_behind = sync_data.get("next_behind", 0)
 
-        # Term Options (Explicit branch-specific terminal folders)
-        factory_ver = self.data.get("factory_ver", "N/A")
-        next_ver = self.data.get("next_ver", "—")
-        upstream_stable = self.data.get("upstream_stable", "N/A")
-        upstream_latest = self.data.get("upstream_latest", "—")
+            if pool_behind > 0 or pool_ahead > 0:
+                subtitle_parts.append(f"Pool: B:{pool_behind}/A:{pool_ahead}")
+                self.badges_box.append(self.create_badge("Pool", "orange"))
+            elif pool_status == "Not in Pool":
+                subtitle_parts.append("Not in Gitea")
+                self.badges_box.append(self.create_badge("No Pool", "yellow"))
 
-        # 1. Open Terminal in Next Worktree
-        term_next_btn = Gtk.Button(label="Open Terminal in Next Worktree")
-        term_next_btn.set_has_frame(False)
-        term_next_btn.set_halign(Gtk.Align.START)
-        term_next_btn.connect("clicked", self.on_open_terminal_clicked, "next", popover)
-        vbox.append(term_next_btn)
+            if next_ahead > 0:
+                subtitle_parts.append(f"Next: +{next_ahead}")
+                self.badges_box.append(self.create_badge(f"+{next_ahead}", "cyan"))
+            elif next_behind > 0:
+                subtitle_parts.append(f"Next: -{next_behind}")
+                self.badges_box.append(self.create_badge(f"-{next_behind}", "red"))
 
-        # 2. Open Terminal in Factory Worktree
-        term_fac_btn = Gtk.Button(label="Open Terminal in Factory Worktree")
-        term_fac_btn.set_has_frame(False)
-        term_fac_btn.set_halign(Gtk.Align.START)
-        term_fac_btn.connect("clicked", self.on_open_terminal_clicked, "factory", popover)
-        vbox.append(term_fac_btn)
+        # 2. Upstream Version updates
+        if version_data:
+            factory_ver = version_data.get("factory_ver", "N/A")
+            upstream_stable = version_data.get("upstream_stable", "N/A")
+            next_ver = version_data.get("next_ver", "—")
+            upstream_latest = version_data.get("upstream_latest", "—")
 
-        # Check for _service file
-        pkg_dir = os.path.join('.', self.package_name)
-        has_service = os.path.exists(os.path.join(pkg_dir, '_service'))
+            if factory_ver != upstream_stable and factory_ver != "N/A" and upstream_stable != "N/A":
+                subtitle_parts.append("Stable Update")
+                self.badges_box.append(self.create_badge("Stable 🔺", "green"))
 
-        if has_service:
-            # Separator
-            sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
-            vbox.append(sep)
-
-            # If next needs an update
             if next_ver != "—" and next_ver != upstream_latest and upstream_latest != "—":
-                next_btn = Gtk.Button(label=f"Update Next to {upstream_latest} via obs_scm-update.sh")
-                next_btn.set_has_frame(False)
-                next_btn.set_halign(Gtk.Align.START)
-                next_btn.connect("clicked", self.on_run_update_clicked, "next", upstream_latest, popover)
-                vbox.append(next_btn)
+                subtitle_parts.append("Unstable Update")
+                self.badges_box.append(self.create_badge("Unstable 🔺", "purple"))
 
-            # If factory needs an update
-            if factory_ver != "N/A" and factory_ver != upstream_stable and upstream_stable != "N/A":
-                fac_btn = Gtk.Button(label=f"Update Factory to {upstream_stable} via obs_scm-update.sh")
-                fac_btn.set_has_frame(False)
-                fac_btn.set_halign(Gtk.Align.START)
-                fac_btn.connect("clicked", self.on_run_update_clicked, "factory", upstream_stable, popover)
-                vbox.append(fac_btn)
+        # 3. Active Pull Requests
+        if pr_data and pr_data.get("has_pr", False):
+            pr_num = pr_data.get("number", "PR")
+            subtitle_parts.append(f"PR #{pr_num}")
+            self.badges_box.append(self.create_badge(f"PR #{pr_num}", "green"))
 
-        popover.set_child(vbox)
-        popover.popup()
-
-    def on_open_terminal_clicked(self, btn, branch, popover):
-        popover.popdown()
-        self.parent_window.allocate_terminal(self.package_name, branch)
-
-    def on_run_update_clicked(self, btn, branch, version, popover):
-        popover.popdown()
-
-        # Try to resolve package directory and find current _service revision
-        pkg_dir = os.path.join('.', self.package_name)
-        current_revision = get_service_revision(pkg_dir)
-        guessed_revision, confidence_err = guess_update_revision(current_revision, version)
-
-        if guessed_revision and not confidence_err:
-            # We are confident! Run the update with the guessed revision parameter
-            command = f"obs_scm-update.sh {shlex.quote(guessed_revision)}"
-            self.parent_window.allocate_terminal(self.package_name, branch, command)
+        # Apply subtitle
+        if subtitle_parts:
+            self.sub_label.set_markup(f"<span size='small' foreground='gray'>{' | '.join(subtitle_parts)}</span>")
         else:
-            # Not confident! Provide a helpful ANSI-colored terminal hint and drop to interactive shell
-            title_text = f"⚠️  Unable to confidently guess target revision for {self.package_name}."
-            lines = [
-                f"\033[1;33m{title_text}\033[0m",
-            ]
-            if confidence_err:
-                lines.append(f"   Reason: _service {confidence_err}.")
-            if current_revision:
-                lines.append(f"   Current revision in _service: \033[1m{current_revision}\033[0m")
-            lines.append(f"   Suggested target version:     \033[1;32m{version}\033[0m")
-            lines.append("")
-            lines.append("👉 \033[1mRun obs_scm-update.sh manually with your preferred parameter.\033[0m")
-
-            # Safely chain the echos with proper shell quoting
-            hint_msg = " && ".join(f"echo {shlex.quote(line)}" for line in lines)
-            self.parent_window.allocate_terminal(self.package_name, branch, hint_msg)
-
-
-class ForwardRow(Adw.ActionRow):
-    """Custom row holding package data for the Forwarding sidebar."""
-    def __init__(self, package_name, sync_data, pr_data):
-        super().__init__()
-        self.package_name = package_name
-        self.sync_data = sync_data
-        self.pr_data = pr_data
-
-        self.next_ahead = sync_data.get("next_ahead", 0)
-        self.next_behind = sync_data.get("next_behind", 0)
-        self.has_pr = pr_data.get("has_pr", False)
-        self.pr_number = pr_data.get("number", None)
-        self.pr_url = pr_data.get("url", None)
-
-        # Build layout
-        self.set_title(package_name)
-        self.set_subtitle(f"Commits Ahead: {self.next_ahead} | Behind: {self.next_behind}")
-
-        # PR Status Suffix Badge
-        self.pr_label = Gtk.Label()
-        if self.has_pr:
-            self.pr_label.set_markup(f"<span foreground='green' weight='bold'>PR #{self.pr_number}</span>")
-        else:
-            self.pr_label.set_markup("<span foreground='red'>No PR</span>")
-
-        self.add_suffix(self.pr_label)
-
-    def update_pr_state(self, pr_data):
-        self.has_pr = pr_data.get("has_pr", False)
-        self.pr_number = pr_data.get("number")
-        self.pr_url = pr_data.get("url")
-
-        if self.has_pr:
-            self.pr_label.set_markup(f"<span foreground='green' weight='bold'>PR #{self.pr_number}</span>")
-        else:
-            self.pr_label.set_markup("<span foreground='red'>No PR</span>")
-
-    def update_row_data(self, sync_data, pr_data):
-        """Update the row data, subtitle, and badge in-place to prevent selection loss."""
-        self.sync_data = sync_data
-        self.pr_data = pr_data
-
-        self.next_ahead = sync_data.get("next_ahead", 0)
-        self.next_behind = sync_data.get("next_behind", 0)
-        self.has_pr = pr_data.get("has_pr", False)
-        self.pr_number = pr_data.get("number", None)
-        self.pr_url = pr_data.get("url", None)
-
-        self.set_subtitle(f"Commits Ahead: {self.next_ahead} | Behind: {self.next_behind}")
-
-        if self.has_pr:
-            self.pr_label.set_markup(f"<span foreground='green' weight='bold'>PR #{self.pr_number}</span>")
-        else:
-            self.pr_label.set_markup("<span foreground='red'>No PR</span>")
-
-
-class SyncCreatePRDialog(Gtk.Window):
-    """Modal dialog to prefill, review branch changes, and programmatically create a Gitea PR."""
-    def __init__(self, parent, package_name):
-        super().__init__(transient_for=parent, modal=True, title=f"Create Pull Request - {package_name}")
-        self.set_default_size(840, 680)
-
-        self.package_name = package_name
-        self.parent = parent
-        self.is_destroyed = False
-
-        self.connect("destroy", self.on_destroy)
-
-        # Main layout
-        main_layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        main_layout.set_margin_top(12)
-        main_layout.set_margin_bottom(12)
-        main_layout.set_margin_start(18)
-        main_layout.set_margin_end(18)
-
-        # Header Title
-        title_lbl = Gtk.Label(halign=Gtk.Align.START)
-        title_lbl.set_markup(f"<span size='large' weight='bold'>Prefill Pull Request for {package_name}</span>")
-        main_layout.append(title_lbl)
-
-        # Grid for prefilled branch mapping & PR Title
-        grid = Gtk.Grid(column_spacing=18, row_spacing=12)
-        grid.set_margin_top(6)
-        grid.set_margin_bottom(6)
-
-        # 1. Source Branch (Head)
-        src_lbl = Gtk.Label(halign=Gtk.Align.START)
-        src_lbl.set_markup("<span weight='bold'>Source Branch (Head):</span>")
-        src_val = Gtk.Label(label="next", halign=Gtk.Align.START)
-        grid.attach(src_lbl, 0, 0, 1, 1)
-        grid.attach(src_val, 1, 0, 1, 1)
-
-        # 2. Target Branch (Base)
-        tgt_lbl = Gtk.Label(halign=Gtk.Align.START)
-        tgt_lbl.set_markup("<span weight='bold'>Target Branch (Base):</span>")
-        tgt_val = Gtk.Label(label="factory", halign=Gtk.Align.START)
-        grid.attach(tgt_lbl, 2, 0, 1, 1)
-        grid.attach(tgt_val, 3, 0, 1, 1)
-
-        # 3. PR Title
-        title_input_lbl = Gtk.Label(halign=Gtk.Align.START)
-        title_input_lbl.set_markup("<span weight='bold'>PR Title:</span>")
-        self.title_entry = Gtk.Entry()
-        self.title_entry.set_hexpand(True)
-        self.title_entry.set_text(f"Forward next to factory: {package_name}")
-        grid.attach(title_input_lbl, 0, 1, 1, 1)
-        grid.attach(self.title_entry, 1, 1, 3, 1)
-
-        # 4. PR Description
-        desc_input_lbl = Gtk.Label(halign=Gtk.Align.START)
-        desc_input_lbl.set_markup("<span weight='bold'>Description:</span>")
-
-        self.desc_buffer = Gtk.TextBuffer()
-        self.desc_buffer.set_text(f"Automated next-to-factory branch forwarding for {package_name} via GNOME Sync Dashboard.")
-        self.desc_view = Gtk.TextView(buffer=self.desc_buffer)
-        self.desc_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-
-        desc_scroll = Gtk.ScrolledWindow()
-        desc_scroll.set_child(self.desc_view)
-        desc_scroll.set_size_request(-1, 80)
-        grid.attach(desc_input_lbl, 0, 2, 1, 1)
-        grid.attach(desc_scroll, 1, 2, 3, 1)
-
-        main_layout.append(grid)
-
-        # Diff View Label
-        diff_lbl = Gtk.Label(halign=Gtk.Align.START)
-        diff_lbl.set_markup("<span size='medium' weight='bold'>Review Branch Changes (Diff):</span>")
-        main_layout.append(diff_lbl)
-
-        # Diff View Scrolled Window
-        diff_scroll = Gtk.ScrolledWindow()
-        diff_scroll.set_hexpand(True)
-        diff_scroll.set_vexpand(True)
-
-        if GtkSource:
-            lang_manager = GtkSource.LanguageManager.get_default()
-            lang = lang_manager.get_language('diff')
-            self.diff_buffer = GtkSource.Buffer()
-            self.diff_buffer.set_language(lang)
-            self.diff_buffer.set_highlight_syntax(True)
-            self.diff_view = GtkSource.View(buffer=self.diff_buffer)
-            self.diff_view.set_show_line_numbers(True)
-            self.diff_view.set_highlight_current_line(True)
-        else:
-            self.diff_buffer = Gtk.TextBuffer()
-            self.diff_view = Gtk.TextView(buffer=self.diff_buffer)
-
-        self.diff_view.set_monospace(True)
-        self.diff_view.set_editable(False)
-        diff_scroll.set_child(self.diff_view)
-        main_layout.append(diff_scroll)
-
-        # Footer Button Action Bar
-        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        footer.set_halign(Gtk.Align.END)
-
-        cancel_btn = Gtk.Button(label="Cancel")
-        cancel_btn.connect("clicked", lambda btn: self.destroy())
-        footer.append(cancel_btn)
-
-        self.create_btn = Gtk.Button(label="Create Pull Request")
-        self.create_btn.add_css_class("suggested-action")
-        self.create_btn.connect("clicked", self.on_create_pr_clicked)
-        footer.append(self.create_btn)
-
-        main_layout.append(footer)
-        self.set_child(main_layout)
-
-        # Start loading diff asynchronously
-        self.diff_buffer.set_text("Connecting to pool & loading differences...")
-        parent.executor.submit(self.load_diff_data)
-
-    def on_destroy(self, widget):
-        self.is_destroyed = True
-
-    def load_diff_data(self):
-        diff_text = sb.get_git_diff(self.package_name)
-        GLib.idle_add(self.update_diff_text, diff_text)
-
-    def update_diff_text(self, text):
-        if not self.is_destroyed:
-            self.diff_buffer.set_text(text)
-
-    def on_create_pr_clicked(self, btn):
-        title = self.title_entry.get_text().strip()
-
-        start_iter = self.desc_buffer.get_start_iter()
-        end_iter = self.desc_buffer.get_end_iter()
-        description = self.desc_buffer.get_text(start_iter, end_iter, True).strip()
-
-        if not title:
-            toast = Adw.Toast.new("Pull Request title cannot be empty.")
-            self.parent.toast_overlay.add_toast(toast)
-            return
-
-        self.create_btn.set_sensitive(False)
-        self.create_btn.set_label("Creating PR...")
-        self.title_entry.set_sensitive(False)
-        self.desc_view.set_sensitive(False)
-
-        # Final pre-submit double-check to prevent race conditions
-        self.parent.executor.submit(self.run_bg_pre_submit_check, title, description)
-
-    def run_bg_pre_submit_check(self, title, description):
-        _, pr_data = sb.check_repo_pr(self.package_name)
-        GLib.idle_add(self.on_pre_submit_check_result, pr_data, title, description)
-
-    def on_pre_submit_check_result(self, pr_data, title, description):
-        if self.is_destroyed:
-            return
-
-        if pr_data.get("has_pr"):
-            # A PR was created in the meantime by someone else!
-            toast = Adw.Toast.new("A Pull Request has just been created by someone else!")
-            pr_url = pr_data.get("url")
-            if pr_url:
-                toast.set_button_label("Open PR")
-                toast.connect("button-clicked", lambda t, u: webbrowser.open(u), pr_url)
-            self.parent.toast_overlay.add_toast(toast)
-            self.destroy()
-            self.parent.refresh_single_package(self.package_name)
-        else:
-            # No existing PR, proceed to submit!
-            self.parent.executor.submit(self.run_bg_create_pr, title, description)
-
-    def run_bg_create_pr(self, title, description):
-        success, res_msg = sb.create_gitea_pr(self.package_name, title, description)
-        GLib.idle_add(self.on_pr_created_result, success, res_msg)
-
-    def on_pr_created_result(self, success, res_msg):
-        if self.is_destroyed:
-            return
-
-        if success:
-            toast = Adw.Toast.new("Pull Request created successfully!")
-            url_match = re.search(r'https?://[^\s]+', res_msg)
-            if url_match:
-                pr_url = url_match.group(0)
-                toast.set_button_label("Open PR")
-                toast.connect("button-clicked", lambda t, u: webbrowser.open(u), pr_url)
-
-            self.parent.toast_overlay.add_toast(toast)
-            self.destroy()
-            self.parent.refresh_single_package(self.package_name)
-        else:
-            self.create_btn.set_sensitive(True)
-            self.create_btn.set_label("Create Pull Request")
-            self.title_entry.set_sensitive(True)
-            self.desc_view.set_sensitive(True)
-
-            toast = Adw.Toast.new(f"Failed to create PR: {res_msg}")
-            self.parent.toast_overlay.add_toast(toast)
+            if sync_data and version_data:
+                self.sub_label.set_markup("<span size='small' foreground='green'>✅ Fully In Sync &amp; Up-To-Date</span>")
+            else:
+                self.sub_label.set_markup("<span size='small' foreground='gray'>In Sync</span>")
 
 
 class SyncDiffDialog(Gtk.Window):
@@ -671,78 +267,84 @@ class SyncDiffDialog(Gtk.Window):
         self.package_name = package_name
         self.data = data
         self.parent = parent
-        self.is_destroyed = False # Blocker 2: track destroyed state defensively!
+        self.is_destroyed = False
 
         self.connect("destroy", self.on_destroy)
 
         # Main layout
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 
-        # Header area
-        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        # Title/Description header
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         header.set_margin_start(18)
         header.set_margin_end(18)
         header.set_margin_top(12)
         header.set_margin_bottom(12)
 
-        self.title_label = Gtk.Label()
-        self.title_label.set_halign(Gtk.Align.START)
+        self.title_label = Gtk.Label(halign=Gtk.Align.START)
         self.title_label.set_hexpand(True)
-        self.title_label.set_markup(f"<span size='large' weight='bold'>Loading diff for {package_name}...</span>")
+        self.title_label.set_markup("<span size='large' weight='bold'>Loading repository diff...</span>")
         header.append(self.title_label)
 
+        # Close button
         close_btn = Gtk.Button(label="Close")
         close_btn.connect("clicked", lambda btn: self.destroy())
         header.append(close_btn)
 
         box.append(header)
 
-        # Scrolled view for source buffer
+        # Text ScrolledWindow
         scroll = Gtk.ScrolledWindow()
         scroll.set_hexpand(True)
         scroll.set_vexpand(True)
 
         if GtkSource:
             lang_manager = GtkSource.LanguageManager.get_default()
-            lang = lang_manager.get_language('diff')
+            self.lang = lang_manager.get_language('diff')
             self.buffer = GtkSource.Buffer()
-            self.buffer.set_language(lang)
+            self.buffer.set_language(self.lang)
             self.buffer.set_highlight_syntax(True)
             self.view = GtkSource.View(buffer=self.buffer)
             self.view.set_show_line_numbers(True)
             self.view.set_highlight_current_line(True)
+            self.view.set_editable(False)
         else:
             self.buffer = Gtk.TextBuffer()
             self.view = Gtk.TextView(buffer=self.buffer)
+            self.view.set_editable(False)
 
         self.view.set_monospace(True)
-        self.view.set_editable(False)
         scroll.set_child(self.view)
         box.append(scroll)
 
         self.set_child(box)
 
-        # Start background load
-        self.buffer.set_text("Connecting to pool & loading differences...")
-        parent.executor.submit(self.load_diff_data)
+        # Load diff text asynchronously
+        self.executor = parent.executor
+        self.executor.submit(self.load_diff_data)
 
     def on_destroy(self, widget):
         self.is_destroyed = True
 
     def load_diff_data(self):
+        """Asynchronously retrieves local git diff based on sync states."""
+        repo_path = os.path.join('.', self.package_name)
+        if not os.path.exists(repo_path):
+            if not self.is_destroyed:
+                GLib.idle_add(self.update_ui, "Error", "Package directory not found.")
+            return
+
         pool_status = self.data.get("pool_status", "unknown")
-        pool_ahead = self.data.get("pool_ahead", 0)
         pool_behind = self.data.get("pool_behind", 0)
+        pool_ahead = self.data.get("pool_ahead", 0)
         next_behind = self.data.get("next_behind", 0)
 
+        comparison_desc = "Repository Sync Details"
         diff_text = ""
-        comparison_desc = ""
-        repo_path = os.path.join('.', self.package_name)
 
         try:
             if pool_behind > 0:
                 comparison_desc = f"Pool (Upstream) vs local Factory  [Behind by {pool_behind} commits]"
-                # Fetch pool/factory first to ensure FETCH_HEAD is correct
                 gitea_name = sb.get_gitea_repo_name(repo_path, self.package_name)
                 pool_url = f"https://src.opensuse.org/pool/{gitea_name}.git"
                 sb.run_tracked(
@@ -786,7 +388,6 @@ class SyncDiffDialog(Gtk.Window):
         except Exception as e:
             diff_text = f"Error performing git diff: {str(e)}"
 
-        # Blocker 2: check if window was closed asynchronously before scheduling GMainLoop idle frame
         if not self.is_destroyed:
             GLib.idle_add(self.update_ui, comparison_desc, diff_text)
 
@@ -799,7 +400,8 @@ class SyncDiffDialog(Gtk.Window):
 class SyncWindow(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="GNOME Sync Dashboard")
-        self.set_default_size(1100, 720)
+        self.set_default_size(1250, 780)
+        self.set_size_request(950, 620) # Prevent GTK Paned measurement warning at startup
         self.set_icon_name("preferences-system-network")
 
         # Core data
@@ -817,26 +419,42 @@ class SyncWindow(Adw.ApplicationWindow):
         # Load user's preferred monospace font dynamically from GNOME GSettings
         self.monospace_font = self.get_system_monospace_font()
 
-        # UI components
-        self.stack = Adw.ViewStack()
+        # Initialize filter timeout and state registries
+        self.filter_timeout_id = 0
+        self.last_diff_package = None
 
-        self.build_sync_view()
-        self.build_version_view()
-        self.build_forward_view()
+        # Initialize package data dictionary
+        self.package_data = {
+            repo: {
+                "sync": {},
+                "version": {},
+                "pr": {}
+            } for repo in self.repos
+        }
 
-        # View Switcher
+        # Build Sidebar
+        self.sidebar_box = self.build_sidebar()
+
+        # Build Detail Pane
+        self.detail_pane = self.build_detail_pane()
+
+        # Horizontal split pane: Left is Sidebar, Right is Detail Pane
+        self.horizontal_paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        self.horizontal_paned.set_start_child(self.sidebar_box)
+        self.horizontal_paned.set_end_child(self.detail_pane)
+
+        # Header Bar
         self.header_bar = Adw.HeaderBar()
-        self.view_switcher = Adw.ViewSwitcher(stack=self.stack)
-        self.header_bar.set_title_widget(self.view_switcher)
+        title_lbl = Gtk.Label()
+        title_lbl.set_markup("<span weight='bold'>GNOME Sync Dashboard</span>")
+        self.header_bar.set_title_widget(title_lbl)
 
-        # Vertical split pane: Top is stack, Bottom is terminal drawer
+        # Vertical split pane: Top is horizontal split, Bottom is terminal drawer
         self.main_paned = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
-        self.main_paned.set_position(450) # Split position
-        self.main_paned.set_start_child(self.stack)
+        self.main_paned.set_start_child(self.horizontal_paned)
 
         # Collapsible Terminal Drawer
         self.terminal_drawer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.terminal_drawer.set_size_request(-1, 280)
 
         # Terminal Header
         term_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -873,6 +491,7 @@ class SyncWindow(Adw.ApplicationWindow):
 
         # Hidden by default
         self.terminal_drawer.set_visible(False)
+        self.terminal_drawer.connect("notify::visible", self.on_terminal_drawer_visible_changed)
 
         # Top-level container
         self.toolbar_view = Adw.ToolbarView()
@@ -890,12 +509,15 @@ class SyncWindow(Adw.ApplicationWindow):
         # Periodic GLib timer: checks terminal process states every 1.5 seconds
         self.timeout_id = GLib.timeout_add(1500, self.monitor_terminals)
 
+        # Set split positions asynchronously after initial layout frames to prevent measurement warnings!
+        GLib.idle_add(lambda: self.horizontal_paned.set_position(420))
+        GLib.idle_add(lambda: self.main_paned.set_position(520))
+
         # Kick off background loading
         self.refresh_all()
 
     def get_system_monospace_font(self):
         """Query GNOME GSettings dynamically to load the user's monospace font preference defensively."""
-        # Allan's Blocker 3: Verify GSettings schema existence defensively before instantiating to avoid noisy C-warnings
         try:
             schema_source = Gio.SettingsSchemaSource.get_default()
             if schema_source and schema_source.lookup("org.gnome.desktop.interface", True) is not None:
@@ -907,17 +529,19 @@ class SyncWindow(Adw.ApplicationWindow):
             pass
         return "monospace 11"
 
+    def on_terminal_drawer_visible_changed(self, widget, pspec):
+        if hasattr(self, "diff_revealer") and self.diff_revealer:
+            is_term_visible = self.terminal_drawer.get_visible()
+            self.diff_revealer.set_reveal_child(not is_term_visible)
+
     def on_close_request(self, window):
         """Gracefully dismantles GLib timers, closes thread pools, and terminates shell children."""
-        # 1. Cancel the active GLib timeout source to let GApplication exit gracefully!
         if hasattr(self, "timeout_id") and self.timeout_id:
             GLib.Source.remove(self.timeout_id)
             self.timeout_id = 0
 
-        # 2. Cancel and cleanly shutdown background scanner thread pool
         self.executor.shutdown(wait=False, cancel_futures=True)
 
-        # 3. Forcefully terminate all running terminal shell processes to prevent process leaks!
         for tab in list(self.terminal_tabs):
             shell_pid = tab.get("shell_pid")
             if shell_pid:
@@ -929,7 +553,6 @@ class SyncWindow(Adw.ApplicationWindow):
                     except Exception:
                         pass
 
-        # 4. Explicitly terminate python process to clean up GObject reference-cycle states cleanly
         os._exit(0)
 
     def get_mapped_worktree_path(self, package_name, target_branch):
@@ -945,18 +568,13 @@ class SyncWindow(Adw.ApplicationWindow):
 
         mapped_dir = os.path.join(parent_dir, target_folder_name, package_name)
 
-        # Verify both that the directory exists and contains a valid SCM git setup to ensure worktree integrity
         if os.path.exists(mapped_dir) and (os.path.exists(os.path.join(mapped_dir, '.git')) or os.path.isfile(os.path.join(mapped_dir, '.git'))):
             return mapped_dir
 
-        # Fallback to local package directory
         return os.path.abspath(os.path.join('.', package_name))
 
     def is_shell_pid_active(self, shell_pid):
-        """
-        Scans /proc directly in pure Python without spawning subprocesses (pgrep).
-        Narrow exception boundaries handles microsecond PID creation/termination safely.
-        """
+        """Scans /proc directly in pure Python without spawning subprocesses (pgrep)."""
         if not shell_pid:
             return False
         try:
@@ -964,15 +582,12 @@ class SyncWindow(Adw.ApplicationWindow):
             for f in os.listdir('/proc'):
                 if f.isdigit():
                     try:
-                        with open(f"/proc/{f}/stat", "r") as stat_file:
-                            line = stat_file.readline()
-                            fields = line.split()
-                            # 4th field in /proc/<pid>/stat is the PPID
-                            if len(fields) >= 4 and fields[3] == target_ppid:
-                                return True
-                    except (FileNotFoundError, ProcessLookupError, PermissionError):
-                        # Safely skip microsecond process race conditions and system permissions
-                        continue
+                        with open(os.path.join('/proc', f, 'status'), 'r', errors='ignore') as stat_f:
+                            for line in stat_f:
+                                if line.startswith('PPid:'):
+                                    ppid = line.split()[1]
+                                    if ppid == target_ppid:
+                                        return True
                     except Exception:
                         pass
         except Exception:
@@ -980,45 +595,34 @@ class SyncWindow(Adw.ApplicationWindow):
         return False
 
     def allocate_terminal(self, pkg_name, target_branch, command=None):
-        """
-        Deduplicates terminal tabs.
-        If an IDLE terminal tab already exists for this package/branch combo, switches focus to it.
-        If it is ACTIVE/BUSY (running a command), spawns a new separate tab with an incremented counter.
-        """
+        """Deduplicates terminal tabs."""
         self.terminal_drawer.set_visible(True)
 
-        # Scan existing open tabs
         matching_tabs = [
             tab for tab in self.terminal_tabs
             if tab["pkg_name"] == pkg_name and tab["target_branch"] == target_branch
         ]
 
-        # Check if any matching tab is currently idle
         for tab in matching_tabs:
             if not self.is_shell_pid_active(tab["shell_pid"]):
-                # Found an idle tab! Focus it and run the command if provided
                 page_num = self.notebook.page_num(tab["scroll_widget"])
                 if page_num != -1:
                     self.notebook.set_current_page(page_num)
                     if command:
-                        # Feed the command directly to the running shell
                         tab["terminal"].feed_child(f"{command}\n".encode('utf-8'))
                     tab["terminal"].grab_focus()
                     return
 
-        # Otherwise, if none are idle or none exist, spawn a fresh new tab!
         suffix = ""
         if matching_tabs:
-            # Add an incremented counter to distinguish parallel active tabs
             suffix = f" [{len(matching_tabs) + 1}]"
 
         self.show_terminal(pkg_name, target_branch, command, suffix)
 
     def show_terminal(self, pkg_name, target_branch, command=None, suffix=""):
-        """Spawns a new VTE terminal tab inside the Gtk.Notebook drawer, supporting worktree directory resolution."""
+        """Spawns a new VTE terminal tab inside the Gtk.Notebook drawer."""
         resolved_dir = self.get_mapped_worktree_path(pkg_name, target_branch)
 
-        # Create a new terminal instance
         terminal = Vte.Terminal()
         terminal.set_font(Pango.FontDescription.from_string(self.monospace_font))
         terminal.set_scrollback_lines(2000)
@@ -1026,7 +630,6 @@ class SyncWindow(Adw.ApplicationWindow):
         scroll = Gtk.ScrolledWindow()
         scroll.set_child(terminal)
 
-        # Build tab label box
         tab_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
 
         label_text = f"{pkg_name} ({target_branch}){suffix}"
@@ -1034,23 +637,19 @@ class SyncWindow(Adw.ApplicationWindow):
         tab_box.append(tab_label)
 
         close_tab_btn = Gtk.Button.new_from_icon_name("window-close-symbolic")
-        # Apply standard GTK4/Libadwaita circular and flat visual styling classes
         close_tab_btn.add_css_class("flat")
         close_tab_btn.add_css_class("circular")
         close_tab_btn.set_tooltip_text("Close Tab")
         close_tab_btn.connect("clicked", lambda btn: self.close_terminal_tab(scroll))
         tab_box.append(close_tab_btn)
 
-        # Append tab page
         page_index = self.notebook.append_page(scroll, tab_box)
         self.notebook.set_current_page(page_index)
 
-        # Event controller for dynamic font size zooming (Ctrl+Plus / Ctrl+Minus / Ctrl+0)
         key_controller = Gtk.EventControllerKey.new()
         key_controller.connect("key-pressed", self.on_terminal_key_pressed, terminal)
         terminal.add_controller(key_controller)
 
-        # Register tab inside our state tracker, keeping track of controllers to break reference cycles on destroy!
         tab_state = {
             "scroll_widget": scroll,
             "terminal": terminal,
@@ -1065,7 +664,6 @@ class SyncWindow(Adw.ApplicationWindow):
         }
         self.terminal_tabs.append(tab_state)
 
-        # Connect child-exited signal to close the tab page automatically on 'exit'
         terminal.connect("child-exited", self.on_terminal_child_exited, scroll)
 
         shell = os.environ.get("SHELL", "/bin/bash")
@@ -1073,7 +671,6 @@ class SyncWindow(Adw.ApplicationWindow):
         if command:
             argv = [shell, "-c", f"{command}; exec {shell}"]
 
-        # Spawn the shell and capture its PID inside our callback
         terminal.spawn_async(
             Vte.PtyFlags.DEFAULT,
             resolved_dir,
@@ -1090,12 +687,9 @@ class SyncWindow(Adw.ApplicationWindow):
         terminal.grab_focus()
 
     def on_terminal_key_pressed(self, controller, keyval, keycode, state, terminal):
-        """Binds Ctrl+Plus (zoom in), Ctrl+Minus (zoom out), and Ctrl+0 (reset) keys. Support Shift modifiers defensively."""
-        # Clean Gdk4 bitwise AND check cleanly isolates CONTROL_MASK
         is_ctrl = (state & Gdk.ModifierType.CONTROL_MASK) != 0
         if is_ctrl:
             current_scale = terminal.get_font_scale()
-            # Allan's Blocker 4: Support both standard plus/equal AND Ctrl+Shift+= (which evaluates as KEY_equal with Shift layer)
             if keyval in (Gdk.KEY_plus, Gdk.KEY_equal, Gdk.KEY_KP_Add):
                 terminal.set_font_scale(min(4.0, current_scale + 0.1))
                 return True
@@ -1108,13 +702,10 @@ class SyncWindow(Adw.ApplicationWindow):
         return False
 
     def on_terminal_child_exited(self, terminal, status, scroll_widget):
-        """Typing 'exit' or shell process terminating automatically closes the tab page safely."""
         GLib.idle_add(self.close_terminal_tab, scroll_widget)
 
     def on_terminal_spawned(self, terminal, pid, error, tab_state):
         if error is None:
-            # Check if the tab was closed while spawn was pending!
-            # If so, kill the orphaned process immediately to prevent any shell background leaks.
             scroll_widget = tab_state.get("scroll_widget")
             if scroll_widget and self.notebook.page_num(scroll_widget) == -1:
                 try:
@@ -1126,7 +717,6 @@ class SyncWindow(Adw.ApplicationWindow):
             tab_state["shell_pid"] = pid
             GLib.idle_add(self.monitor_terminals)
         else:
-            # Blocker 5: Close dead tab page instantly and notify the user via a Toast Overlay
             scroll_widget = tab_state.get("scroll_widget")
             if scroll_widget:
                 GLib.idle_add(self.close_terminal_tab, scroll_widget)
@@ -1135,8 +725,6 @@ class SyncWindow(Adw.ApplicationWindow):
             self.toast_overlay.add_toast(toast)
 
     def monitor_terminals(self):
-        """Polls active terminal PIDs every 1.5 seconds, flashing state changes, reaping zombie processes, and displaying completed Toasts."""
-        # Blocker 8: Force immediate GSource destruction to prevent re-registration leaks during close
         if not hasattr(self, "timeout_id") or not self.timeout_id:
             return False
 
@@ -1145,24 +733,19 @@ class SyncWindow(Adw.ApplicationWindow):
             if not shell_pid:
                 continue
 
-            # If the page was removed from the notebook, clear it from registry
             if self.notebook.page_num(tab["scroll_widget"]) == -1:
                 if tab in self.terminal_tabs:
                     self.terminal_tabs.remove(tab)
                 continue
 
-            # --- NON-BLOCKING PROCESS REAPING (os.waitpid) ---
-            # Resolves Python multi-threading hijacking SIGCHLD and blocking VTE child-exited emissions!
             try:
                 reaped_pid, status = os.waitpid(shell_pid, os.WNOHANG)
                 if reaped_pid == shell_pid:
-                    # The shell has exited! Reap it from the system and close the tab instantly!
-                    tab["shell_pid"] = None # Reset PID immediately to prevent duplicate triggers
+                    tab["shell_pid"] = None
                     GLib.idle_add(self.close_terminal_tab, tab["scroll_widget"])
                     continue
             except ChildProcessError:
-                # Process is already reaped or gone! Close tab
-                tab["shell_pid"] = None # Reset PID immediately to prevent duplicate triggers
+                tab["shell_pid"] = None
                 GLib.idle_add(self.close_terminal_tab, tab["scroll_widget"])
                 continue
             except Exception:
@@ -1177,15 +760,12 @@ class SyncWindow(Adw.ApplicationWindow):
             base_lbl = tab["base_label"]
 
             if is_active and not was_active:
-                # Process started running!
                 tab["was_active"] = True
                 label_widget.set_text(f"{base_lbl} ⚙️")
             elif not is_active and was_active:
-                # Process completed!
                 tab["was_active"] = False
                 label_widget.set_text(f"{base_lbl} ✅")
 
-                # Suppress the toast if the user is already viewing the completed tab
                 page_idx = self.notebook.page_num(tab["scroll_widget"])
                 is_current_and_visible = (
                     self.terminal_drawer.props.visible and
@@ -1193,7 +773,6 @@ class SyncWindow(Adw.ApplicationWindow):
                     self.notebook.get_current_page() == page_idx
                 )
                 if not is_current_and_visible:
-                    # Dismiss any existing toast for this tab first just in case
                     if tab.get("active_toast"):
                         try:
                             tab["active_toast"].dismiss()
@@ -1208,7 +787,7 @@ class SyncWindow(Adw.ApplicationWindow):
                     self.toast_overlay.add_toast(toast)
                     tab["active_toast"] = toast
 
-        return True # Return True to keep the periodic GLib timer alive
+        return True
 
     def on_toast_clicked(self, toast, scroll_widget):
         page_num = self.notebook.page_num(scroll_widget)
@@ -1217,7 +796,6 @@ class SyncWindow(Adw.ApplicationWindow):
             self.terminal_drawer.set_visible(True)
 
     def on_notebook_switch_page(self, notebook, page, page_num):
-        """When switching pages, dismiss the toast of the newly focused page."""
         for tab in self.terminal_tabs:
             if tab["scroll_widget"] == page:
                 active_toast = tab.get("active_toast")
@@ -1234,11 +812,9 @@ class SyncWindow(Adw.ApplicationWindow):
         if page_num != -1:
             self.notebook.remove_page(page_num)
 
-        # Clean terminal_tabs registry and destroy/unparent the GObject reference-cycle safely
         for tab in list(self.terminal_tabs):
             if tab["scroll_widget"] == page_widget:
                 pkg_name = tab["pkg_name"]
-                # Forcefully SIGKILL/SIGHUP the shell process if it's still alive when tab is closed manually!
                 shell_pid = tab.get("shell_pid")
                 if shell_pid:
                     try:
@@ -1246,8 +822,6 @@ class SyncWindow(Adw.ApplicationWindow):
                     except Exception:
                         pass
 
-                # Matthias's Blocker 1: Explicitly unparent, remove controllers, and destroy Vte.Terminal widget
-                # to cleanly break the GObject reference-cycle and free the memory instantly!
                 try:
                     terminal = tab.get("terminal")
                     controller = tab.get("key_controller")
@@ -1266,7 +840,6 @@ class SyncWindow(Adw.ApplicationWindow):
                 if tab in self.terminal_tabs:
                     self.terminal_tabs.remove(tab)
 
-                # Automatically refresh single package on terminal tab close
                 self.refresh_single_package(pkg_name)
                 break
 
@@ -1277,6 +850,14 @@ class SyncWindow(Adw.ApplicationWindow):
         self.terminal_drawer.set_visible(False)
 
     def refresh_all(self):
+        # We pre-populate the master list box once
+        if not hasattr(self, "package_rows"):
+            self.package_rows = {}
+            for repo in self.repos:
+                row = PackageRow(repo, self)
+                self.master_list_box.append(row)
+                self.package_rows[repo] = row
+
         self.start_sync_scan()
         self.start_version_scan()
         self.start_forwarding_scan()
@@ -1299,18 +880,10 @@ class SyncWindow(Adw.ApplicationWindow):
 
     def update_sync_row_single(self, name, data):
         if data.get("status") == "success":
-            idx = 0
-            while True:
-                row = self.sync_list_box.get_row_at_index(idx)
-                if not row:
-                    break
-                if hasattr(row, "package_name") and row.package_name == name:
-                    self.sync_list_box.remove(row)
-                    new_row = SyncRow(name, data)
-                    self.sync_list_box.insert(new_row, idx)
-                    self.sync_list_box.invalidate_filter()
-                    break
-                idx += 1
+            self.package_data[name]["sync"] = data
+            self.update_row_ui(name)
+            if getattr(self, "current_selected_package", None) == name:
+                self.load_package_detail(name)
 
     def run_bg_version_single(self, repo):
         name, data = sb.check_repo_version(repo)
@@ -1318,18 +891,10 @@ class SyncWindow(Adw.ApplicationWindow):
 
     def update_version_row_single(self, name, data):
         if data.get("status") == "success":
-            idx = 0
-            while True:
-                row = self.ver_list_box.get_row_at_index(idx)
-                if not row:
-                    break
-                if hasattr(row, "package_name") and row.package_name == name:
-                    self.ver_list_box.remove(row)
-                    new_row = VersionRow(name, data, self)
-                    self.ver_list_box.insert(new_row, idx)
-                    self.ver_list_box.invalidate_filter()
-                    break
-                idx += 1
+            self.package_data[name]["version"] = data
+            self.update_row_ui(name)
+            if getattr(self, "current_selected_package", None) == name:
+                self.load_package_detail(name)
 
     def run_bg_forward_single(self, repo):
         _, sync_data = sb.check_repo_sync(repo)
@@ -1341,548 +906,434 @@ class SyncWindow(Adw.ApplicationWindow):
         GLib.idle_add(self.update_forward_row_single, repo, sync_data, pr_data)
 
     def update_forward_row_single(self, name, sync_data, pr_data):
-        # Search for existing row
-        idx = 0
-        found_row = None
-        while True:
-            row = self.fwd_list_box.get_row_at_index(idx)
-            if not row:
-                break
-            if hasattr(row, "package_name") and row.package_name == name:
-                found_row = row
-                break
-            idx += 1
+        if sync_data.get("status") == "success":
+            self.package_data[name]["sync"] = sync_data
+        self.package_data[name]["pr"] = pr_data
+        self.update_row_ui(name)
+        if getattr(self, "current_selected_package", None) == name:
+            self.load_package_detail(name)
 
-        next_ahead = sync_data.get("next_ahead", 0)
+    def update_row_ui(self, name):
+        row = self.package_rows.get(name)
+        if row:
+            pkg_data = self.package_data.get(name, {})
+            row.update_ui(
+                pkg_data.get("sync"),
+                pkg_data.get("version"),
+                pkg_data.get("pr")
+            )
+            self.queue_filter_invalidation()
 
-        if found_row:
-            if next_ahead > 0:
-                # Update in-place to avoid selection loss!
-                found_row.update_row_data(sync_data, pr_data)
+    def queue_filter_invalidation(self):
+        if getattr(self, "filter_timeout_id", 0) == 0:
+            # Coalesce extremely rapid parallel updates into a single layout pass every 120ms
+            self.filter_timeout_id = GLib.timeout_add(120, self.flush_filter_invalidation)
 
-                # If this row is the currently selected one, we should also update the self.pr_btn label!
-                selected_row = self.fwd_list_box.get_selected_row()
-                if selected_row == found_row:
-                    if found_row.has_pr:
-                        self.pr_btn.set_label("Show Pull Request")
-                    else:
-                        self.pr_btn.set_label("Create Pull Request")
-            else:
-                # If there are no more next_ahead commits, we remove the row
-                self.fwd_list_box.remove(found_row)
-        elif next_ahead > 0:
-            # Append new row
-            new_row = ForwardRow(name, sync_data, pr_data)
-            self.fwd_list_box.append(new_row)
+    def flush_filter_invalidation(self):
+        self.filter_timeout_id = 0
+        self.master_list_box.invalidate_filter()
+        return False # Run once and terminate
 
-        self.fwd_list_box.invalidate_filter()
+    # --- THE SIDEBAR & DETAILS BUILDERS ---
 
-    # --- TAB 1: SYNC VIEW ---
-    def build_sync_view(self):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    def build_sidebar(self):
+        sidebar_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        sidebar_box.set_size_request(420, -1)
 
-        # Control bar
-        control_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        control_bar.set_margin_start(18)
-        control_bar.set_margin_end(18)
-        control_bar.set_margin_top(8)
-        control_bar.set_margin_bottom(3)
+        # Sidebar Header Bar
+        sidebar_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        sidebar_header.set_margin_start(12)
+        sidebar_header.set_margin_end(12)
+        sidebar_header.set_margin_top(12)
+        sidebar_header.set_margin_bottom(6)
 
-        # Search Entry
-        self.sync_search = Gtk.SearchEntry()
-        self.sync_search.set_hexpand(True)
-        self.sync_search.connect("search-changed", self.on_sync_search_changed)
-        control_bar.append(self.sync_search)
+        sb_title = Gtk.Label(halign=Gtk.Align.START)
+        sb_title.set_hexpand(True)
+        sb_title.set_markup("<span weight='bold' size='medium'>Packages</span>")
+        sidebar_header.append(sb_title)
 
-        # Filter Toggle (Only Needs Action)
-        self.sync_filter_toggle = Gtk.CheckButton(label="Only Needs Action")
-        self.sync_filter_toggle.set_active(True)
-        self.sync_filter_toggle.connect("toggled", lambda cb: self.sync_list_box.invalidate_filter())
-        control_bar.append(self.sync_filter_toggle)
-
-        # Help / Legend Popover Button
+        # Legend Popover Button
         self.legend_btn = Gtk.Button.new_from_icon_name("help-about-symbolic")
         self.legend_btn.set_tooltip_text("Show Sync Workflow Legend")
         self.legend_btn.connect("clicked", self.on_legend_btn_clicked)
-        control_bar.append(self.legend_btn)
+        sidebar_header.append(self.legend_btn)
 
-        # Refresh Button
+        # Refresh All Button
         refresh_btn = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
-        refresh_btn.connect("clicked", lambda btn: self.start_sync_scan())
-        control_bar.append(refresh_btn)
+        refresh_btn.set_tooltip_text("Refresh All Package Scans")
+        refresh_btn.connect("clicked", lambda btn: self.refresh_all())
+        sidebar_header.append(refresh_btn)
 
-        # Spinner/Progress
-        self.sync_spinner = Gtk.Spinner()
-        control_bar.append(self.sync_spinner)
+        # Unified scanner progress indicator row (compact and non-redundant)
+        progress_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        progress_box.set_margin_start(12)
+        progress_box.set_margin_end(12)
+        progress_box.set_margin_bottom(6)
 
-        self.sync_progress_label = Gtk.Label(label="Ready")
-        control_bar.append(self.sync_progress_label)
+        self.sidebar_spinner = Gtk.Spinner()
+        self.sidebar_progress_label = Gtk.Label(label="Ready")
+        self.sidebar_progress_label.set_halign(Gtk.Align.START)
+        self.sidebar_progress_label.set_hexpand(True)
+        progress_box.append(self.sidebar_spinner)
+        progress_box.append(self.sidebar_progress_label)
 
-        box.append(control_bar)
+        # Control bar (Search + Filter dropdown)
+        control_bar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        control_bar.set_margin_start(12)
+        control_bar.set_margin_end(12)
+        control_bar.set_margin_bottom(12)
 
-        # Scrolled window (recovers 100% of the screen height for clean repository listings!)
+        self.sidebar_search = Gtk.SearchEntry()
+        self.sidebar_search.set_placeholder_text("Search packages...")
+        self.sidebar_search.connect("search-changed", lambda entry: self.master_list_box.invalidate_filter())
+        control_bar.append(self.sidebar_search)
+
+        # Track-focused filter toggle buttons (multi-select / combination logic)
+        filters_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        filters_box.set_margin_top(8)
+        filters_box.add_css_class("linked")  # Makes them render as a unified toolbar!
+
+        # 1. Global "Only Needs Action" toggle button
+        self.filter_needs_action = Gtk.ToggleButton(label="⚠️ Needs")
+        self.filter_needs_action.set_active(True)
+        self.filter_needs_action.set_tooltip_text(
+            "⚠️ FILTER: NEEDS ACTION ONLY (Global Modifier)\n"
+            "─────────────────────────────────────────────\n"
+            "When enabled, the package list is strictly filtered to display only those\n"
+            "repositories that require immediate attention (e.g. have pending upstream\n"
+            "updates, unforwarded commits, or are out of sync with Gitea Pool).\n\n"
+            "Toggle OFF to view all matching repositories on your active tracks regardless of action status."
+        )
+        self.filter_needs_action.connect("toggled", lambda btn: self.master_list_box.invalidate_filter())
+        filters_box.append(self.filter_needs_action)
+
+        # 2. Pool Sync toggle button
+        self.filter_pool_sync = Gtk.ToggleButton(label="📡 Pool")
+        self.filter_pool_sync.set_active(False)
+        self.filter_pool_sync.set_tooltip_text(
+            "📡 FILTER: GITEA POOL SYNC TRACK\n"
+            "────────────────────────────────\n"
+            "Filters the package checkout list to display repositories matching our Stage 1 Pool Sync.\n\n"
+            "Includes repositories that are:\n"
+            "• Behind Pool: Central changes exist on Gitea that need to be pulled.\n"
+            "• Ahead of Pool: Local Factory checkouts have commits waiting to be pushed.\n"
+            "• Not in Pool: Repositories not yet registered in Gitea's pool."
+        )
+        self.filter_pool_sync.connect("toggled", lambda btn: self.master_list_box.invalidate_filter())
+        filters_box.append(self.filter_pool_sync)
+
+        # 3. Stable Tracking toggle button
+        self.filter_stable = Gtk.ToggleButton(label="🟢 Stable")
+        self.filter_stable.set_active(False)
+        self.filter_stable.set_tooltip_text(
+            "🟢 FILTER: STABLE TRACK (Factory ➔ Upstream)\n"
+            "────────────────────────────────────────────\n"
+            "Filters the package checkout list to track GNOME's stable releases.\n\n"
+            "Includes packages matching:\n"
+            "• Stable Upstream: Verifies if Factory aligns with the latest stable releases\n"
+            "  on release-monitoring.org (e.g., getting 45.1 to 45.2)."
+        )
+        self.filter_stable.connect("toggled", lambda btn: self.master_list_box.invalidate_filter())
+        filters_box.append(self.filter_stable)
+
+        # 4. Unstable Tracking toggle button
+        self.filter_unstable = Gtk.ToggleButton(label="🟠 Unst.")
+        self.filter_unstable.set_active(False)
+        self.filter_unstable.set_tooltip_text(
+            "🟠 FILTER: UNSTABLE TRACK (Next ➔ Upstream)\n"
+            "───────────────────────────────────────────\n"
+            "Filters the package checkout list to track unstable pre-release development.\n\n"
+            "Includes packages matching:\n"
+            "• Next Branch: Verifies if your local unstable branch aligns with alpha, beta, and\n"
+            "  release candidates (RC) upstream (e.g., tracking GNOME 46.beta)."
+        )
+        self.filter_unstable.connect("toggled", lambda btn: self.master_list_box.invalidate_filter())
+        filters_box.append(self.filter_unstable)
+
+        # 5. Forwarding toggle button
+        self.filter_forwarding = Gtk.ToggleButton(label="🔀 Fwd.")
+        self.filter_forwarding.set_active(False)
+        self.filter_forwarding.set_tooltip_text(
+            "🔀 FILTER: PENDING COMMIT FORWARDING (Next ➔ Factory)\n"
+            "───────────────────────────────────────────────────\n"
+            "Filters the package checkout list to display GNOME unstable promotion tracks.\n\n"
+            "Includes packages matching:\n"
+            "• Next Ahead of Factory: Shows checkouts with unsubmitted developmental commits\n"
+            "  sitting on the 'next' branch that need to be merged/cherry-picked to stable 'factory'."
+        )
+        self.filter_forwarding.connect("toggled", lambda btn: self.master_list_box.invalidate_filter())
+        filters_box.append(self.filter_forwarding)
+
+        control_bar.append(filters_box)
+
+        sidebar_box.append(sidebar_header)
+        sidebar_box.append(progress_box)
+        sidebar_box.append(control_bar)
+
+        # Scrolled List Box
         scroll = Gtk.ScrolledWindow()
         scroll.set_hexpand(True)
         scroll.set_vexpand(True)
 
-        self.sync_list_box = Gtk.ListBox()
-        self.sync_list_box.set_filter_func(self.sync_filter_func)
-        self.sync_list_box.connect("row-activated", self.on_sync_row_activated)
+        self.master_list_box = Gtk.ListBox()
+        self.master_list_box.set_filter_func(self.sidebar_filter_func)
+        self.master_list_box.connect("row-selected", self.on_package_row_selected)
+        scroll.set_child(self.master_list_box)
 
-        scroll.set_child(self.sync_list_box)
-        box.append(scroll)
+        sidebar_box.append(scroll)
+        return sidebar_box
 
-        # Add to stack
-        self.stack.add_titled_with_icon(
-            box, "sync", "Repository Sync", "folder-download-symbolic"
-        )
+    def sidebar_filter_func(self, row):
+        package_name = row.package_name
 
-    def on_legend_btn_clicked(self, btn):
-        """Pops up a modern, elegant, and interactive workflow legend panel on demand."""
-        popover = Gtk.Popover()
-        popover.set_parent(btn)
-
-        legend_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        legend_box.set_margin_start(16)
-        legend_box.set_margin_end(16)
-        legend_box.set_margin_top(16)
-        legend_box.set_margin_bottom(16)
-        legend_box.set_size_request(450, -1) # Set comfortable reading width
-
-        legend_title = Gtk.Label(halign=Gtk.Align.START)
-        legend_title.set_markup("<span weight='bold' size='medium'>ℹ️ openSUSE GNOME Sync Workflow Legend</span>")
-        legend_box.append(legend_title)
-
-        legend_desc = Gtk.Label(halign=Gtk.Align.START)
-        legend_desc.set_justify(Gtk.Justification.LEFT)
-        legend_desc.set_wrap(True)
-        legend_desc.set_markup(
-            "<span weight='bold'>Pool Sync (Stage 1):</span> Monitors alignment between local Factory checkouts and Gitea's central package pool.\n"
-            "   • <span foreground='orange' weight='bold'>Behind Pool</span>: SCM changes exist in the pool—pull them to catch up.\n"
-            "   • <span foreground='cyan' weight='bold'>Ahead of Pool</span>: Local Factory has local commits not yet in the pool—submit them.\n\n"
-            "<span weight='bold'>Next Branch Sync (Stage 2):</span> Monitors alignment between the unstable next track and stable factory branch.\n"
-            "   • <span foreground='orange' weight='bold'>Next behind Factory</span>: Next is missing commits from Factory—merge factory ➔ next.\n"
-            "   • <span foreground='green' weight='bold'>Next ahead of Factory</span>: Next has additional developmental commits checked in (OK).\n\n"
-            "<span foreground='gray' size='small'>Double-click any repository row to review its sync git diff in-app.</span>"
-        )
-        legend_box.append(legend_desc)
-
-        popover.set_child(legend_box)
-        popover.popup()
-
-    def sync_filter_func(self, row):
-        # 1. Search text filter
-        search_text = self.sync_search.get_text().lower()
-        if search_text and search_text not in row.package_name.lower():
+        # 1. Apply Search Text filter first
+        search_text = self.sidebar_search.get_text().strip().lower()
+        if search_text and search_text not in package_name.lower():
             return False
 
-        # 2. Needs action checkbox filter
-        only_needs_action = self.sync_filter_toggle.get_active()
-        if only_needs_action and not row.data.get("needs_action", False):
-            return False
+        pkg_data = self.package_data.get(package_name, {})
+        sync = pkg_data.get("sync") or {}
+        ver = pkg_data.get("version") or {}
 
-        return True
+        # Pre-calculate common metrics
+        # A. Pool Sync state
+        pool_behind = sync.get("pool_behind", 0)
+        pool_ahead = sync.get("pool_ahead", 0)
+        pool_status = sync.get("pool_status", "unknown")
+        is_pool_track = (pool_status != "unknown")
+        pool_needs_action = (pool_behind > 0) or (pool_ahead > 0) or (pool_status == "Not in Pool")
 
-    def on_sync_search_changed(self, entry):
-        self.sync_list_box.invalidate_filter()
+        # B. Stable Tracking state
+        factory_ver = ver.get("factory_ver", "N/A")
+        upstream_stable = ver.get("upstream_stable", "N/A")
+        is_stable_track = (factory_ver != "N/A")
+        stable_needs_action = (factory_ver != upstream_stable and factory_ver != "N/A" and upstream_stable != "N/A")
 
-    def start_sync_scan(self):
-        # Clear previous rows
-        while True:
-            row = self.sync_list_box.get_row_at_index(0)
-            if not row:
-                break
-            self.sync_list_box.remove(row)
+        # C. Unstable/Next Tracking state
+        next_ver = ver.get("next_ver", "—")
+        upstream_latest = ver.get("upstream_latest", "—")
+        is_unstable_track = (next_ver != "—")
+        unstable_needs_action = (next_ver != "—" and next_ver != upstream_latest and upstream_latest != "—")
 
-        if not self.repos:
-            self.sync_progress_label.set_text("No packages found")
-            empty_label = Gtk.Label()
-            empty_label.set_markup(
-                "<span size='large' weight='bold' foreground='gray'>No GNOME packages found in this directory.</span>\n"
-                "<span size='small' foreground='gray'>Please run this tool from your openSUSE GNOME:Next workspace root.</span>"
-            )
-            empty_label.set_justify(Gtk.Justification.CENTER)
-            empty_label.set_margin_top(48)
-            empty_label.set_margin_bottom(48)
-            self.sync_list_box.set_placeholder(empty_label)
-            return
+        # D. Forwarding state
+        next_ahead = sync.get("next_ahead", 0)
+        is_forwarding_track = (next_ver != "—")
+        forwarding_needs_action = (next_ahead > 0)
 
-        # Set loading placeholder (prevents flashing misleading empty text on startup)
-        loading_label = Gtk.Label()
-        loading_label.set_markup("<span size='large' foreground='gray'>Checking downstream sync states...</span>")
-        loading_label.set_margin_top(48)
-        loading_label.set_margin_bottom(48)
-        self.sync_list_box.set_placeholder(loading_label)
+        # Determine if we match any of the selected tracks
+        # If no tracks are selected, we treat it as matching all tracks!
+        any_track_selected = (
+            self.filter_pool_sync.get_active() or
+            self.filter_stable.get_active() or
+            self.filter_unstable.get_active() or
+            self.filter_forwarding.get_active()
+        )
 
-        self.sync_spinner.start()
-        self.sync_completed_count = 0
-        self.sync_progress_label.set_text(f"Scanning 0/{len(self.repos)}...")
-
-        # Queue all repos in background thread pool
-        for repo in self.repos:
-            try:
-                self.executor.submit(self.run_bg_sync, repo)
-            except RuntimeError:
-                # Catch RuntimeError in case executor is shutdown during search
-                break
-
-    def run_bg_sync(self, repo):
-        name, data = sb.check_repo_sync(repo)
-        GLib.idle_add(self.add_sync_result, name, data)
-
-    def add_sync_result(self, name, data):
-        self.sync_completed_count += 1
-        self.sync_progress_label.set_text(f"Scanning {self.sync_completed_count}/{len(self.repos)}...")
-
-        if data.get("status") == "success":
-            row = SyncRow(name, data)
-            self.sync_list_box.append(row)
-
-        if self.sync_completed_count == len(self.repos):
-            self.sync_spinner.stop()
-            self.sync_progress_label.set_text("Scan Completed")
-
-            # Count visible rows (rows that pass search & "only needs action" filter)
-            visible_rows = 0
-            row = self.sync_list_box.get_row_at_index(0)
-            idx = 0
-            while row:
-                if self.sync_filter_func(row):
-                    visible_rows += 1
-                idx += 1
-                row = self.sync_list_box.get_row_at_index(idx)
-
-            if visible_rows == 0:
-                empty_label = Gtk.Label()
-                if not self.repos:
-                    empty_label.set_markup(
-                        "<span size='large' weight='bold' foreground='gray'>No GNOME packages found in this directory.</span>\n"
-                        "<span size='small' foreground='gray'>Please run this tool from your openSUSE GNOME:Next workspace root.</span>"
-                    )
+        matches_track = False
+        if not any_track_selected:
+            matches_track = True
+        else:
+            # Check individual selected tracks
+            if self.filter_pool_sync.get_active():
+                if self.filter_needs_action.get_active():
+                    if pool_needs_action:
+                        matches_track = True
                 else:
-                    empty_label.set_markup(
-                        "<span size='large' weight='bold' foreground='green'>✅ All packages are fully in sync!</span>\n"
-                        "<span size='small' foreground='gray'>Everything matches cleanly between pool, factory, and next.</span>"
-                    )
-                empty_label.set_justify(Gtk.Justification.CENTER)
-                empty_label.set_margin_top(48)
-                empty_label.set_margin_bottom(48)
-                self.sync_list_box.set_placeholder(empty_label)
+                    if is_pool_track:
+                        matches_track = True
 
-    def on_sync_row_activated(self, list_box, row):
-        if not row:
-            return
-        dialog = SyncDiffDialog(self, row.package_name, row.data)
-        dialog.present()
-
-
-    # --- TAB 2: VERSION VIEW ---
-    def build_version_view(self):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-
-        # Control bar
-        control_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        control_bar.set_margin_start(18)
-        control_bar.set_margin_end(18)
-        control_bar.set_margin_top(8)
-        control_bar.set_margin_bottom(3)
-
-        # Search Entry
-        self.ver_search = Gtk.SearchEntry()
-        self.ver_search.set_hexpand(True)
-        self.ver_search.connect("search-changed", lambda entry: self.ver_list_box.invalidate_filter())
-        control_bar.append(self.ver_search)
-
-        # Filter Toggle (Only Needs Update)
-        self.ver_filter_toggle = Gtk.CheckButton(label="Only Needs Update")
-        self.ver_filter_toggle.set_active(True)
-        self.ver_filter_toggle.connect("toggled", lambda cb: self.ver_list_box.invalidate_filter())
-        control_bar.append(self.ver_filter_toggle)
-
-        # Branch Filter DropDown (Both, Factory only, Next only)
-        self.ver_branch_dropdown = Gtk.DropDown.new_from_strings(["Both Branches", "Factory Only", "Next Only"])
-        self.ver_branch_dropdown.connect("notify::selected", self.on_ver_branch_changed)
-        control_bar.append(self.ver_branch_dropdown)
-
-        # Refresh Button
-        refresh_btn = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
-        refresh_btn.connect("clicked", lambda btn: self.start_version_scan())
-        control_bar.append(refresh_btn)
-
-        # Spinner/Progress
-        self.ver_spinner = Gtk.Spinner()
-        control_bar.append(self.ver_spinner)
-
-        self.ver_progress_label = Gtk.Label(label="Ready")
-        control_bar.append(self.ver_progress_label)
-
-        box.append(control_bar)
-
-        # SizeGroups for uniform column alignment across list
-        self.sg_pkg = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
-        self.sg_fac = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
-        self.sg_nxt = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
-        self.sg_act = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
-
-        # Header Box
-        header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=24)
-        header_box.set_margin_start(18)
-        header_box.set_margin_end(18)
-        header_box.set_margin_top(4)
-        header_box.set_margin_bottom(4)
-
-        lbl_pkg = Gtk.Label(label="Package", halign=Gtk.Align.START)
-        lbl_pkg.set_markup("<span weight='bold'>Package</span>")
-        lbl_pkg.set_hexpand(True)
-        lbl_pkg.set_xalign(0.0)
-        self.sg_pkg.add_widget(lbl_pkg)
-        header_box.append(lbl_pkg)
-
-        self.lbl_fac = Gtk.Label(label="Factory (Stable)", halign=Gtk.Align.START)
-        self.lbl_fac.set_markup("<span weight='bold'>Factory (Stable)</span>")
-        self.lbl_fac.set_hexpand(True)
-        self.lbl_fac.set_xalign(0.0)
-        self.sg_fac.add_widget(self.lbl_fac)
-        header_box.append(self.lbl_fac)
-
-        self.lbl_nxt = Gtk.Label(label="Next (Unstable)", halign=Gtk.Align.START)
-        self.lbl_nxt.set_markup("<span weight='bold'>Next (Unstable)</span>")
-        self.lbl_nxt.set_hexpand(True)
-        self.lbl_nxt.set_xalign(0.0)
-        self.sg_nxt.add_widget(self.lbl_nxt)
-        header_box.append(self.lbl_nxt)
-
-        lbl_act = Gtk.Label(label="Actions", halign=Gtk.Align.END)
-        lbl_act.set_markup("<span weight='bold'>Actions</span>")
-        lbl_act.set_hexpand(False)
-        lbl_act.set_xalign(1.0)
-        self.sg_act.add_widget(lbl_act)
-        header_box.append(lbl_act)
-
-        box.append(header_box)
-        box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
-
-        # List box container
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_hexpand(True)
-        scroll.set_vexpand(True)
-
-        self.ver_list_box = Gtk.ListBox()
-        self.ver_list_box.set_filter_func(self.ver_filter_func)
-        scroll.set_child(self.ver_list_box)
-        box.append(scroll)
-
-        # Add to stack
-        self.stack.add_titled_with_icon(
-            box, "versions", "Upstream Updates", "software-update-available-symbolic"
-        )
-
-    def ver_filter_func(self, row):
-        # 1. Search text filter
-        search_text = self.ver_search.get_text().lower()
-        if search_text and search_text not in row.package_name.lower():
-            return False
-
-        # 2. Branch and needs update filter
-        only_needs_update = self.ver_filter_toggle.get_active()
-        filter_mode = self.ver_branch_dropdown.get_selected() # 0 = Both, 1 = Factory, 2 = Next
-
-        # Apply visibility filter to row columns on the fly!
-        row.set_branch_filter(filter_mode)
-
-        if only_needs_update:
-            factory_ver = row.data.get("factory_ver", "N/A")
-            next_ver = row.data.get("next_ver", "—")
-            upstream_stable = row.data.get("upstream_stable", "N/A")
-            upstream_latest = row.data.get("upstream_latest", "—")
-
-            f_needs = factory_ver != upstream_stable and factory_ver != "N/A" and upstream_stable != "N/A"
-            n_needs = next_ver != "—" and next_ver != upstream_latest and upstream_latest != "—"
-
-            if filter_mode == 0:
-                # Both branches: show if either needs update
-                return f_needs or n_needs
-            elif filter_mode == 1:
-                # Factory only: show if factory needs update
-                return f_needs
-            elif filter_mode == 2:
-                # Next only: show if next needs update
-                return n_needs
-
-        return True
-
-    def on_ver_branch_changed(self, dropdown, pspec):
-        filter_mode = self.ver_branch_dropdown.get_selected()
-        if filter_mode == 0:
-            self.lbl_fac.set_visible(True)
-            self.lbl_nxt.set_visible(True)
-        elif filter_mode == 1:
-            self.lbl_fac.set_visible(True)
-            self.lbl_nxt.set_visible(False)
-        elif filter_mode == 2:
-            self.lbl_fac.set_visible(False)
-            self.lbl_nxt.set_visible(True)
-        self.ver_list_box.invalidate_filter()
-
-    def start_version_scan(self):
-        while True:
-            row = self.ver_list_box.get_row_at_index(0)
-            if not row:
-                break
-            self.ver_list_box.remove(row)
-
-        if not self.repos:
-            self.ver_progress_label.set_text("No packages found")
-            empty_label_ver = Gtk.Label()
-            empty_label_ver.set_markup(
-                "<span size='large' weight='bold' foreground='gray'>No GNOME packages found in this directory.</span>"
-            )
-            empty_label_ver.set_margin_top(48)
-            empty_label_ver.set_margin_bottom(48)
-            self.ver_list_box.set_placeholder(empty_label_ver)
-            return
-
-        # Set loading placeholder
-        loading_label = Gtk.Label()
-        loading_label.set_markup("<span size='large' foreground='gray'>Checking upstream updates...</span>")
-        loading_label.set_margin_top(48)
-        loading_label.set_margin_bottom(48)
-        self.ver_list_box.set_placeholder(loading_label)
-
-        self.ver_spinner.start()
-        self.ver_completed_count = 0
-        self.ver_progress_label.set_text(f"Scanning 0/{len(self.repos)}...")
-
-        # Queue all repos in background (30 concurrent workers to avoid release-monitoring rate limits)
-        for repo in self.repos:
-            try:
-                self.executor.submit(self.run_bg_version, repo)
-            except RuntimeError:
-                break
-
-    def run_bg_version(self, repo):
-        name, data = sb.check_repo_version(repo)
-        GLib.idle_add(self.add_version_result, name, data)
-
-    def add_version_result(self, name, data):
-        self.ver_completed_count += 1
-        self.ver_progress_label.set_text(f"Scanning {self.ver_completed_count}/{len(self.repos)}...")
-
-        if data.get("status") == "success":
-            # Pass our main window instance as parent_window
-            row = VersionRow(name, data, self)
-            self.ver_list_box.append(row)
-
-        if self.ver_completed_count == len(self.repos):
-            self.ver_spinner.stop()
-            self.ver_progress_label.set_text("Scan Completed")
-
-            visible_rows = 0
-            row = self.ver_list_box.get_row_at_index(0)
-            idx = 0
-            while row:
-                if self.ver_filter_func(row):
-                    visible_rows += 1
-                idx += 1
-                row = self.ver_list_box.get_row_at_index(idx)
-
-            if visible_rows == 0:
-                empty_label = Gtk.Label()
-                if not self.repos:
-                    empty_label.set_markup(
-                        "<span size='large' weight='bold' foreground='gray'>No GNOME packages found in this directory.</span>"
-                    )
+            if self.filter_stable.get_active():
+                if self.filter_needs_action.get_active():
+                    if stable_needs_action:
+                        matches_track = True
                 else:
-                    empty_label.set_markup(
-                        "<span size='large' weight='bold' foreground='green'>✅ All packages are up to date!</span>\n"
-                        "<span size='small' foreground='gray'>No new upstream updates available on release-monitoring.org.</span>"
-                    )
-                empty_label.set_justify(Gtk.Justification.CENTER)
-                empty_label.set_margin_top(48)
-                empty_label.set_margin_bottom(48)
-                self.ver_list_box.set_placeholder(empty_label)
+                    if is_stable_track:
+                        matches_track = True
 
+            if self.filter_unstable.get_active():
+                if self.filter_needs_action.get_active():
+                    if unstable_needs_action:
+                        matches_track = True
+                else:
+                    if is_unstable_track:
+                        matches_track = True
 
-    # --- TAB 3: FORWARDING VIEW ---
-    def build_forward_view(self):
-        # Main container split horizontally
-        paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-        paned.set_position(340) # Width of sidebar
+            if self.filter_forwarding.get_active():
+                if self.filter_needs_action.get_active():
+                    if forwarding_needs_action:
+                        matches_track = True
+                else:
+                    if is_forwarding_track:
+                        matches_track = True
 
-        # Left Panel (Sidebar)
-        sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        sidebar.set_margin_start(12)
-        sidebar.set_margin_end(12)
-        sidebar.set_margin_top(12)
-        sidebar.set_margin_bottom(12)
+        # If no tracks are checked, but "Needs Action Only" is checked:
+        # We must make sure the package has SOME action pending on ANY track!
+        if not any_track_selected and self.filter_needs_action.get_active():
+            has_any_action = pool_needs_action or stable_needs_action or unstable_needs_action or forwarding_needs_action
+            if not has_any_action:
+                return False
 
-        # Sidebar Controls
-        sidebar_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        sidebar_controls.set_margin_bottom(12)
+        return matches_track
 
-        self.fwd_search = Gtk.SearchEntry()
-        self.fwd_search.set_hexpand(True)
-        self.fwd_search.connect("search-changed", lambda entry: self.fwd_list_box.invalidate_filter())
-        sidebar_controls.append(self.fwd_search)
+    def build_detail_stable_card(self):
+        frame = Gtk.Frame()
+        frame.set_margin_start(18)
+        frame.set_margin_end(18)
+        frame.set_margin_top(4)
+        frame.set_margin_bottom(4)
 
-        self.fwd_filter_toggle = Gtk.CheckButton(label="No PR")
-        self.fwd_filter_toggle.set_active(False)
-        self.fwd_filter_toggle.connect("toggled", lambda cb: self.fwd_list_box.invalidate_filter())
-        sidebar_controls.append(self.fwd_filter_toggle)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.set_margin_start(10)
+        box.set_margin_end(10)
+        box.set_margin_top(8)
+        box.set_margin_bottom(8)
 
-        sidebar.append(sidebar_controls)
+        # Title
+        title_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        lbl_stable = Gtk.Label()
+        lbl_stable.set_markup("<span weight='bold' size='medium' foreground='#2ec27e'>🟢 STABLE PIPELINE (factory)</span>")
+        title_box.append(lbl_stable)
+        box.append(title_box)
 
-        # Sidebar List
-        sidebar_scroll = Gtk.ScrolledWindow()
-        sidebar_scroll.set_hexpand(True)
-        sidebar_scroll.set_vexpand(True)
+        # Info Grid
+        grid = Gtk.Grid(column_spacing=24, row_spacing=4)
 
-        self.fwd_list_box = Gtk.ListBox()
-        self.fwd_list_box.set_filter_func(self.fwd_filter_func)
-        self.fwd_list_box.connect("row-selected", self.on_forward_row_selected)
-        sidebar_scroll.set_child(self.fwd_list_box)
-        sidebar.append(sidebar_scroll)
+        lbl_ver = Gtk.Label(label="Version Alignment:", halign=Gtk.Align.START)
+        grid.attach(lbl_ver, 0, 0, 1, 1)
+        self.stable_ver_lbl = Gtk.Label(label="Loading...", halign=Gtk.Align.START)
+        grid.attach(self.stable_ver_lbl, 1, 0, 1, 1)
 
-        paned.set_start_child(sidebar)
+        lbl_pool = Gtk.Label(label="Pool Sync State:", halign=Gtk.Align.START)
+        grid.attach(lbl_pool, 0, 1, 1, 1)
+        self.stable_pool_lbl = Gtk.Label(label="Loading...", halign=Gtk.Align.START)
+        grid.attach(self.stable_pool_lbl, 1, 1, 1, 1)
 
-        # Right Panel (Detail Area)
-        self.detail_stack = Adw.ViewStack()
+        box.append(grid)
 
-        # Page 1: Empty Page
-        self.empty_page = Adw.StatusPage()
-        self.empty_page.set_title("Select a Package")
-        self.empty_page.set_description("Choose a package from the sidebar to review commits and its file diff.")
-        self.empty_page.set_icon_name("open-menu-symbolic")
-        self.detail_stack.add_named(self.empty_page, "empty")
+        # Actions Toolbar
+        actions_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        actions_box.set_margin_top(6)
 
-        # Page 2: Diff Page
-        diff_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.pull_pool_btn = Gtk.Button(label="📥 Pull Pool")
+        self.pull_pool_btn.connect("clicked", self.on_pull_pool_clicked)
+        actions_box.append(self.pull_pool_btn)
+
+        self.update_factory_btn = Gtk.Button(label="⚙️ Run SCM Update")
+        self.update_factory_btn.connect("clicked", self.on_detail_update_factory_clicked)
+        actions_box.append(self.update_factory_btn)
+
+        self.open_term_fac_btn = Gtk.Button(label="🖥️ Open Factory Terminal")
+        self.open_term_fac_btn.connect("clicked", lambda btn: self.allocate_terminal(self.current_selected_package, "factory"))
+        actions_box.append(self.open_term_fac_btn)
+
+        box.append(actions_box)
+        frame.set_child(box)
+        return frame
+
+    def build_detail_unstable_card(self):
+        frame = Gtk.Frame()
+        frame.set_margin_start(18)
+        frame.set_margin_end(18)
+        frame.set_margin_top(4)
+        frame.set_margin_bottom(4)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.set_margin_start(10)
+        box.set_margin_end(10)
+        box.set_margin_top(8)
+        box.set_margin_bottom(8)
+
+        # Title
+        title_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        lbl_unstable = Gtk.Label()
+        lbl_unstable.set_markup("<span weight='bold' size='medium' foreground='#f5c35c'>🟡 UNSTABLE PIPELINE (next)</span>")
+        title_box.append(lbl_unstable)
+        box.append(title_box)
+
+        # Info Grid
+        grid = Gtk.Grid(column_spacing=24, row_spacing=4)
+
+        lbl_ver = Gtk.Label(label="Version Alignment:", halign=Gtk.Align.START)
+        grid.attach(lbl_ver, 0, 0, 1, 1)
+        self.unstable_ver_lbl = Gtk.Label(label="Loading...", halign=Gtk.Align.START)
+        grid.attach(self.unstable_ver_lbl, 1, 0, 1, 1)
+
+        lbl_branch = Gtk.Label(label="Branch Alignment:", halign=Gtk.Align.START)
+        grid.attach(lbl_branch, 0, 1, 1, 1)
+        self.unstable_branch_lbl = Gtk.Label(label="Loading...", halign=Gtk.Align.START)
+        grid.attach(self.unstable_branch_lbl, 1, 1, 1, 1)
+
+        box.append(grid)
+
+        # Actions Toolbar
+        actions_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        actions_box.set_margin_top(6)
+
+        self.catchup_merge_btn = Gtk.Button(label="🔀 Catch-up Merge")
+        self.catchup_merge_btn.connect("clicked", self.on_catchup_merge_clicked)
+        actions_box.append(self.catchup_merge_btn)
+
+        self.update_next_btn = Gtk.Button(label="⚙️ Run SCM Update")
+        self.update_next_btn.connect("clicked", self.on_detail_update_next_clicked)
+        actions_box.append(self.update_next_btn)
+
+        self.open_term_next_btn = Gtk.Button(label="🖥️ Open Next Terminal")
+        self.open_term_next_btn.connect("clicked", lambda btn: self.allocate_terminal(self.current_selected_package, "next"))
+        actions_box.append(self.open_term_next_btn)
+
+        self.create_pr_btn = Gtk.Button(label="📤 Create PR")
+        self.create_pr_btn.connect("clicked", self.on_detail_create_pr_clicked)
+        actions_box.append(self.create_pr_btn)
+
+        box.append(actions_box)
+        frame.set_child(box)
+        return frame
+
+    def build_detail_diff_panel(self):
+        self.diff_revealer = Gtk.Revealer()
+        self.diff_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.diff_revealer.set_reveal_child(True)
+        self.diff_revealer.set_vexpand(True)
+        self.diff_revealer.set_hexpand(True)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.set_margin_start(18)
+        box.set_margin_end(18)
+        box.set_margin_top(4)
+        box.set_margin_bottom(8)
+        box.set_vexpand(True)
 
         # Diff Header Bar
         diff_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        diff_header.set_margin_start(18)
-        diff_header.set_margin_end(18)
-        diff_header.set_margin_top(12)
-        diff_header.set_margin_bottom(12)
 
-        self.diff_title_label = Gtk.Label(label="No Package Selected")
-        self.diff_title_label.set_hexpand(True)
-        self.diff_title_label.set_halign(Gtk.Align.START)
-        self.diff_title_label.set_markup("<span size='large' weight='bold'>No Package Selected</span>")
-        diff_header.append(self.diff_title_label)
+        lbl_diff = Gtk.Label(halign=Gtk.Align.START)
+        lbl_diff.set_markup("<span weight='bold'>🔍 DIFF REVIEW:</span>")
+        diff_header.append(lbl_diff)
 
-        # Open PR Button
-        self.pr_btn = Gtk.Button(label="Create Pull Request")
-        self.pr_btn.set_sensitive(False)
-        self.pr_btn.connect("clicked", self.on_create_pr_clicked)
-        diff_header.append(self.pr_btn)
+        # DropDown selector (using modern, non-deprecated Gtk.DropDown in GTK4!)
+        self.diff_selector = Gtk.DropDown.new_from_strings(["Next vs. Factory (PR Prep)", "Factory vs. Gitea Pool"])
+        self.diff_selector.set_selected(0)
+        self.diff_selector.connect("notify::selected", self.on_diff_selector_changed)
+        diff_header.append(self.diff_selector)
 
-        diff_box.append(diff_header)
+        # Spacer
+        spacer = Gtk.Label()
+        spacer.set_hexpand(True)
+        diff_header.append(spacer)
 
-        # Diff Viewer (using GtkSourceView if available)
+        # Refresh Diff Button
+        self.refresh_diff_btn = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
+        self.refresh_diff_btn.set_tooltip_text("Refresh Diff")
+        self.refresh_diff_btn.connect("clicked", self.on_refresh_diff_clicked)
+        diff_header.append(self.refresh_diff_btn)
+
+        box.append(diff_header)
+
+        # Scrolled View
         diff_scroll = Gtk.ScrolledWindow()
         diff_scroll.set_hexpand(True)
         diff_scroll.set_vexpand(True)
+        diff_scroll.set_size_request(-1, 100) # Reduce minimum height constraint to prevent GtkPaned warnings
 
         if GtkSource:
             lang_manager = GtkSource.LanguageManager.get_default()
@@ -1901,56 +1352,476 @@ class SyncWindow(Adw.ApplicationWindow):
 
         self.diff_view.set_monospace(True)
         diff_scroll.set_child(self.diff_view)
-        diff_box.append(diff_scroll)
+        box.append(diff_scroll)
 
-        self.detail_stack.add_named(diff_box, "diff")
+        self.diff_revealer.set_child(box)
+        return self.diff_revealer
 
-        paned.set_end_child(self.detail_stack)
+    def build_detail_pane(self):
+        self.detail_stack = Adw.ViewStack()
 
-        # Add tab to main view stack
-        self.stack.add_titled_with_icon(
-            paned, "forwarding", "Forward & PR", "mail-send-receive-symbolic"
-        )
+        # Page 1: Empty Page (Custom lightweight placeholder)
+        self.empty_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        self.empty_page.set_valign(Gtk.Align.CENTER)
+        self.empty_page.set_halign(Gtk.Align.CENTER)
 
-    def fwd_filter_func(self, row):
-        # 1. Search text filter
-        search_text = self.fwd_search.get_text().lower()
-        if search_text and search_text not in row.package_name.lower():
-            return False
+        empty_icon = Gtk.Image.new_from_icon_name("open-menu-symbolic")
+        empty_icon.set_pixel_size(64)
+        empty_icon.add_css_class("dim-label")
+        self.empty_page.append(empty_icon)
 
-        # 2. "No PR" filter toggle
-        only_no_pr = self.fwd_filter_toggle.get_active()
-        if only_no_pr and row.has_pr:
-            return False
+        empty_title = Gtk.Label()
+        empty_title.set_markup("<span size='large' weight='bold' foreground='gray'>Select a Package</span>")
+        self.empty_page.append(empty_title)
 
-        return True
+        empty_desc = Gtk.Label()
+        empty_desc.set_markup("<span size='small' foreground='gray'>Choose a package from the sidebar to review downstream sync, upstream updates, and forwarding.</span>")
+        empty_desc.set_justify(Gtk.Justification.CENTER)
+        empty_desc.set_wrap(True)
+        empty_desc.set_max_width_chars(40)
+        self.empty_page.append(empty_desc)
 
-    def start_forwarding_scan(self):
-        while True:
-            row = self.fwd_list_box.get_row_at_index(0)
-            if not row:
-                break
-            self.fwd_list_box.remove(row)
+        self.detail_stack.add_named(self.empty_page, "empty")
 
-        # Select empty state page by default
-        self.detail_stack.set_visible_child(self.empty_page)
+        # Page 2: Detail Workspace page
+        detail_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 
-        if not self.repos:
-            empty_label = Gtk.Label()
-            empty_label.set_markup("<span size='small' weight='bold' foreground='gray'>No packages found.</span>")
-            empty_label.set_margin_top(32)
-            self.fwd_list_box.set_placeholder(empty_label)
+        # Detail Header
+        detail_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        detail_header.set_margin_start(18)
+        detail_header.set_margin_end(18)
+        detail_header.set_margin_top(12)
+        detail_header.set_margin_bottom(6)
+
+        self.detail_title_label = Gtk.Label(halign=Gtk.Align.START)
+        self.detail_title_label.set_hexpand(True)
+        self.detail_title_label.set_markup("<span size='large' weight='bold'>No Package Selected</span>")
+        detail_header.append(self.detail_title_label)
+
+        # Open Release Monitoring Button
+        self.detail_web_btn = Gtk.Button.new_from_icon_name("web-browser-symbolic")
+        self.detail_web_btn.set_tooltip_text("Open Release Monitoring Page")
+        self.detail_web_btn.connect("clicked", self.on_detail_web_clicked)
+        detail_header.append(self.detail_web_btn)
+
+        detail_box.append(detail_header)
+
+        # Append Stable Pipeline Card
+        self.stable_card = self.build_detail_stable_card()
+        detail_box.append(self.stable_card)
+
+        # Append Unstable Pipeline Card
+        self.unstable_card = self.build_detail_unstable_card()
+        detail_box.append(self.unstable_card)
+
+        # Append Diff Review Panel
+        self.diff_panel = self.build_detail_diff_panel()
+        detail_box.append(self.diff_panel)
+
+        self.detail_stack.add_named(detail_box, "detail")
+        return self.detail_stack
+
+    def on_diff_selector_changed(self, dropdown, pspec):
+        if getattr(self, "current_selected_package", None):
+            self.refresh_active_diff()
+
+    def on_refresh_diff_clicked(self, btn):
+        if getattr(self, "current_selected_package", None):
+            self.refresh_active_diff()
+
+    def refresh_active_diff(self):
+        package_name = self.current_selected_package
+        if not package_name:
             return
 
-        # Set loading placeholder
-        loading_label = Gtk.Label()
-        loading_label.set_markup("<span size='small' foreground='gray'>Scanning unsubmitted changes...</span>")
-        loading_label.set_margin_top(32)
-        self.fwd_list_box.set_placeholder(loading_label)
+        active_idx = self.diff_selector.get_selected()
+        perspective = "next_factory" if active_idx == 0 else "factory_pool"
+        self.diff_buffer.set_text("Loading diff...")
+        self.executor.submit(self.run_bg_diff_perspective, package_name, perspective)
+
+    def run_bg_diff_perspective(self, package_name, perspective):
+        if perspective == "next_factory":
+            diff_text = sb.get_git_diff(package_name)
+        else:
+            diff_text = ""
+            repo_path = os.path.join('.', package_name)
+            try:
+                gitea_name = sb.get_gitea_repo_name(repo_path, package_name)
+                pool_url = f"https://src.opensuse.org/pool/{gitea_name}.git"
+                sb.run_tracked(
+                    ['git', '-C', repo_path, 'fetch', '--quiet', pool_url, 'factory'],
+                    check=True, capture_output=True
+                )
+                res = sb.run_tracked(
+                    ['git', '-C', repo_path, 'diff', 'FETCH_HEAD...origin/factory'],
+                    check=True, capture_output=True, text=True
+                )
+                diff_text = res.stdout
+                if not diff_text.strip():
+                    diff_text = "No differences in spec files or sources detected between local Factory and remote Pool."
+            except Exception as e:
+                diff_text = f"Error performing git diff (Factory vs Pool): {str(e)}"
+
+        GLib.idle_add(self.update_diff_text, diff_text)
+
+    def on_pull_pool_clicked(self, btn):
+        if getattr(self, "current_selected_package", None):
+            gitea_name = sb.get_gitea_repo_name(os.path.join('.', self.current_selected_package), self.current_selected_package)
+            pool_url = f"https://src.opensuse.org/pool/{gitea_name}.git"
+            command = f"git fetch {pool_url} factory && git merge FETCH_HEAD"
+            self.allocate_terminal(self.current_selected_package, "factory", command)
+
+    def on_catchup_merge_clicked(self, btn):
+        if getattr(self, "current_selected_package", None):
+            command = "git fetch origin && git merge origin/factory --no-edit"
+            self.allocate_terminal(self.current_selected_package, "next", command)
+
+    # --- THE CORE EVENT HANDLERS & LOADERS ---
+
+    def on_legend_btn_clicked(self, btn):
+        """Pops up a modern, elegant, and interactive workflow legend panel on demand."""
+        popover = Gtk.Popover()
+        popover.set_parent(btn)
+
+        legend_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        legend_box.set_margin_start(16)
+        legend_box.set_margin_end(16)
+        legend_box.set_margin_top(16)
+        legend_box.set_margin_bottom(16)
+        legend_box.set_size_request(450, -1)
+
+        legend_title = Gtk.Label(halign=Gtk.Align.START)
+        legend_title.set_markup("<span weight='bold' size='medium'>ℹ️ openSUSE GNOME Sync Workflow Legend</span>")
+        legend_box.append(legend_title)
+
+        legend_desc = Gtk.Label(halign=Gtk.Align.START)
+        legend_desc.set_justify(Gtk.Justification.LEFT)
+        legend_desc.set_wrap(True)
+        legend_desc.set_markup(
+            "<span weight='bold'>Pool Sync (Stage 1):</span> Monitors alignment between local Factory checkouts and Gitea's central package pool.\n"
+            "   • <span foreground='orange' weight='bold'>Behind Pool</span>: SCM changes exist in the pool—pull them to catch up.\n"
+            "   • <span foreground='cyan' weight='bold'>Ahead of Pool</span>: Local Factory has local commits not yet in the pool—submit them.\n\n"
+            "<span weight='bold'>Next Branch Sync (Stage 2):</span> Monitors alignment between the unstable next track and stable factory branch.\n"
+            "   • <span foreground='orange' weight='bold'>Next behind Factory</span>: Next is missing commits from Factory—merge factory ➔ next.\n"
+            "   • <span foreground='green' weight='bold'>Next ahead of Factory</span>: Next has additional developmental commits checked in (OK)."
+        )
+        legend_box.append(legend_desc)
+
+        popover.set_child(legend_box)
+        popover.popup()
+
+    def on_package_row_selected(self, list_box, row):
+        if not row:
+            self.detail_stack.set_visible_child(self.empty_page)
+            self.current_selected_package = None
+            return
+        self.load_package_detail(row.package_name)
+
+    def load_package_detail(self, package_name):
+        self.current_selected_package = package_name
+        self.detail_stack.set_visible_child_name("detail")
+
+        self.detail_title_label.set_markup(f"<span size='large' weight='bold'>{package_name}</span>")
+
+        pkg_data = self.package_data.get(package_name, {})
+        sync = pkg_data.get("sync") or {}
+        ver = pkg_data.get("version") or {}
+        pr = pkg_data.get("pr") or {}
+
+        # -------------------------------------------------------------
+        # 1. POPULATE STABLE CARD
+        # -------------------------------------------------------------
+        factory_ver = ver.get("factory_ver", "N/A")
+        upstream_stable = ver.get("upstream_stable", "N/A")
+
+        if not ver:
+            self.stable_ver_lbl.set_text("Loading...")
+            self.update_factory_btn.set_sensitive(False)
+            self.update_factory_btn.set_label("Run SCM Update")
+            self.detail_web_btn.set_sensitive(False)
+        else:
+            self.detail_web_btn.set_sensitive(True)
+            if factory_ver != upstream_stable and factory_ver != "N/A" and upstream_stable != "N/A":
+                self.stable_ver_lbl.set_markup(f"<span weight='bold' foreground='red'>{factory_ver}</span> ➔ <span weight='bold' foreground='green'>{upstream_stable} (Update Available)</span>")
+                self.update_factory_btn.set_sensitive(True)
+                self.update_factory_btn.set_label(f"Update Factory to {upstream_stable}")
+            else:
+                self.stable_ver_lbl.set_text(f"{factory_ver} (Up-To-Date)")
+                self.update_factory_btn.set_sensitive(False)
+                self.update_factory_btn.set_label("Factory Up-To-Date")
+
+        pool_status = sync.get("pool_status", "unknown")
+        pool_behind = sync.get("pool_behind", 0)
+        pool_ahead = sync.get("pool_ahead", 0)
+
+        if not sync:
+            self.stable_pool_lbl.set_text("Loading...")
+            self.pull_pool_btn.set_sensitive(False)
+        else:
+            if pool_behind > 0 and pool_ahead > 0:
+                p1_text = f"<span weight='bold' foreground='red'>Diverged</span> (Behind Pool: {pool_behind} / Ahead Pool: {pool_ahead} commits)"
+                self.pull_pool_btn.set_sensitive(True)
+            elif pool_behind > 0:
+                p1_text = f"<span weight='bold' foreground='orange'>Behind Gitea Pool by {pool_behind} commits</span> (Pull needed)"
+                self.pull_pool_btn.set_sensitive(True)
+            elif pool_ahead > 0:
+                p1_text = f"<span weight='bold' foreground='cyan'>Ahead of Gitea Pool by {pool_ahead} commits</span> (Push/PR needed)"
+                self.pull_pool_btn.set_sensitive(False)
+            elif pool_status == "Not in Pool":
+                p1_text = "<span foreground='yellow' weight='bold'>Not in Gitea Pool</span>"
+                self.pull_pool_btn.set_sensitive(False)
+            else:
+                p1_text = "<span foreground='green'>Fully In Sync with Gitea Pool</span>"
+                self.pull_pool_btn.set_sensitive(False)
+            self.stable_pool_lbl.set_markup(p1_text)
+
+        # -------------------------------------------------------------
+        # 2. POPULATE UNSTABLE CARD
+        # -------------------------------------------------------------
+        next_ver = ver.get("next_ver", "—")
+        upstream_latest = ver.get("upstream_latest", "—")
+
+        if not ver:
+            self.unstable_ver_lbl.set_text("Loading...")
+            self.update_next_btn.set_sensitive(False)
+            self.update_next_btn.set_label("Run SCM Update")
+        else:
+            if next_ver != "—" and next_ver != upstream_latest and upstream_latest != "—":
+                self.unstable_ver_lbl.set_markup(f"<span weight='bold' foreground='red'>{next_ver}</span> ➔ <span weight='bold' foreground='green'>{upstream_latest} (Update Available)</span>")
+                self.update_next_btn.set_sensitive(True)
+                self.update_next_btn.set_label(f"Update Next to {upstream_latest}")
+            else:
+                self.unstable_ver_lbl.set_text(f"{next_ver} (Up-To-Date)" if next_ver != "—" else "—")
+                self.update_next_btn.set_sensitive(False)
+                self.update_next_btn.set_label("Next Up-To-Date")
+
+            if next_ver == "—":
+                self.update_next_btn.set_sensitive(False)
+                self.update_next_btn.set_label("No Next branch")
+
+        next_status = sync.get("next_status", "unknown")
+        next_behind = sync.get("next_behind", 0)
+        next_ahead_val = sync.get("next_ahead", 0)
+        has_pr = pr.get("has_pr", False)
+        pr_number = pr.get("number", None)
+
+        if not sync:
+            self.unstable_branch_lbl.set_text("Loading...")
+            self.catchup_merge_btn.set_sensitive(False)
+            self.create_pr_btn.set_sensitive(False)
+        else:
+            # Catchup Merge Trigger
+            if next_behind > 0:
+                self.catchup_merge_btn.set_sensitive(True)
+                self.catchup_merge_btn.set_label(f"🔀 Catch-up Merge ({next_behind} behind)")
+            else:
+                self.catchup_merge_btn.set_sensitive(False)
+                self.catchup_merge_btn.set_label("🔀 Catch-up Merge")
+
+            # PR Forwarding Trigger
+            if next_ahead_val > 0:
+                if has_pr:
+                    branch_text = f"<span foreground='green' weight='bold'>PR #{pr_number} Active</span> | Next is ahead of Factory by {next_ahead_val} commits."
+                    self.create_pr_btn.set_label(f"View PR #{pr_number}")
+                else:
+                    branch_text = f"<span foreground='orange' weight='bold'>Forwarding Needed</span> | Next is ahead of Factory by {next_ahead_val} commits."
+                    self.create_pr_btn.set_label("Create Pull Request")
+                self.create_pr_btn.set_sensitive(True)
+            else:
+                self.create_pr_btn.set_sensitive(False)
+                self.create_pr_btn.set_label("Create PR")
+                if next_status == "No next branch":
+                    branch_text = "<span foreground='gray'>No Next branch present</span>"
+                else:
+                    branch_text = "<span foreground='green'>Next and Factory branches are fully in sync</span>"
+
+            if next_behind > 0 and next_ahead_val > 0:
+                branch_text = f"<span weight='bold' foreground='red'>Diverged</span> (Behind: {next_behind} / Ahead: {next_ahead_val} commits)"
+                self.create_pr_btn.set_sensitive(False) # Must merge first!
+
+            self.unstable_branch_lbl.set_markup(branch_text)
+
+        # -------------------------------------------------------------
+        # 3. POPULATE DIFF REVIEW
+        # -------------------------------------------------------------
+        if not sync:
+            self.diff_buffer.set_text("")
+        else:
+            self.refresh_active_diff()
+
+    def on_detail_update_next_clicked(self, btn):
+        if getattr(self, "current_selected_package", None):
+            ver_data = self.package_data[self.current_selected_package].get("version") or {}
+            upstream_latest = ver_data.get("upstream_latest", "")
+            if upstream_latest and upstream_latest != "—":
+                pkg_dir = self.get_mapped_worktree_path(self.current_selected_package, "next")
+                current_revision = get_service_revision(pkg_dir)
+                guessed_revision, confidence_err = guess_update_revision(current_revision, upstream_latest)
+
+                if guessed_revision and not confidence_err:
+                    command = f"obs_scm-update.sh {shlex.quote(guessed_revision)}"
+                    self.allocate_terminal(self.current_selected_package, "next", command)
+                else:
+                    title_text = f"⚠️  Unable to confidently guess target revision for {self.current_selected_package}."
+                    lines = [
+                        f"\033[1;33m{title_text}\033[0m",
+                    ]
+                    if confidence_err:
+                        lines.append(f"   Reason: _service {confidence_err}.")
+                    if current_revision:
+                        lines.append(f"   Current revision in _service: \033[1m{current_revision}\033[0m")
+                    lines.append(f"   Suggested target version:     \033[1;32m{upstream_latest}\033[0m")
+                    lines.append("")
+                    lines.append("👉 \033[1mRun obs_scm-update.sh manually with your preferred parameter.\033[0m")
+
+                    hint_msg = " && ".join(f"echo {shlex.quote(line)}" for line in lines)
+                    self.allocate_terminal(self.current_selected_package, "next", hint_msg)
+
+    def on_detail_update_factory_clicked(self, btn):
+        if getattr(self, "current_selected_package", None):
+            ver_data = self.package_data[self.current_selected_package].get("version") or {}
+            upstream_stable = ver_data.get("upstream_stable", "")
+            if upstream_stable and upstream_stable != "N/A":
+                pkg_dir = self.get_mapped_worktree_path(self.current_selected_package, "factory")
+                current_revision = get_service_revision(pkg_dir)
+                guessed_revision, confidence_err = guess_update_revision(current_revision, upstream_stable)
+
+                if guessed_revision and not confidence_err:
+                    command = f"obs_scm-update.sh {shlex.quote(guessed_revision)}"
+                    self.allocate_terminal(self.current_selected_package, "factory", command)
+                else:
+                    title_text = f"⚠️  Unable to confidently guess target revision for {self.current_selected_package}."
+                    lines = [
+                        f"\033[1;33m{title_text}\033[0m",
+                    ]
+                    if confidence_err:
+                        lines.append(f"   Reason: _service {confidence_err}.")
+                    if current_revision:
+                        lines.append(f"   Current revision in _service: \033[1m{current_revision}\033[0m")
+                    lines.append(f"   Suggested target version:     \033[1;32m{upstream_stable}\033[0m")
+                    lines.append("")
+                    lines.append("👉 \033[1mRun obs_scm-update.sh manually with your preferred parameter.\033[0m")
+
+                    hint_msg = " && ".join(f"echo {shlex.quote(line)}" for line in lines)
+                    self.allocate_terminal(self.current_selected_package, "factory", hint_msg)
+
+    def on_detail_web_clicked(self, btn):
+        if getattr(self, "current_selected_package", None):
+            ver_data = self.package_data[self.current_selected_package].get("version") or {}
+            project_name = ver_data.get("project", self.current_selected_package)
+            url = f"https://release-monitoring.org/project/{project_name}/"
+            webbrowser.open(url)
+
+    def on_detail_create_pr_clicked(self, btn):
+        if getattr(self, "current_selected_package", None):
+            pkg_data = self.package_data.get(self.current_selected_package, {})
+            pr = pkg_data.get("pr") or {}
+            pr_url = pr.get("url")
+            if pr.get("has_pr") and pr_url:
+                url = pr_url
+            else:
+                url = sb.get_gitea_pr_url(self.current_selected_package)
+            webbrowser.open(url)
+
+    def on_detail_pool_diff_clicked(self, btn):
+        if getattr(self, "current_selected_package", None):
+            pkg_data = self.package_data[self.current_selected_package]
+            sync_data = pkg_data.get("sync") or {}
+            dialog = SyncDiffDialog(self, self.current_selected_package, sync_data)
+            dialog.present()
+
+    # --- UNIFIED SCAN PROGRESS MONITORING ---
+
+    def update_progress_ui(self):
+        sync_total = len(self.repos) if self.repos else 0
+        sync_done = getattr(self, "sync_completed_count", 0)
+        ver_done = getattr(self, "ver_completed_count", 0)
+
+        sync_running = sync_done < sync_total
+        ver_running = ver_done < sync_total
+
+        if sync_running or ver_running:
+            self.sidebar_spinner.start()
+            parts = []
+            if sync_running:
+                parts.append(f"Sync: {sync_done}/{sync_total}")
+            else:
+                parts.append("Sync: Done")
+
+            if ver_running:
+                parts.append(f"Versions: {ver_done}/{sync_total}")
+            else:
+                parts.append("Versions: Done")
+
+            self.sidebar_progress_label.set_text(" | ".join(parts))
+        else:
+            self.sidebar_spinner.stop()
+            self.sidebar_progress_label.set_text("Scan Completed")
+
+    def start_sync_scan(self):
+        if not self.repos:
+            self.sidebar_progress_label.set_text("No packages found")
+            return
+
+        self.sync_completed_count = 0
+        self.update_progress_ui()
+
+        for repo in self.repos:
+            try:
+                self.executor.submit(self.run_bg_sync, repo)
+            except RuntimeError:
+                break
+
+    def run_bg_sync(self, repo):
+        name, data = sb.check_repo_sync(repo)
+        GLib.idle_add(self.add_sync_result, name, data)
+
+    def add_sync_result(self, name, data):
+        self.sync_completed_count += 1
+
+        if data.get("status") == "success":
+            self.package_data[name]["sync"] = data
+            self.update_row_ui(name)
+            if getattr(self, "current_selected_package", None) == name:
+                self.load_package_detail(name)
+
+        self.update_progress_ui()
+
+    def start_version_scan(self):
+        if not self.repos:
+            return
+
+        self.ver_completed_count = 0
+        self.update_progress_ui()
+
+        for repo in self.repos:
+            try:
+                self.executor.submit(self.run_bg_version, repo)
+            except RuntimeError:
+                break
+
+    def run_bg_version(self, repo):
+        name, data = sb.check_repo_version(repo)
+        GLib.idle_add(self.add_version_result, name, data)
+
+    def add_version_result(self, name, data):
+        self.ver_completed_count += 1
+
+        if data.get("status") == "success":
+            self.package_data[name]["version"] = data
+            self.update_row_ui(name)
+            if getattr(self, "current_selected_package", None) == name:
+                self.load_package_detail(name)
+
+        self.update_progress_ui()
+
+    # --- TAB 3 SCAN METHODS ---
+
+    def start_forwarding_scan(self):
+        if not self.repos:
+            return
 
         self.fwd_completed_count = 0
-
-        # Forward scan fetches sync status, and if ahead > 0, fetches Gitea PR status
         for repo in self.repos:
             try:
                 self.executor.submit(self.run_bg_forward, repo)
@@ -1958,75 +1829,24 @@ class SyncWindow(Adw.ApplicationWindow):
                 break
 
     def run_bg_forward(self, repo):
-        # 1. Check sync status
         _, sync_data = sb.check_repo_sync(repo)
         pr_data = {"has_pr": False}
         if sync_data.get("status") == "success" and sync_data.get("next_status") != "No next branch":
             next_ahead = sync_data.get("next_ahead", 0)
             if next_ahead > 0:
-                # 2. Check Gitea PR status (only for those active)
                 _, pr_data = sb.check_repo_pr(repo)
         GLib.idle_add(self.add_forward_result, repo, sync_data, pr_data)
 
     def add_forward_result(self, name, sync_data, pr_data):
         self.fwd_completed_count += 1
 
-        next_ahead = sync_data.get("next_ahead", 0)
-        if next_ahead > 0:
-            row = ForwardRow(name, sync_data, pr_data)
-            self.fwd_list_box.append(row)
+        if sync_data.get("status") == "success":
+            self.package_data[name]["sync"] = sync_data
+        self.package_data[name]["pr"] = pr_data
+        self.update_row_ui(name)
 
-        if self.fwd_completed_count == len(self.repos):
-            # Check if any visible rows remain after filter
-            visible_rows = 0
-            row = self.fwd_list_box.get_row_at_index(0)
-            idx = 0
-            while row:
-                if self.fwd_filter_func(row):
-                    visible_rows += 1
-                idx += 1
-                row = self.fwd_list_box.get_row_at_index(idx)
-
-            if visible_rows == 0:
-                empty_label = Gtk.Label()
-                if not self.repos:
-                    empty_label.set_markup(
-                        "<span size='small' weight='bold' foreground='gray'>No packages found.</span>"
-                    )
-                else:
-                    empty_label.set_markup(
-                        "<span size='small' weight='bold' foreground='green'>✅ No unsubmitted changes.</span>\n"
-                        "<span size='x-small' foreground='gray'>All next commits are fully submitted to factory.</span>"
-                    )
-                empty_label.set_justify(Gtk.Justification.CENTER)
-                empty_label.set_margin_top(32)
-                empty_label.set_margin_bottom(32)
-                self.fwd_list_box.set_placeholder(empty_label)
-
-    def on_forward_row_selected(self, list_box, row):
-        if not row:
-            self.detail_stack.set_visible_child(self.empty_page)
-            self.pr_btn.set_sensitive(False)
-            self.pr_btn.set_label("Create Pull Request")
-            return
-
-        self.detail_stack.set_visible_child_name("diff")
-        self.pr_btn.set_sensitive(True)
-        self.current_selected_package = row.package_name
-
-        if row.has_pr:
-            self.pr_btn.set_label("Show Pull Request")
-        else:
-            self.pr_btn.set_label("Create Pull Request")
-
-        self.diff_title_label.set_markup(
-            f"<span size='large' weight='bold'>Diff for {row.package_name}</span>   "
-            f"<span size='small' foreground='gray'>({row.next_ahead} commits ahead)</span>"
-        )
-
-        # Load diff text asynchronously
-        self.diff_buffer.set_text("Loading diff...")
-        self.executor.submit(self.run_bg_diff, row.package_name)
+        if getattr(self, "current_selected_package", None) == name:
+            self.load_package_detail(name)
 
     def run_bg_diff(self, package_name):
         diff_text = sb.get_git_diff(package_name)
@@ -2034,52 +1854,6 @@ class SyncWindow(Adw.ApplicationWindow):
 
     def update_diff_text(self, text):
         self.diff_buffer.set_text(text)
-
-    def on_create_pr_clicked(self, btn):
-        if hasattr(self, "current_selected_package"):
-            row = self.fwd_list_box.get_selected_row()
-            if row and row.has_pr and row.pr_url:
-                webbrowser.open(row.pr_url)
-                return
-
-            # Disable button and show checking state
-            self.pr_btn.set_sensitive(False)
-            self.pr_btn.set_label("Checking Gitea...")
-
-            # Run Gitea check in background
-            self.executor.submit(self.run_bg_pre_create_check, self.current_selected_package)
-
-    def run_bg_pre_create_check(self, package_name):
-        _, pr_data = sb.check_repo_pr(package_name)
-        GLib.idle_add(self.on_pre_create_check_result, package_name, pr_data)
-
-    def on_pre_create_check_result(self, package_name, pr_data):
-        if not hasattr(self, "current_selected_package") or self.current_selected_package != package_name:
-            return
-
-        # Restore button state
-        self.pr_btn.set_sensitive(True)
-
-        has_pr = pr_data.get("has_pr", False)
-        if has_pr:
-            # Update row in-place!
-            row = self.fwd_list_box.get_selected_row()
-            if row and row.package_name == package_name:
-                row.update_pr_state(pr_data)
-                self.pr_btn.set_label("Show Pull Request")
-
-            # Show Toast
-            toast = Adw.Toast.new("A Pull Request already exists on Gitea!")
-            pr_url = pr_data.get("url")
-            if pr_url:
-                toast.set_button_label("Open PR")
-                toast.connect("button-clicked", lambda t, u: webbrowser.open(u), pr_url)
-            self.toast_overlay.add_toast(toast)
-        else:
-            self.pr_btn.set_label("Create Pull Request")
-            # Open the dialog!
-            dialog = SyncCreatePRDialog(self, package_name)
-            dialog.present()
 
 
 class SyncApp(Adw.Application):
