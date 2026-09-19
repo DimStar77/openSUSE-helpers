@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#35353a" />
+      <stop offset="100%" stop-color="#1c1c1f" />
+    </linearGradient>
+    <linearGradient id="geckoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#30d158" />
+      <stop offset="100%" stop-color="#2196f3" />
+    </linearGradient>
+    <linearGradient id="arrowGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00d2ff" />
+      <stop offset="100%" stop-color="#0080ff" />
+    </linearGradient>
+  </defs>
+
+  <rect x="8" y="8" width="112" height="112" rx="28" ry="28" fill="url(#bgGrad)" stroke="#4d4d54" stroke-width="2" />
+
+  <line x1="8" y1="64" x2="120" y2="64" stroke="#2c2c31" stroke-width="1" stroke-dasharray="4,4" />
+  <line x1="64" y1="8" x2="64" y2="120" stroke="#2c2c31" stroke-width="1" stroke-dasharray="4,4" />
+
+  <path d="M 64,24 A 40,40 0 0,1 104,64 L 96,64" fill="none" stroke="url(#arrowGrad)" stroke-width="6" stroke-linecap="round" />
+  <path d="M 104,64 L 110,54 M 104,64 L 94,54" fill="none" stroke="url(#arrowGrad)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" />
+
+  <path d="M 64,104 A 40,40 0 0,1 24,64 L 32,64" fill="none" stroke="url(#arrowGrad)" stroke-width="6" stroke-linecap="round" />
+  <path d="M 24,64 L 18,74 M 24,64 L 34,74" fill="none" stroke="url(#arrowGrad)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" />
+
+  <path d="M 64,30 C 69,30 71,36 71,42 C 71,46 68,52 64,52 C 60,52 57,46 57,42 C 57,36 59,30 64,30 Z" fill="url(#geckoGrad)" />
+  <path d="M 64,48 C 70,48 74,60 74,72 C 74,84 70,96 64,96 C 58,96 54,84 54,72 C 54,60 58,48 64,48 Z" fill="url(#geckoGrad)" />
+
+  <circle cx="61" cy="36" r="1.5" fill="#ffffff" />
+  <circle cx="67" cy="36" r="1.5" fill="#ffffff" />
+
+  <path d="M 57,50 C 50,45 42,48 40,54" fill="none" stroke="url(#geckoGrad)" stroke-width="5" stroke-linecap="round" />
+  <path d="M 71,50 C 78,45 86,48 88,54" fill="none" stroke="url(#geckoGrad)" stroke-width="5" stroke-linecap="round" />
+
+  <path d="M 56,84 C 48,88 42,85 40,78" fill="none" stroke="url(#geckoGrad)" stroke-width="5" stroke-linecap="round" />
+  <path d="M 72,84 C 80,88 86,85 88,78" fill="none" stroke="url(#geckoGrad)" stroke-width="5" stroke-linecap="round" />
+
+  <path d="M 64,94 C 64,104 54,110 46,104 C 40,100 42,90 48,88 C 52,86 56,90 54,94 C 53,96 50,96 50,94" fill="none" stroke="url(#geckoGrad)" stroke-width="4.5" stroke-linecap="round" />
+</svg>
