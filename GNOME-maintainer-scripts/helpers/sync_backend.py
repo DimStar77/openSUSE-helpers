@@ -434,14 +434,22 @@ def check_repo_version(repo_name, branch=None):
             "next_ver": next_ver or "—"
         }
 
-    # Compare versions
+    def clean_version(version_str):
+        """Normalize version string by splitting on '''+''' to strip downstream git snapshot increments safely."""
+        if not version_str:
+            return ""
+        return version_str.split('''+''')[0].strip()
+
+    # Compare versions with normalization to ignore git snapshot increments (+git...)
     needs_update = False
 
-    if (branch is None or branch == "factory") and factory_ver and upstream_stable and factory_ver != upstream_stable:
-        needs_update = True
+    if (branch is None or branch == "factory") and factory_ver and upstream_stable:
+        if clean_version(factory_ver) != clean_version(upstream_stable):
+            needs_update = True
 
-    if (branch is None or branch == "next") and next_ver and next_ver != "—" and upstream_latest and next_ver != upstream_latest:
-        needs_update = True
+    if (branch is None or branch == "next") and next_ver and next_ver != "—" and upstream_latest:
+        if clean_version(next_ver) != clean_version(upstream_latest):
+            needs_update = True
 
     return repo_name, {
         "status": "success",
