@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import unittest
-from check_sync_gui import guess_update_revision
+from geckopit import guess_update_revision
 
 class TestVersionGuessing(unittest.TestCase):
     def test_simdutf_prefix_v(self):

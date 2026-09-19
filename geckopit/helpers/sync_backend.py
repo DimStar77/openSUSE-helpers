@@ -188,12 +188,12 @@ def get_gitea_owner_and_repo(repo_path, default_name):
         pass
     return owner, repo_name
 
-def check_repo_pr(repo_name):
+def check_repo_pr(repo_name, stable_branch="factory", unstable_branch="next", workspace_path="."):
     """
-    Queries Gitea API to check if there is an open pull request from 'next' to 'factory'.
+    Queries Gitea API to check if there is an open pull request from head to base branch.
     Returns (repo_name, pr_info) where pr_info indicates whether a matching PR is active.
     """
-    repo_path = os.path.join('.', repo_name)
+    repo_path = os.path.join(workspace_path, repo_name)
     owner, gitea_name = get_gitea_owner_and_repo(repo_path, repo_name)
 
     url = f"https://src.opensuse.org/api/v1/repos/{owner}/{gitea_name}/pulls?state=open"
@@ -206,7 +206,7 @@ def check_repo_pr(repo_name):
                 for pr in data:
                     base_ref = pr.get("base", {}).get("ref")
                     head_ref = pr.get("head", {}).get("ref")
-                    if base_ref == "factory" and head_ref == "next":
+                    if base_ref == stable_branch and head_ref == unstable_branch:
                         return repo_name, {
                             "has_pr": True,
                             "url": pr.get("html_url"),
@@ -220,8 +220,8 @@ def check_repo_pr(repo_name):
         "number": None
     }
 
-def check_repo_sync(repo_name):
-    repo_path = os.path.join('.', repo_name)
+def check_repo_sync(repo_name, stable_branch="factory", unstable_branch="next", workspace_path="."):
+    repo_path = os.path.join(workspace_path, repo_name)
 
     # 1. Fetch latest state from origin (src.opensuse.org/<devel_project>/<repo>)
     try:
@@ -232,33 +232,35 @@ def check_repo_sync(repo_name):
     except subprocess.CalledProcessError:
         pass
 
-    # 2. Check if origin/factory exists locally
+    # 2. Check if origin/{stable_branch} exists locally
     try:
         run_tracked(
-            ['git', '-C', repo_path, 'show-ref', '--verify', '--quiet', 'refs/remotes/origin/factory'],
+            ['git', '-C', repo_path, 'show-ref', '--verify', '--quiet', f'refs/remotes/origin/{stable_branch}'],
             check=True, capture_output=True
         )
-        has_origin_factory = True
+        has_origin_stable = True
     except subprocess.CalledProcessError:
-        has_origin_factory = False
+        has_origin_stable = False
 
-    if not has_origin_factory:
+    if not has_origin_stable:
         return repo_name, {
             "status": "error",
-            "message": "Missing origin/factory branch"
+            "message": f"Missing origin/{stable_branch} branch"
         }
 
-    # 3. Check if origin/next exists locally
-    try:
-        run_tracked(
-            ['git', '-C', repo_path, 'show-ref', '--verify', '--quiet', 'refs/remotes/origin/next'],
-            check=True, capture_output=True
-        )
-        has_origin_next = True
-    except subprocess.CalledProcessError:
-        has_origin_next = False
+    # 3. Check if origin/{unstable_branch} exists locally
+    has_origin_unstable = False
+    if unstable_branch:
+        try:
+            run_tracked(
+                ['git', '-C', repo_path, 'show-ref', '--verify', '--quiet', f'refs/remotes/origin/{unstable_branch}'],
+                check=True, capture_output=True
+            )
+            has_origin_unstable = True
+        except subprocess.CalledProcessError:
+            has_origin_unstable = False
 
-    # 4. Fetch from pool/repo_name.git factory branch (src.opensuse.org/pool/<repo>)
+    # 4. Fetch from pool/repo_name.git {stable_branch} branch (src.opensuse.org/pool/<repo>)
     gitea_name = get_gitea_repo_name(repo_path, repo_name)
     pool_url = f"https://src.opensuse.org/pool/{gitea_name}.git"
     pool_status = "unknown"
@@ -267,12 +269,12 @@ def check_repo_sync(repo_name):
 
     try:
         run_tracked(
-            ['git', '-C', repo_path, 'fetch', '--quiet', pool_url, 'factory'],
+            ['git', '-C', repo_path, 'fetch', '--quiet', pool_url, stable_branch],
             check=True, capture_output=True, text=True
         )
-        # Compare origin/factory and FETCH_HEAD (pool/factory)
+        # Compare origin/{stable_branch} and FETCH_HEAD (pool/{stable_branch})
         res = run_tracked(
-            ['git', '-C', repo_path, 'rev-list', '--left-right', '--count', 'origin/factory...FETCH_HEAD'],
+            ['git', '-C', repo_path, 'rev-list', '--left-right', '--count', f'origin/{stable_branch}...FETCH_HEAD'],
             check=True, capture_output=True, text=True
         )
         output = res.stdout.strip()
@@ -294,27 +296,27 @@ def check_repo_sync(repo_name):
         stderr_lower = (e.stderr or "").lower()
         if "cannot find repository" in stderr_lower or "could not read from remote repository" in stderr_lower or "repository not found" in stderr_lower or "404" in stderr_lower:
             pool_status = "Not in Pool"
-        elif "couldn't find remote ref factory" in stderr_lower or "no such ref" in stderr_lower or "fatal: couldn't find remote ref" in stderr_lower:
-            pool_status = "No Factory in Pool"
+        elif f"couldn't find remote ref {stable_branch}" in stderr_lower or "no such ref" in stderr_lower or "fatal: couldn't find remote ref" in stderr_lower:
+            pool_status = f"No {stable_branch} in Pool"
         else:
             pool_status = "Fetch failed"
 
-    # 5. Compare devel/factory and devel/next
+    # 5. Compare devel/{stable_branch} and devel/{unstable_branch}
     next_status = "N/A"
     next_ahead = 0
     next_behind = 0
 
-    if has_origin_next:
+    if has_origin_unstable and unstable_branch:
         try:
             res_next = run_tracked(
-                ['git', '-C', repo_path, 'rev-list', '--left-right', '--count', 'origin/factory...origin/next'],
+                ['git', '-C', repo_path, 'rev-list', '--left-right', '--count', f'origin/{stable_branch}...origin/{unstable_branch}'],
                 check=True, capture_output=True, text=True
             )
             output_next = res_next.stdout.strip()
             parts_next = output_next.split()
             if len(parts_next) == 2:
-                next_behind = int(parts_next[0]) # factory is ahead of next (next needs catch up)
-                next_ahead = int(parts_next[1])  # next is ahead of factory (next has additional development)
+                next_behind = int(parts_next[0]) # stable is ahead of unstable (unstable needs catch up)
+                next_ahead = int(parts_next[1])  # unstable is ahead of stable (unstable has additional development)
                 if next_behind == 0 and next_ahead == 0:
                     next_status = "In Sync"
                 elif next_behind > 0 and next_ahead > 0:
@@ -330,7 +332,7 @@ def check_repo_sync(repo_name):
     else:
         next_status = "No next branch"
 
-    # Determine sync actions for daily run (e.g. pool update, submission update, or factory -> next merge)
+    # Determine sync actions for daily run (e.g. pool update, submission update, or stable -> unstable merge)
     needs_action = (pool_behind > 0) or (pool_ahead > 0) or (next_behind > 0)
 
     return repo_name, {
@@ -344,8 +346,37 @@ def check_repo_sync(repo_name):
         "needs_action": needs_action,
     }
 
-def check_repo_version(repo_name, branch=None):
-    repo_path = os.path.join('.', repo_name)
+# Centralized registry of special-case version normalization overrides
+# Key: package name (repo_name)
+# Value: a function (or a list of regex/string replacers) to apply
+CUSTOM_VERSION_NORMALIZERS = {
+    "gnome-tour": lambda v: re.sub(r'\.openSUSE\b', '', v, flags=re.IGNORECASE)
+}
+
+def clean_version(version_str, repo_name=None):
+    """
+    Normalize version string by splitting on '+' to strip downstream git snapshot increments safely,
+    and applying package-specific custom overrides from our centralized registry.
+    """
+    if not version_str:
+        return ""
+
+    # 1. Base normalization: strip downstream git snapshot suffixes
+    cleaned = version_str.split('+')[0].strip()
+
+    # 2. Package-specific overrides (Centralized Registry)
+    if repo_name and repo_name in CUSTOM_VERSION_NORMALIZERS:
+        cleaned = CUSTOM_VERSION_NORMALIZERS[repo_name](cleaned)
+
+    return cleaned
+
+def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable_branch="next", workspace_path=".", ignored_unstable_versions=None):
+    repo_path = os.path.join(workspace_path, repo_name)
+
+    if ignored_unstable_versions is None:
+        ignored_unstable_versions = {}
+
+    ignored_ver = ignored_unstable_versions.get(repo_name)
 
     # 1. Fetch latest state from origin (src.opensuse.org/<devel_project>/<repo>)
     try:
@@ -372,12 +403,12 @@ def check_repo_version(repo_name, branch=None):
             "message": "No spec file found"
         }
 
-    # 3. Get version from factory branch (if checking factory or both)
+    # 3. Get version from stable branch (if checking stable or both)
     factory_ver = None
-    if branch is None or branch == "factory":
+    if branch is None or branch == stable_branch or branch == "factory":
         try:
             res = run_tracked(
-                ['git', '-C', repo_path, 'show', f'refs/remotes/origin/factory:{spec_file}'],
+                ['git', '-C', repo_path, 'show', f'refs/remotes/origin/{stable_branch}:{spec_file}'],
                 check=True, capture_output=True, text=True
             )
             for line in res.stdout.splitlines():
@@ -387,12 +418,12 @@ def check_repo_version(repo_name, branch=None):
         except subprocess.CalledProcessError:
             pass
 
-    # 4. Get version from next branch (if checking next or both)
+    # 4. Get version from unstable branch (if checking unstable or both)
     next_ver = None
-    if branch is None or branch == "next":
+    if unstable_branch and (branch is None or branch == unstable_branch or branch == "next"):
         try:
             res = run_tracked(
-                ['git', '-C', repo_path, 'show', f'refs/remotes/origin/next:{spec_file}'],
+                ['git', '-C', repo_path, 'show', f'refs/remotes/origin/{unstable_branch}:{spec_file}'],
                 check=True, capture_output=True, text=True
             )
             for line in res.stdout.splitlines():
@@ -434,22 +465,19 @@ def check_repo_version(repo_name, branch=None):
             "next_ver": next_ver or "—"
         }
 
-    def clean_version(version_str):
-        """Normalize version string by splitting on '''+''' to strip downstream git snapshot increments safely."""
-        if not version_str:
-            return ""
-        return version_str.split('''+''')[0].strip()
-
     # Compare versions with normalization to ignore git snapshot increments (+git...)
     needs_update = False
 
-    if (branch is None or branch == "factory") and factory_ver and upstream_stable:
-        if clean_version(factory_ver) != clean_version(upstream_stable):
+    if (branch is None or branch == stable_branch or branch == "factory") and factory_ver and upstream_stable:
+        if clean_version(factory_ver, repo_name) != clean_version(upstream_stable, repo_name):
             needs_update = True
 
-    if (branch is None or branch == "next") and next_ver and next_ver != "—" and upstream_latest:
-        if clean_version(next_ver) != clean_version(upstream_latest):
-            needs_update = True
+    if unstable_branch and (branch is None or branch == unstable_branch or branch == "next") and next_ver and next_ver != "—" and upstream_latest:
+        if clean_version(next_ver, repo_name) != clean_version(upstream_latest, repo_name):
+            # Check if this specific found unstable version is in our ignore list!
+            is_ignored = (ignored_ver and clean_version(upstream_latest, repo_name) == clean_version(ignored_ver, repo_name))
+            if not is_ignored:
+                needs_update = True
 
     return repo_name, {
         "status": "success",
@@ -461,34 +489,43 @@ def check_repo_version(repo_name, branch=None):
         "project": exact_item.get("project") if exact_item else repo_name
     }
 
-def get_git_diff(repo_name):
+def get_git_diff(repo_name, stable_branch="factory", unstable_branch="next", workspace_path="."):
     """
-    Returns the git diff between origin/factory and origin/next for a given repo.
+    Returns the git diff between stable and unstable branches for a given repo.
     """
-    repo_path = os.path.join('.', repo_name)
+    repo_path = os.path.join(workspace_path, repo_name)
+    if not unstable_branch:
+        return "No unstable branch configured for this workspace."
     try:
         res = run_tracked(
-            ['git', '-C', repo_path, 'diff', 'origin/factory...origin/next'],
+            ['git', '-C', repo_path, 'diff', f'origin/{stable_branch}...origin/{unstable_branch}'],
             capture_output=True, text=True, check=True
         )
-        return res.stdout
+        diff_text = res.stdout
+        if not diff_text.strip():
+            return f"No differences in spec files or sources detected between local Unstable ({unstable_branch}) and local Stable ({stable_branch}) branches."
+        return diff_text
     except Exception as e:
         return f"Error loading diff: {str(e)}"
 
-def get_gitea_pr_url(repo_name):
+def get_gitea_pr_url(repo_name, stable_branch="factory", unstable_branch="next", workspace_path="."):
     """
-    Returns the URL to create a pull request from next to factory.
+    Returns the URL to create a pull request from unstable to stable branch.
     """
-    repo_path = os.path.join('.', repo_name)
+    repo_path = os.path.join(workspace_path, repo_name)
     owner, gitea_name = get_gitea_owner_and_repo(repo_path, repo_name)
-    return f"https://src.opensuse.org/{owner}/{gitea_name}/compare/factory...next"
+    if not unstable_branch:
+        return f"https://src.opensuse.org/{owner}/{gitea_name}"
+    return f"https://src.opensuse.org/{owner}/{gitea_name}/compare/{stable_branch}...{unstable_branch}"
 
-def create_gitea_pr(repo_name, title, description):
+def create_gitea_pr(repo_name, title, description, stable_branch="factory", unstable_branch="next", workspace_path="."):
     """
-    Create a Gitea pull request from 'next' to 'factory' using the 'tea' CLI utility.
+    Create a Gitea pull request from unstable to stable branch using the 'tea' CLI utility.
     """
     import shutil
-    repo_path = os.path.join('.', repo_name)
+    if not unstable_branch:
+        return False, "Error: No unstable branch configured for this workspace."
+    repo_path = os.path.join(workspace_path, repo_name)
     try:
         if shutil.which("tea") is None:
             return False, "Error: 'tea' CLI utility is not installed on the system."
@@ -496,8 +533,8 @@ def create_gitea_pr(repo_name, title, description):
         cmd = [
             "tea", "pulls", "create",
             "--repo", repo_path,
-            "--head", "next",
-            "--base", "factory",
+            "--head", unstable_branch,
+            "--base", stable_branch,
             "--title", title,
             "--description", description
         ]

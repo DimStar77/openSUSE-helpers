@@ -14,6 +14,8 @@ import threading
 import signal
 import re
 import time
+import json
+from pathlib import Path
 
 import gi
 gi.require_version('Gtk', '4.0')
@@ -46,6 +48,23 @@ RE_HEX_40 = re.compile(r'^[0-9a-fA-F]{40}$')
 RE_HEX_SHORT = re.compile(r'^[0-9a-fA-F]{7,12}$')
 RE_VERSION_3 = re.compile(r'(\d+)([\._])(\d+)\2(\d+)')
 RE_VERSION_2 = re.compile(r'(\d+)([\._])(\d+)')
+
+def clean_version(version_str, repo_name=None):
+    """Normalize version string by leveraging our centralized sync_backend custom overrides."""
+    return sb.clean_version(version_str, repo_name)
+
+def apply_source_view_style_scheme(buffer):
+    """Dynamically applies GtkSourceView style schemes based on system dark/light preference."""
+    if not GtkSource or not buffer or not hasattr(buffer, "set_style_scheme"):
+        return
+    style_manager = Adw.StyleManager.get_default()
+    is_dark = style_manager.get_dark()
+    scheme_id = "oblivion" if is_dark else "classic"
+
+    scheme_manager = GtkSource.StyleSchemeManager.get_default()
+    scheme = scheme_manager.get_scheme(scheme_id)
+    if scheme:
+        buffer.set_style_scheme(scheme)
 
 def get_service_revision(pkg_dir: str) -> Optional[str]:
     """Parse the package's local _service file to find the revision parameter for the main obs_scm service.
@@ -234,11 +253,11 @@ class PackageRow(Gtk.ListBoxRow):
             next_ver = version_data.get("next_ver", "—")
             upstream_latest = version_data.get("upstream_latest", "—")
 
-            if factory_ver != upstream_stable and factory_ver != "N/A" and upstream_stable != "N/A":
+            if factory_ver != "N/A" and upstream_stable != "N/A" and clean_version(factory_ver, self.package_name) != clean_version(upstream_stable, self.package_name):
                 subtitle_parts.append("Stable Update")
                 self.badges_box.append(self.create_badge("Stable 🔺", "green"))
 
-            if next_ver != "—" and next_ver != upstream_latest and upstream_latest != "—":
+            if next_ver != "—" and upstream_latest != "—" and clean_version(next_ver, self.package_name) != clean_version(upstream_latest, self.package_name):
                 subtitle_parts.append("Unstable Update")
                 self.badges_box.append(self.create_badge("Unstable 🔺", "purple"))
 
@@ -256,6 +275,210 @@ class PackageRow(Gtk.ListBoxRow):
                 self.sub_label.set_markup("<span size='small' foreground='green'>✅ Fully In Sync &amp; Up-To-Date</span>")
             else:
                 self.sub_label.set_markup("<span size='small' foreground='gray'>In Sync</span>")
+
+
+class SyncCreatePRDialog(Gtk.Window):
+    """Modal dialog to prefill, review branch changes, and programmatically create a Gitea PR."""
+    def __init__(self, parent, package_name):
+        super().__init__(transient_for=parent, modal=True, title=f"Create Pull Request - {package_name}")
+        self.set_default_size(840, 680)
+
+        self.package_name = package_name
+        self.parent = parent
+        self.is_destroyed = False
+
+        self.connect("destroy", self.on_destroy)
+
+        # Main layout
+        main_layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        main_layout.set_margin_top(12)
+        main_layout.set_margin_bottom(12)
+        main_layout.set_margin_start(18)
+        main_layout.set_margin_end(18)
+
+        # Header Title
+        title_lbl = Gtk.Label(halign=Gtk.Align.START)
+        title_lbl.set_markup(f"<span size='large' weight='bold'>Prefill Pull Request for {package_name}</span>")
+        main_layout.append(title_lbl)
+
+        # Grid for prefilled branch mapping & PR Title
+        grid = Gtk.Grid(column_spacing=18, row_spacing=12)
+        grid.set_margin_top(6)
+        grid.set_margin_bottom(6)
+
+        # 1. Source Branch (Head)
+        src_lbl = Gtk.Label(halign=Gtk.Align.START)
+        src_lbl.set_markup("<span weight='bold'>Source Branch (Head):</span>")
+        src_val = Gtk.Label(label=self.parent.unstable_b, halign=Gtk.Align.START)
+        grid.attach(src_lbl, 0, 0, 1, 1)
+        grid.attach(src_val, 1, 0, 1, 1)
+
+        # 2. Target Branch (Base)
+        tgt_lbl = Gtk.Label(halign=Gtk.Align.START)
+        tgt_lbl.set_markup("<span weight='bold'>Target Branch (Base):</span>")
+        tgt_val = Gtk.Label(label=self.parent.stable_b, halign=Gtk.Align.START)
+        grid.attach(tgt_lbl, 2, 0, 1, 1)
+        grid.attach(tgt_val, 3, 0, 1, 1)
+
+        # 3. PR Title
+        title_input_lbl = Gtk.Label(halign=Gtk.Align.START)
+        title_input_lbl.set_markup("<span weight='bold'>PR Title:</span>")
+        self.title_entry = Gtk.Entry()
+        self.title_entry.set_hexpand(True)
+        self.title_entry.set_text(f"Forward {self.parent.unstable_b} to {self.parent.stable_b}: {package_name}")
+        grid.attach(title_input_lbl, 0, 1, 1, 1)
+        grid.attach(self.title_entry, 1, 1, 3, 1)
+
+        # 4. PR Description
+        desc_input_lbl = Gtk.Label(halign=Gtk.Align.START)
+        desc_input_lbl.set_markup("<span weight='bold'>Description:</span>")
+
+        self.desc_buffer = Gtk.TextBuffer()
+        self.desc_buffer.set_text(f"Automated {self.parent.unstable_b}-to-{self.parent.stable_b} branch forwarding for {package_name} via Geckopit.")
+        self.desc_view = Gtk.TextView(buffer=self.desc_buffer)
+        self.desc_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+
+        desc_scroll = Gtk.ScrolledWindow()
+        desc_scroll.set_child(self.desc_view)
+        desc_scroll.set_size_request(-1, 80)
+        grid.attach(desc_input_lbl, 0, 2, 1, 1)
+        grid.attach(desc_scroll, 1, 2, 3, 1)
+
+        main_layout.append(grid)
+
+        # Diff View Label
+        diff_lbl = Gtk.Label(halign=Gtk.Align.START)
+        diff_lbl.set_markup("<span size='medium' weight='bold'>Review Branch Changes (Diff):</span>")
+        main_layout.append(diff_lbl)
+
+        # Diff View Scrolled Window
+        diff_scroll = Gtk.ScrolledWindow()
+        diff_scroll.set_hexpand(True)
+        diff_scroll.set_vexpand(True)
+
+        if GtkSource:
+            lang_manager = GtkSource.LanguageManager.get_default()
+            lang = lang_manager.get_language('diff')
+            self.diff_buffer = GtkSource.Buffer()
+            self.diff_buffer.set_language(lang)
+            self.diff_buffer.set_highlight_syntax(True)
+            self.diff_view = GtkSource.View(buffer=self.diff_buffer)
+            self.diff_view.set_show_line_numbers(True)
+            self.diff_view.set_highlight_current_line(True)
+        else:
+            self.diff_buffer = Gtk.TextBuffer()
+            self.diff_view = Gtk.TextView(buffer=self.diff_buffer)
+
+        self.diff_view.set_monospace(True)
+        self.diff_view.set_editable(False)
+        diff_scroll.set_child(self.diff_view)
+        main_layout.append(diff_scroll)
+
+        # Synchronize GtkSourceView theme with system dark/light mode preference!
+        style_manager = Adw.StyleManager.get_default()
+        style_manager.connect("notify::dark", lambda sm, pspec: apply_source_view_style_scheme(self.diff_buffer))
+        apply_source_view_style_scheme(self.diff_buffer)
+
+        # Footer Button Action Bar
+        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        footer.set_halign(Gtk.Align.END)
+
+        cancel_btn = Gtk.Button(label="Cancel")
+        cancel_btn.connect("clicked", lambda btn: self.destroy())
+        footer.append(cancel_btn)
+
+        self.create_btn = Gtk.Button(label="Create Pull Request")
+        self.create_btn.add_css_class("suggested-action")
+        self.create_btn.connect("clicked", self.on_create_pr_clicked)
+        footer.append(self.create_btn)
+
+        main_layout.append(footer)
+        self.set_child(main_layout)
+
+        # Start loading diff asynchronously
+        self.diff_buffer.set_text("Connecting to pool & loading differences...")
+        parent.executor.submit(self.load_diff_data)
+
+    def on_destroy(self, widget):
+        self.is_destroyed = True
+
+    def load_diff_data(self):
+        diff_text = sb.get_git_diff(self.package_name, stable_branch=self.parent.stable_b, unstable_branch=self.parent.unstable_b, workspace_path=self.parent.stable_p)
+        GLib.idle_add(self.update_diff_text, diff_text)
+
+    def update_diff_text(self, text):
+        if not self.is_destroyed:
+            self.diff_buffer.set_text(text)
+
+    def on_create_pr_clicked(self, btn):
+        title = self.title_entry.get_text().strip()
+
+        start_iter = self.desc_buffer.get_start_iter()
+        end_iter = self.desc_buffer.get_end_iter()
+        description = self.desc_buffer.get_text(start_iter, end_iter, True).strip()
+
+        if not title:
+            toast = Adw.Toast.new("Pull Request title cannot be empty.")
+            self.parent.toast_overlay.add_toast(toast)
+            return
+
+        self.create_btn.set_sensitive(False)
+        self.create_btn.set_label("Creating PR...")
+        self.title_entry.set_sensitive(False)
+        self.desc_view.set_sensitive(False)
+
+        # Final pre-submit double-check to prevent race conditions
+        self.parent.executor.submit(self.run_bg_pre_submit_check, title, description)
+
+    def run_bg_pre_submit_check(self, title, description):
+        _, pr_data = sb.check_repo_pr(self.package_name, stable_branch=self.parent.stable_b, unstable_branch=self.parent.unstable_b, workspace_path=self.parent.stable_p)
+        GLib.idle_add(self.on_pre_submit_check_result, pr_data, title, description)
+
+    def on_pre_submit_check_result(self, pr_data, title, description):
+        if self.is_destroyed:
+            return
+
+        if pr_data.get("has_pr"):
+            # A PR was created in the meantime by someone else!
+            toast = Adw.Toast.new("A Pull Request has just been created by someone else!")
+            pr_url = pr_data.get("url")
+            if pr_url:
+                toast.set_button_label("Open PR")
+                toast.connect("button-clicked", lambda t, u: webbrowser.open(u), pr_url)
+            self.parent.toast_overlay.add_toast(toast)
+            self.destroy()
+            self.parent.refresh_single_package(self.package_name)
+        else:
+            # No existing PR, proceed to submit!
+            self.parent.executor.submit(self.run_bg_create_pr, title, description)
+
+    def run_bg_create_pr(self, title, description):
+        success, res_msg = sb.create_gitea_pr(self.package_name, title, description, stable_branch=self.parent.stable_b, unstable_branch=self.parent.unstable_b, workspace_path=self.parent.stable_p)
+        GLib.idle_add(self.on_pr_created_result, success, res_msg)
+
+    def on_pr_created_result(self, success, res_msg):
+        if self.is_destroyed:
+            return
+
+        if success:
+            toast = Adw.Toast.new("Pull Request created successfully!")
+            url_match = re.search(r'https?://[^\s]+', res_msg)
+            if url_match:
+                pr_url = url_match.group(0)
+                toast.set_button_label("Open PR")
+                toast.connect("button-clicked", lambda t, u: webbrowser.open(u), pr_url)
+
+            self.parent.toast_overlay.add_toast(toast)
+            self.destroy()
+            self.parent.refresh_single_package(self.package_name)
+        else:
+            self.create_btn.set_sensitive(True)
+            self.create_btn.set_label("Create Pull Request")
+            self.title_entry.set_sensitive(True)
+            self.desc_view.set_sensitive(True)
+
+            toast = Adw.Toast.new(f"Failed to create PR: {res_msg}")
+            self.parent.toast_overlay.add_toast(toast)
 
 
 class SyncDiffDialog(Gtk.Window):
@@ -316,6 +539,11 @@ class SyncDiffDialog(Gtk.Window):
         self.view.set_monospace(True)
         scroll.set_child(self.view)
         box.append(scroll)
+
+        # Synchronize GtkSourceView theme with system dark/light mode preference!
+        style_manager = Adw.StyleManager.get_default()
+        style_manager.connect("notify::dark", lambda sm, pspec: apply_source_view_style_scheme(self.buffer))
+        apply_source_view_style_scheme(self.buffer)
 
         self.set_child(box)
 
@@ -397,18 +625,436 @@ class SyncDiffDialog(Gtk.Window):
             self.buffer.set_text(text)
 
 
+        if not self.is_destroyed:
+            GLib.idle_add(self.update_ui, comparison_desc, diff_text)
+
+    def update_ui(self, desc, text):
+        if not self.is_destroyed:
+            self.title_label.set_markup(f"<span size='large' weight='bold'>{desc}</span>")
+            self.buffer.set_text(text)
+
+
+class WorkspaceConfig:
+    def __init__(self):
+        self.active_workspace = "Default"
+        self.workspaces = {
+            "Default": {
+                "stable_path": "",
+                "stable_branch": "factory",
+                "unstable_path": "",
+                "unstable_branch": "next"
+            }
+        }
+        self.load()
+
+    def load(self):
+        path = Path.home() / ".config" / "geckopit.json"
+        if path.exists():
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    self.active_workspace = data.get("active_workspace", "Default")
+                    self.workspaces = data.get("workspaces", self.workspaces)
+            except Exception:
+                pass
+
+    def save(self):
+        path = Path.home() / ".config" / "geckopit.json"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "active_workspace": self.active_workspace,
+                    "workspaces": self.workspaces
+                }, f, indent=2)
+        except Exception:
+            pass
+
+    def get_active_profile(self):
+        return self.workspaces.get(self.active_workspace, {
+            "stable_path": "",
+            "stable_branch": "factory",
+            "unstable_path": "",
+            "unstable_branch": "next"
+        })
+
+    def autodetect_and_migrate(self):
+        active_prof = self.get_active_profile()
+        if active_prof.get("stable_path"):
+            return
+
+        cwd = os.path.abspath('.')
+        parent_dir, current_folder_name = os.path.split(cwd)
+
+        is_gnome_style = False
+        stable_guess = ""
+        unstable_guess = ""
+
+        if current_folder_name == "GNOME":
+            stable_guess = cwd
+            unstable_sibling = os.path.join(parent_dir, "GNOME:Next")
+            if os.path.exists(unstable_sibling):
+                unstable_guess = unstable_sibling
+            is_gnome_style = True
+        elif current_folder_name == "GNOME:Next":
+            unstable_guess = cwd
+            stable_sibling = os.path.join(parent_dir, "GNOME")
+            if os.path.exists(stable_sibling):
+                stable_guess = stable_sibling
+            is_gnome_style = True
+
+        if is_gnome_style:
+            # Autodetection succeeded! Overwrite generic "Default" so we have a clean GNOME profile
+            self.workspaces = {
+                "GNOME": {
+                    "stable_path": stable_guess,
+                    "stable_branch": "factory",
+                    "unstable_path": unstable_guess if unstable_guess else None,
+                    "unstable_branch": "next" if unstable_guess else None
+                }
+            }
+            self.active_workspace = "GNOME"
+            self.save()
+            return
+
+        has_sub_repos = any(os.path.isdir(d) and os.path.exists(os.path.join(d, '.git')) for d in os.listdir('.'))
+        if has_sub_repos:
+            # Autodetection succeeded for local sub-repos! Overwrite generic "Default"
+            folder_name = current_folder_name
+            self.workspaces = {
+                folder_name: {
+                    "stable_path": cwd,
+                    "stable_branch": "factory",
+                    "unstable_path": None,
+                    "unstable_branch": None
+                }
+            }
+            self.active_workspace = folder_name
+            self.save()
+
+
+def detect_git_branch(path):
+    """Parses .git/HEAD in pure Python to detect the active git branch name without subprocess overhead."""
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        git_dir = os.path.join(path, '.git')
+        if os.path.isfile(git_dir):
+            with open(git_dir, 'r') as f:
+                line = f.read().strip()
+            if line.startswith('gitdir:'):
+                git_dir = line.split(':', 1)[1].strip()
+                if not os.path.isabs(git_dir):
+                    git_dir = os.path.abspath(os.path.join(path, git_dir))
+
+        head_path = os.path.join(git_dir, 'HEAD')
+        if os.path.exists(head_path):
+            with open(head_path, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+            if content.startswith('ref:'):
+                ref_part = content.split('ref:', 1)[1].strip()
+                return ref_part.split('/')[-1]
+            elif len(content) == 40 and all(c in "0123456789abcdefABCDEF" for c in content):
+                # Detached HEAD state: return short 7-character commit SHA-1 hash!
+                return content[:7]
+    except Exception:
+        pass
+    return None
+
+
+class WorkspaceManagerDialog(Gtk.Window):
+    def __init__(self, parent_window, config, callback_on_save):
+        super().__init__(transient_for=parent_window, modal=True, title="Workspace Manager Settings")
+        self.set_default_size(550, 480)
+        self.config = config
+        self.parent_window = parent_window
+        self.callback_on_save = callback_on_save
+        self.ws_names = sorted(self.config.workspaces.keys())
+
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        main_box.set_margin_start(18)
+        main_box.set_margin_end(18)
+        main_box.set_margin_top(18)
+        main_box.set_margin_bottom(18)
+
+        title_lbl = Gtk.Label(halign=Gtk.Align.START)
+        title_lbl.set_markup("<span size='large' weight='bold'>Manage Workspace Profiles</span>")
+        main_box.append(title_lbl)
+
+        selector_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        lbl_sel = Gtk.Label(label="Selected Profile:", halign=Gtk.Align.START)
+        selector_box.append(lbl_sel)
+
+        # DropDown for profiles list
+        self.profile_combo = Gtk.DropDown.new_from_strings(self.ws_names)
+        if self.config.active_workspace in self.ws_names:
+            idx = self.ws_names.index(self.config.active_workspace)
+            self.profile_combo.set_selected(idx)
+        self.profile_combo.connect("notify::selected", self.on_profile_selection_changed)
+        selector_box.append(self.profile_combo)
+
+        add_btn = Gtk.Button(label="➕ Add New")
+        add_btn.connect("clicked", self.on_add_profile_clicked)
+        selector_box.append(add_btn)
+
+        self.del_btn = Gtk.Button(label="🗑️ Delete")
+        self.del_btn.connect("clicked", self.on_delete_profile_clicked)
+        selector_box.append(self.del_btn)
+
+        main_box.append(selector_box)
+        main_box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+
+        self.grid = Gtk.Grid(column_spacing=18, row_spacing=12)
+        self.grid.set_margin_top(6)
+        self.grid.set_margin_bottom(6)
+
+        lbl_name = Gtk.Label(label="Profile Name:", halign=Gtk.Align.START)
+        self.name_entry = Gtk.Entry()
+        self.grid.attach(lbl_name, 0, 0, 1, 1)
+        self.grid.attach(self.name_entry, 1, 0, 2, 1)
+
+        lbl_stable_path = Gtk.Label(label="Stable Path:", halign=Gtk.Align.START)
+        self.stable_path_entry = Gtk.Entry()
+        self.stable_path_entry.set_hexpand(True)
+        btn_browse_stable = Gtk.Button(label="📁 Browse")
+        btn_browse_stable.connect("clicked", self.on_browse_clicked, self.stable_path_entry, True)
+        self.grid.attach(lbl_stable_path, 0, 1, 1, 1)
+        self.grid.attach(self.stable_path_entry, 1, 1, 1, 1)
+        self.grid.attach(btn_browse_stable, 2, 1, 1, 1)
+
+        lbl_stable_br = Gtk.Label(label="Stable Branch:", halign=Gtk.Align.START)
+        self.stable_br_entry = Gtk.Entry()
+        self.grid.attach(lbl_stable_br, 0, 2, 1, 1)
+        self.grid.attach(self.stable_br_entry, 1, 2, 2, 1)
+
+        lbl_unstable_path = Gtk.Label(label="Unstable Path (Opt):", halign=Gtk.Align.START)
+        self.unstable_path_entry = Gtk.Entry()
+        self.unstable_path_entry.set_hexpand(True)
+        btn_browse_unstable = Gtk.Button(label="📁 Browse")
+        btn_browse_unstable.connect("clicked", self.on_browse_clicked, self.unstable_path_entry, False)
+        self.grid.attach(lbl_unstable_path, 0, 3, 1, 1)
+        self.grid.attach(self.unstable_path_entry, 1, 3, 1, 1)
+        self.grid.attach(btn_browse_unstable, 2, 3, 1, 1)
+
+        lbl_unstable_br = Gtk.Label(label="Unstable Branch:", halign=Gtk.Align.START)
+        self.unstable_br_entry = Gtk.Entry()
+        self.grid.attach(lbl_unstable_br, 0, 4, 1, 1)
+        self.grid.attach(self.unstable_br_entry, 1, 4, 2, 1)
+
+        main_box.append(self.grid)
+
+        spacer = Gtk.Label()
+        spacer.set_vexpand(True)
+        main_box.append(spacer)
+
+        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        footer.set_halign(Gtk.Align.END)
+
+        cancel_btn = Gtk.Button(label="Cancel")
+        cancel_btn.connect("clicked", lambda btn: self.destroy())
+        footer.append(cancel_btn)
+
+        save_btn = Gtk.Button(label="💾 Save Profile")
+        save_btn.add_css_class("suggested-action")
+        save_btn.connect("clicked", self.on_save_clicked)
+        footer.append(save_btn)
+
+        main_box.append(footer)
+        self.set_child(main_box)
+
+        self.load_profile_to_fields(self.config.active_workspace)
+
+    def load_profile_to_fields(self, ws_name):
+        prof = self.config.workspaces.get(ws_name, {})
+        self.name_entry.set_text(ws_name)
+        self.stable_path_entry.set_text(prof.get("stable_path", "") or "")
+        self.stable_br_entry.set_text(prof.get("stable_branch", "factory") or "factory")
+        self.unstable_path_entry.set_text(prof.get("unstable_path", "") or "")
+        self.unstable_br_entry.set_text(prof.get("unstable_branch", "next") or "next")
+        self.del_btn.set_sensitive(len(self.config.workspaces) > 1)
+
+    def on_profile_selection_changed(self, dropdown, pspec):
+        active_idx = dropdown.get_selected()
+        if 0 <= active_idx < len(self.ws_names):
+            ws_name = self.ws_names[active_idx]
+            self.load_profile_to_fields(ws_name)
+
+    def on_browse_clicked(self, btn, entry, is_stable=True):
+        dialog = Gtk.FileChooserNative(
+            title="Select Workspace Folder",
+            transient_for=self,
+            action=Gtk.FileChooserAction.SELECT_FOLDER
+        )
+        def on_response(native_dialog, response_id):
+            if response_id == Gtk.ResponseType.ACCEPT:
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=DeprecationWarning)
+                    path = native_dialog.get_file().get_path()
+                entry.set_text(path)
+
+                # Auto-detect git branch
+                guessed_br = detect_git_branch(path)
+                if guessed_br:
+                    if is_stable:
+                        self.stable_br_entry.set_text(guessed_br)
+                    else:
+                        self.unstable_br_entry.set_text(guessed_br)
+
+                # Pre-populate profile name if stable path was picked and profile name is empty or default
+                if is_stable:
+                    curr_name = self.name_entry.get_text().strip()
+                    if not curr_name or curr_name in ("New Workspace", "New Profile"):
+                        folder_name = os.path.basename(path)
+                        self.name_entry.set_text(folder_name)
+
+                    # Auto-detect linked git worktree for the unstable path if exactly one active worktree exists!
+                    try:
+                        git_dir = os.path.join(path, '.git')
+                        if os.path.isfile(git_dir):
+                            with open(git_dir, 'r') as f:
+                                line = f.read().strip()
+                            if line.startswith('gitdir:'):
+                                real_git_dir = line.split(':', 1)[1].strip()
+                                git_dir = os.path.dirname(os.path.dirname(real_git_dir))
+                                if not os.path.isabs(git_dir):
+                                    git_dir = os.path.abspath(os.path.join(path, git_dir))
+
+                        worktrees_dir = os.path.join(git_dir, 'worktrees')
+                        if os.path.exists(worktrees_dir) and os.path.isdir(worktrees_dir):
+                            valid_worktrees = []
+                            for wt_name in os.listdir(worktrees_dir):
+                                wt_path = os.path.join(worktrees_dir, wt_name)
+                                gitdir_file = os.path.join(wt_path, 'gitdir')
+                                head_file = os.path.join(wt_path, 'HEAD')
+
+                                if os.path.exists(gitdir_file) and os.path.exists(head_file):
+                                    with open(gitdir_file, 'r', encoding='utf-8') as f:
+                                        wt_gitdir = f.read().strip()
+
+                                    wt_target_dir = os.path.dirname(wt_gitdir)
+                                    if os.path.exists(wt_target_dir) and os.path.isdir(wt_target_dir):
+                                        with open(head_file, 'r', encoding='utf-8') as f:
+                                            wt_head = f.read().strip()
+                                        wt_branch = None
+                                        if wt_head.startswith('ref:'):
+                                            wt_branch = wt_head.split('ref:', 1)[1].strip().split('/')[-1]
+                                        elif len(wt_head) == 40:
+                                            wt_branch = wt_head[:7]
+
+                                        valid_worktrees.append((wt_target_dir, wt_branch))
+
+                            if len(valid_worktrees) == 1:
+                                wt_dir, wt_br = valid_worktrees[0]
+                                self.unstable_path_entry.set_text(wt_dir)
+                                if wt_br:
+                                    self.unstable_br_entry.set_text(wt_br)
+
+                                # Present a gorgeous floating toast notification
+                                toast = Adw.Toast.new("💡 Linked Git worktree detected! Unstable path and branches auto-filled.")
+                                self.parent_window.toast_overlay.add_toast(toast)
+                    except Exception:
+                        pass
+
+            native_dialog.destroy()
+        dialog.connect("response", on_response)
+        dialog.show()
+
+    def on_add_profile_clicked(self, btn):
+        self.name_entry.set_text("New Profile")
+        self.stable_path_entry.set_text("")
+        self.stable_br_entry.set_text("")
+        self.unstable_path_entry.set_text("")
+        self.unstable_br_entry.set_text("")
+        self.name_entry.grab_focus()
+
+    def on_delete_profile_clicked(self, btn):
+        active_idx = self.profile_combo.get_selected()
+        if 0 <= active_idx < len(self.ws_names):
+            ws_name = self.ws_names[active_idx]
+            if len(self.config.workspaces) > 1:
+                del self.config.workspaces[ws_name]
+                self.ws_names = sorted(self.config.workspaces.keys())
+                self.config.active_workspace = self.ws_names[0]
+                self.config.save()
+
+                # Rebuild dropdown model
+                model = Gtk.StringList.new(self.ws_names)
+                self.profile_combo.set_model(model)
+                if self.config.active_workspace in self.ws_names:
+                    idx = self.ws_names.index(self.config.active_workspace)
+                    self.profile_combo.set_selected(idx)
+
+    def on_save_clicked(self, btn):
+        ws_name = self.name_entry.get_text().strip()
+        stable_p = self.stable_path_entry.get_text().strip()
+        stable_b = self.stable_br_entry.get_text().strip() or "factory"
+        unstable_p = self.unstable_path_entry.get_text().strip() or None
+        unstable_b = self.unstable_br_entry.get_text().strip() or None
+
+        if not ws_name:
+            return
+        if not stable_p or not os.path.exists(stable_p):
+            toast = Adw.Toast.new("Stable Path cannot be empty and must exist on disk.")
+            self.parent_window.toast_overlay.add_toast(toast)
+            return
+
+        if not unstable_p:
+            unstable_p = None
+            unstable_b = None
+
+        self.config.workspaces[ws_name] = {
+            "stable_path": stable_p,
+            "stable_branch": stable_b,
+            "unstable_path": unstable_p,
+            "unstable_branch": unstable_b
+        }
+
+        # If they renamed a profile, delete the old one
+        active_idx = self.profile_combo.get_selected()
+        old_ws_name = self.ws_names[active_idx] if 0 <= active_idx < len(self.ws_names) else None
+        if old_ws_name and old_ws_name != ws_name:
+            if old_ws_name in self.config.workspaces:
+                del self.config.workspaces[old_ws_name]
+
+        self.config.active_workspace = ws_name
+        self.config.save()
+        self.destroy()
+        self.callback_on_save()
+
+
 class SyncWindow(Adw.ApplicationWindow):
     def __init__(self, app):
-        super().__init__(application=app, title="GNOME Sync Dashboard")
+        super().__init__(application=app, title="Geckopit")
         self.set_default_size(1250, 780)
         self.set_size_request(950, 620) # Prevent GTK Paned measurement warning at startup
-        self.set_icon_name("preferences-system-network")
+        # Set window icon natively from our custom SVG vector icon!
+        icon_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "org.opensuse.geckopit.svg")
+        if os.path.exists(icon_path):
+            try:
+                icon_theme = Gtk.IconTheme.get_for_display(self.get_display())
+                icon_theme.add_search_path(os.path.dirname(icon_path))
+                self.set_icon_name("org.opensuse.geckopit")
+            except Exception:
+                self.set_icon_name("preferences-system-network")
+        else:
+            self.set_icon_name("preferences-system-network")
+
+        # Load workspace configuration and run autodetection
+        self.config = WorkspaceConfig()
+        self.config.autodetect_and_migrate()
+
+        # Branch states
+        active_prof = self.config.get_active_profile()
+        self.stable_p = active_prof.get("stable_path", ".") or "."
+        self.stable_b = active_prof.get("stable_branch", "factory") or "factory"
+        self.unstable_b = active_prof.get("unstable_branch", "next") or "next"
+        self.ignored_unstable_versions = active_prof.get("ignored_unstable_versions", {})
 
         # Core data
-        self.repos = sorted([
-            d for d in os.listdir('.')
-            if os.path.isdir(d) and os.path.exists(os.path.join(d, '.git'))
-        ])
+        self.repos = []
+        self.package_data = {}
+        self.load_workspace_repositories()
 
         # Background workers configured with daemon threads so they terminate on exit
         self.executor = DaemonThreadPoolExecutor(max_workers=50)
@@ -422,15 +1068,14 @@ class SyncWindow(Adw.ApplicationWindow):
         # Initialize filter timeout and state registries
         self.filter_timeout_id = 0
         self.last_diff_package = None
+        self.refreshed_packages = set()
+        self.refreshed_sync_packages = set()
+        self.refreshed_version_packages = set()
 
-        # Initialize package data dictionary
-        self.package_data = {
-            repo: {
-                "sync": {},
-                "version": {},
-                "pr": {}
-            } for repo in self.repos
-        }
+        # Global key event controller for application-wide shortcuts (Ctrl+F / Slash)
+        window_key_controller = Gtk.EventControllerKey.new()
+        window_key_controller.connect("key-pressed", self.on_window_key_pressed)
+        self.add_controller(window_key_controller)
 
         # Build Sidebar
         self.sidebar_box = self.build_sidebar()
@@ -443,11 +1088,28 @@ class SyncWindow(Adw.ApplicationWindow):
         self.horizontal_paned.set_start_child(self.sidebar_box)
         self.horizontal_paned.set_end_child(self.detail_pane)
 
-        # Header Bar
+        # Header Bar Workspace Selector and Settings Button
         self.header_bar = Adw.HeaderBar()
+
+        # Left: Workspace profile dropdown picker (using modern Gtk.DropDown!)
+        self.header_combo = Gtk.DropDown()
+        self.header_combo.connect("notify::selected", self.on_header_profile_changed)
+        self.update_header_profile_combo()
+        self.header_bar.pack_start(self.header_combo)
+
+        # Left: Settings/Workspace Manager Button
+        settings_btn = Gtk.Button.new_from_icon_name("emblem-system-symbolic")
+        settings_btn.set_tooltip_text("Workspace Profile Manager Settings")
+        settings_btn.connect("clicked", self.on_settings_clicked)
+        self.header_bar.pack_start(settings_btn)
+
+        # Center Title
         title_lbl = Gtk.Label()
-        title_lbl.set_markup("<span weight='bold'>GNOME Sync Dashboard</span>")
+        title_lbl.set_markup("<span weight='bold'>Geckopit</span>")
         self.header_bar.set_title_widget(title_lbl)
+
+        # Apply profile configuration UI states dynamically on startup
+        self.apply_active_profile_ui()
 
         # Vertical split pane: Top is horizontal split, Bottom is terminal drawer
         self.main_paned = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
@@ -516,6 +1178,10 @@ class SyncWindow(Adw.ApplicationWindow):
         # Kick off background loading
         self.refresh_all()
 
+        # If no stable path is configured, trigger the onboarding setup dialog immediately!
+        if not active_prof.get("stable_path"):
+            GLib.idle_add(lambda: self.on_settings_clicked(None))
+
     def get_system_monospace_font(self):
         """Query GNOME GSettings dynamically to load the user's monospace font preference defensively."""
         try:
@@ -555,22 +1221,179 @@ class SyncWindow(Adw.ApplicationWindow):
 
         os._exit(0)
 
+    def load_workspace_repositories(self):
+        active_prof = self.config.get_active_profile()
+        stable_p = active_prof.get("stable_path", "")
+        unstable_p = active_prof.get("unstable_path", "")
+
+        factory_repos = set()
+        next_repos = set()
+
+        def is_git_repo(path):
+            if not os.path.exists(path) or not os.path.isdir(path):
+                return False
+            git_sub = os.path.join(path, ".git")
+            return os.path.exists(git_sub)
+
+        if stable_p and os.path.exists(stable_p):
+            try:
+                factory_repos = {d for d in os.listdir(stable_p) if is_git_repo(os.path.join(stable_p, d))}
+            except Exception:
+                pass
+
+        if unstable_p and os.path.exists(unstable_p):
+            try:
+                next_repos = {d for d in os.listdir(unstable_p) if is_git_repo(os.path.join(unstable_p, d))}
+            except Exception:
+                pass
+
+        self.repos = sorted(list(factory_repos | next_repos))
+
+        # Re-initialize package data dictionary
+        self.package_data = {
+            repo: {
+                "sync": {},
+                "version": {},
+                "pr": {}
+            } for repo in self.repos
+        }
+        self.load_profile_cache()
+
+    def get_cache_path(self):
+        # Sanitize workspace profile name to only allow safe alphanumeric/dash characters,
+        # preventing path-traversal or directory bugs on names with slashes or colons.
+        safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in self.config.active_workspace)
+        return Path.home() / ".cache" / "geckopit" / f"cache_{safe_name}.json"
+
+    def load_profile_cache(self):
+        cache_path = self.get_cache_path()
+        if cache_path.exists():
+            try:
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    cached_pkg_data = data.get("package_data", {})
+                    for pkg_name, pkg_val in cached_pkg_data.items():
+                        if pkg_name in self.package_data:
+                            self.package_data[pkg_name] = pkg_val
+            except Exception:
+                pass
+
+    def save_profile_cache(self):
+        cache_path = self.get_cache_path()
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "profile": self.config.active_workspace,
+                    "scanned_at": time.time(),
+                    "package_data": self.package_data
+                }, f, indent=2)
+        except Exception:
+            pass
+
+    def apply_active_profile_ui(self):
+        active_prof = self.config.get_active_profile()
+        unstable_p = active_prof.get("unstable_path")
+
+        # Update window title to show active workspace profile name
+        self.set_title(f"Geckopit - Profile: {self.config.active_workspace}")
+
+        # If it is a Single-Pipeline workspace, hide Unstable Card completely
+        is_dual = unstable_p is not None and os.path.exists(unstable_p)
+        self.unstable_card.set_visible(is_dual)
+
+        # Hide unstable filter buttons in sidebar
+        self.filter_unstable.set_visible(is_dual)
+        self.filter_forwarding.set_visible(is_dual)
+
+        # Hide diff perspective dropdown selector if single pipeline
+        self.diff_selector.set_visible(is_dual)
+        if not is_dual:
+            # Fallback perspective selection to factory_pool strictly
+            self.diff_selector.set_selected(1) # Index 1 is factory_pool
+        else:
+            self.diff_selector.set_selected(0) # Index 0 is next_factory (default)
+
+    def update_header_profile_combo(self):
+        ws_names = sorted(self.config.workspaces.keys())
+        model = Gtk.StringList.new(ws_names)
+
+        # Set is_reloading to True to block signals during data rebuild
+        self.is_reloading = True
+        self.header_combo.set_model(model)
+
+        active_ws = self.config.active_workspace
+        if active_ws in ws_names:
+            idx = ws_names.index(active_ws)
+            self.header_combo.set_selected(idx)
+        self.is_reloading = False
+
+    def on_header_profile_changed(self, dropdown, pspec):
+        if getattr(self, "is_reloading", False):
+            return
+
+        active_idx = dropdown.get_selected()
+        ws_names = sorted(self.config.workspaces.keys())
+        if 0 <= active_idx < len(ws_names):
+            ws_name = ws_names[active_idx]
+            if ws_name != self.config.active_workspace:
+                self.config.active_workspace = ws_name
+                self.config.save()
+                self.reload_workspace()
+
+    def on_settings_clicked(self, btn):
+        dialog = WorkspaceManagerDialog(self, self.config, self.reload_workspace)
+        dialog.present()
+
+    def reload_workspace(self):
+        # Update stable and unstable branch maps
+        active_prof = self.config.get_active_profile()
+        self.stable_p = active_prof.get("stable_path", ".") or "."
+        self.stable_b = active_prof.get("stable_branch", "factory") or "factory"
+        self.unstable_b = active_prof.get("unstable_branch", "next") or "next"
+        self.ignored_unstable_versions = active_prof.get("ignored_unstable_versions", {})
+
+        # Clear session refreshed state registry
+        self.refreshed_packages = set()
+        self.refreshed_sync_packages = set()
+        self.refreshed_version_packages = set()
+
+        # Reload repositories
+        self.load_workspace_repositories()
+
+        # Update sidebar list row entries dynamically
+        self.populate_sidebar_rows()
+
+        # Update header-combo selection list
+        self.update_header_profile_combo()
+
+        # Update dynamic layouts (single vs dual pipeline)
+        self.apply_active_profile_ui()
+
+        # Clear active selected details
+        self.detail_stack.set_visible_child_name("empty")
+        self.current_selected_package = None
+
+        # Re-trigger background scans
+        self.refresh_all()
+
     def get_mapped_worktree_path(self, package_name, target_branch):
-        """Maps current project path parent GNOME:Next to GNOME for worktree builds."""
-        current_dir = os.path.abspath('.')
-        parent_dir, current_folder_name = os.path.split(current_dir)
+        active_prof = self.config.get_active_profile()
+        stable_p = active_prof.get("stable_path")
+        unstable_p = active_prof.get("unstable_path")
 
-        target_folder_name = current_folder_name
-        if target_branch == "factory" and "GNOME:Next" in current_folder_name:
-            target_folder_name = current_folder_name.replace("GNOME:Next", "GNOME")
-        elif target_branch == "next" and current_folder_name == "GNOME".strip():
-            target_folder_name = "GNOME:Next"
+        if target_branch == "factory" and stable_p:
+            path = os.path.join(stable_p, package_name)
+            if os.path.exists(path):
+                return path
+        elif target_branch == "next" and unstable_p:
+            path = os.path.join(unstable_p, package_name)
+            if os.path.exists(path):
+                return path
 
-        mapped_dir = os.path.join(parent_dir, target_folder_name, package_name)
-
-        if os.path.exists(mapped_dir) and (os.path.exists(os.path.join(mapped_dir, '.git')) or os.path.isfile(os.path.join(mapped_dir, '.git'))):
-            return mapped_dir
-
+        fallback_p = stable_p if stable_p else unstable_p
+        if fallback_p:
+            return os.path.join(fallback_p, package_name)
         return os.path.abspath(os.path.join('.', package_name))
 
     def is_shell_pid_active(self, shell_pid):
@@ -849,18 +1672,29 @@ class SyncWindow(Adw.ApplicationWindow):
     def hide_terminal(self):
         self.terminal_drawer.set_visible(False)
 
+    def populate_sidebar_rows(self):
+        # Clear existing rows first
+        while True:
+            row = self.master_list_box.get_row_at_index(0)
+            if not row:
+                break
+            self.master_list_box.remove(row)
+
+        self.package_rows = {}
+        for repo in self.repos:
+            row = PackageRow(repo, self)
+            self.master_list_box.append(row)
+            self.package_rows[repo] = row
+
     def refresh_all(self):
-        # We pre-populate the master list box once
-        if not hasattr(self, "package_rows"):
-            self.package_rows = {}
-            for repo in self.repos:
-                row = PackageRow(repo, self)
-                self.master_list_box.append(row)
-                self.package_rows[repo] = row
+        # Ensure rows are fully populated
+        if not getattr(self, "package_rows", None):
+            self.populate_sidebar_rows()
 
         self.start_sync_scan()
         self.start_version_scan()
-        self.start_forwarding_scan()
+        if self.unstable_b:
+            self.start_forwarding_scan()
 
     def refresh_single_package(self, pkg_name):
         """Asynchronously triggers background checks for a single package and updates its row in all relevant lists."""
@@ -875,34 +1709,34 @@ class SyncWindow(Adw.ApplicationWindow):
             pass
 
     def run_bg_sync_single(self, repo):
-        name, data = sb.check_repo_sync(repo)
+        name, data = sb.check_repo_sync(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
         GLib.idle_add(self.update_sync_row_single, name, data)
 
     def update_sync_row_single(self, name, data):
         if data.get("status") == "success":
             self.package_data[name]["sync"] = data
+            self.refreshed_sync_packages.add(name)
             self.update_row_ui(name)
-            if getattr(self, "current_selected_package", None) == name:
-                self.load_package_detail(name)
+            self.check_and_mark_package_refreshed(name)
 
     def run_bg_version_single(self, repo):
-        name, data = sb.check_repo_version(repo)
+        name, data = sb.check_repo_version(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p, ignored_unstable_versions=self.ignored_unstable_versions)
         GLib.idle_add(self.update_version_row_single, name, data)
 
     def update_version_row_single(self, name, data):
         if data.get("status") == "success":
             self.package_data[name]["version"] = data
+            self.refreshed_version_packages.add(name)
             self.update_row_ui(name)
-            if getattr(self, "current_selected_package", None) == name:
-                self.load_package_detail(name)
+            self.check_and_mark_package_refreshed(name)
 
     def run_bg_forward_single(self, repo):
-        _, sync_data = sb.check_repo_sync(repo)
+        _, sync_data = sb.check_repo_sync(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
         pr_data = {"has_pr": False}
-        if sync_data.get("status") == "success" and sync_data.get("next_status") != "No next branch":
+        if self.unstable_b and sync_data.get("status") == "success" and sync_data.get("next_status") != "No next branch":
             next_ahead = sync_data.get("next_ahead", 0)
             if next_ahead > 0:
-                _, pr_data = sb.check_repo_pr(repo)
+                _, pr_data = sb.check_repo_pr(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
         GLib.idle_add(self.update_forward_row_single, repo, sync_data, pr_data)
 
     def update_forward_row_single(self, name, sync_data, pr_data):
@@ -1107,13 +1941,17 @@ class SyncWindow(Adw.ApplicationWindow):
         factory_ver = ver.get("factory_ver", "N/A")
         upstream_stable = ver.get("upstream_stable", "N/A")
         is_stable_track = (factory_ver != "N/A")
-        stable_needs_action = (factory_ver != upstream_stable and factory_ver != "N/A" and upstream_stable != "N/A")
+        stable_needs_action = (factory_ver != "N/A" and upstream_stable != "N/A" and clean_version(factory_ver, row.package_name) != clean_version(upstream_stable, row.package_name))
 
         # C. Unstable/Next Tracking state
         next_ver = ver.get("next_ver", "—")
         upstream_latest = ver.get("upstream_latest", "—")
         is_unstable_track = (next_ver != "—")
-        unstable_needs_action = (next_ver != "—" and next_ver != upstream_latest and upstream_latest != "—")
+
+        # We defensively check if this found unstable update matches our active profile's ignore list!
+        ignored_ver = getattr(self, "ignored_unstable_versions", {}).get(row.package_name)
+        is_ignored_unstable = (ignored_ver and clean_version(upstream_latest, row.package_name) == clean_version(ignored_ver, row.package_name))
+        unstable_needs_action = (next_ver != "—" and upstream_latest != "—" and clean_version(next_ver, row.package_name) != clean_version(upstream_latest, row.package_name) and not is_ignored_unstable)
 
         # D. Forwarding state
         next_ahead = sync.get("next_ahead", 0)
@@ -1258,6 +2096,12 @@ class SyncWindow(Adw.ApplicationWindow):
         self.unstable_ver_lbl = Gtk.Label(label="Loading...", halign=Gtk.Align.START)
         grid.attach(self.unstable_ver_lbl, 1, 0, 1, 1)
 
+        # Attach gesture to capture Ctrl+Alt+Right Click for hidden ignore context menu!
+        self.unstable_ver_gesture = Gtk.GestureClick.new()
+        self.unstable_ver_gesture.set_button(0) # Capture all buttons (left/right/middle)
+        self.unstable_ver_gesture.connect("released", self.on_unstable_ver_clicked)
+        self.unstable_ver_lbl.add_controller(self.unstable_ver_gesture)
+
         lbl_branch = Gtk.Label(label="Branch Alignment:", halign=Gtk.Align.START)
         grid.attach(lbl_branch, 0, 1, 1, 1)
         self.unstable_branch_lbl = Gtk.Label(label="Loading...", halign=Gtk.Align.START)
@@ -1354,6 +2198,11 @@ class SyncWindow(Adw.ApplicationWindow):
         diff_scroll.set_child(self.diff_view)
         box.append(diff_scroll)
 
+        # Synchronize GtkSourceView theme with system dark/light mode preference!
+        style_manager = Adw.StyleManager.get_default()
+        style_manager.connect("notify::dark", lambda sm, pspec: apply_source_view_style_scheme(self.diff_buffer))
+        apply_source_view_style_scheme(self.diff_buffer)
+
         self.diff_revealer.set_child(box)
         return self.diff_revealer
 
@@ -1437,28 +2286,35 @@ class SyncWindow(Adw.ApplicationWindow):
         active_idx = self.diff_selector.get_selected()
         perspective = "next_factory" if active_idx == 0 else "factory_pool"
         self.diff_buffer.set_text("Loading diff...")
-        self.executor.submit(self.run_bg_diff_perspective, package_name, perspective)
+        
+        # Bypasses the slow background thread pool queue to load the diff instantly!
+        threading.Thread(target=self.run_bg_diff_perspective, args=(package_name, perspective), daemon=True).start()
 
     def run_bg_diff_perspective(self, package_name, perspective):
         if perspective == "next_factory":
-            diff_text = sb.get_git_diff(package_name)
+            diff_text = sb.get_git_diff(package_name, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
         else:
             diff_text = ""
-            repo_path = os.path.join('.', package_name)
+            repo_path = self.get_mapped_worktree_path(package_name, "factory")
             try:
                 gitea_name = sb.get_gitea_repo_name(repo_path, package_name)
                 pool_url = f"https://src.opensuse.org/pool/{gitea_name}.git"
-                sb.run_tracked(
-                    ['git', '-C', repo_path, 'fetch', '--quiet', pool_url, 'factory'],
-                    check=True, capture_output=True
-                )
+                
+                # Bypasses slow, redundant network fetches if the package was already refreshed in the current session!
+                was_fetched = package_name in getattr(self, "refreshed_sync_packages", set())
+                if not was_fetched:
+                    sb.run_tracked(
+                        ['git', '-C', repo_path, 'fetch', '--quiet', pool_url, self.stable_b],
+                        check=True, capture_output=True
+                    )
+                
                 res = sb.run_tracked(
-                    ['git', '-C', repo_path, 'diff', 'FETCH_HEAD...origin/factory'],
+                    ['git', '-C', repo_path, 'diff', f'FETCH_HEAD...origin/{self.stable_b}'],
                     check=True, capture_output=True, text=True
                 )
                 diff_text = res.stdout
                 if not diff_text.strip():
-                    diff_text = "No differences in spec files or sources detected between local Factory and remote Pool."
+                    diff_text = f"No differences in spec files or sources detected between local Stable ({self.stable_b}) and remote Pool."
             except Exception as e:
                 diff_text = f"Error performing git diff (Factory vs Pool): {str(e)}"
 
@@ -1466,17 +2322,131 @@ class SyncWindow(Adw.ApplicationWindow):
 
     def on_pull_pool_clicked(self, btn):
         if getattr(self, "current_selected_package", None):
-            gitea_name = sb.get_gitea_repo_name(os.path.join('.', self.current_selected_package), self.current_selected_package)
+            repo_path = self.get_mapped_worktree_path(self.current_selected_package, "factory")
+            gitea_name = sb.get_gitea_repo_name(repo_path, self.current_selected_package)
             pool_url = f"https://src.opensuse.org/pool/{gitea_name}.git"
-            command = f"git fetch {pool_url} factory && git merge FETCH_HEAD"
+            command = f"git fetch {pool_url} {self.stable_b} && git merge FETCH_HEAD"
             self.allocate_terminal(self.current_selected_package, "factory", command)
 
     def on_catchup_merge_clicked(self, btn):
         if getattr(self, "current_selected_package", None):
-            command = "git fetch origin && git merge origin/factory --no-edit"
+            command = f"git fetch origin && git merge origin/{self.stable_b} --no-edit"
             self.allocate_terminal(self.current_selected_package, "next", command)
 
     # --- THE CORE EVENT HANDLERS & LOADERS ---
+
+    def on_unstable_ver_clicked(self, gesture, n_press, x, y):
+        # Retrieve event modifier and button states defensively
+        state = gesture.get_current_event_state()
+        button = gesture.get_current_button()
+
+        ctrl_pressed = (state & Gdk.ModifierType.CONTROL_MASK) != 0
+        alt_pressed = (state & Gdk.ModifierType.ALT_MASK) != 0
+
+        # Ctrl + Alt + Right Click (Button 3) trigger validation
+        if ctrl_pressed and alt_pressed and button == 3:
+            package_name = getattr(self, "current_selected_package", None)
+            if not package_name:
+                return
+
+            pkg_data = self.package_data.get(package_name, {})
+            ver = pkg_data.get("version") or {}
+            upstream_latest = ver.get("upstream_latest")
+            if not upstream_latest or upstream_latest == "—":
+                return
+
+            # Construct contextual, non-cluttering Popover menu
+            popover = Gtk.Popover()
+            popover.set_parent(self.unstable_ver_lbl)
+
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            box.set_margin_start(8)
+            box.set_margin_end(8)
+            box.set_margin_top(8)
+            box.set_margin_bottom(8)
+
+            ignored_ver = self.ignored_unstable_versions.get(package_name)
+            is_ignored = (ignored_ver and clean_version(upstream_latest, package_name) == clean_version(ignored_ver, package_name))
+
+            if is_ignored:
+                btn = Gtk.Button(label=f"🔄 Unignore Version {upstream_latest}")
+                btn.connect("clicked", self.on_toggle_ignore_clicked, popover, package_name, upstream_latest, False)
+            else:
+                btn = Gtk.Button(label=f"🚫 Ignore Version {upstream_latest}")
+                btn.connect("clicked", self.on_toggle_ignore_clicked, popover, package_name, upstream_latest, True)
+
+            box.append(btn)
+            popover.set_child(box)
+            popover.popup()
+
+    def on_toggle_ignore_clicked(self, btn, popover, package_name, version, should_ignore):
+        popover.popdown()
+
+        active_prof = self.config.get_active_profile()
+        if "ignored_unstable_versions" not in active_prof:
+            active_prof["ignored_unstable_versions"] = {}
+
+        if should_ignore:
+            active_prof["ignored_unstable_versions"][package_name] = version
+            toast_text = f"🚫 Version {version} is now ignored for {package_name}."
+        else:
+            if package_name in active_prof["ignored_unstable_versions"]:
+                del active_prof["ignored_unstable_versions"][package_name]
+            toast_text = f"🔄 Version {version} is no longer ignored for {package_name}."
+
+        # 1. Save config to disk immediately!
+        self.config.save()
+
+        # 2. Reload branch state mappings
+        self.ignored_unstable_versions = active_prof.get("ignored_unstable_versions", {})
+
+        # 3. Update memory/results cache state immediately in-place
+        pkg_data = self.package_data.get(package_name, {})
+        ver_data = pkg_data.get("version") or {}
+        next_ver = ver_data.get("next_ver", "—")
+        factory_ver = ver_data.get("factory_ver", "N/A")
+        upstream_stable = ver_data.get("upstream_stable", "N/A")
+
+        # Recalculate needs_update
+        needs_update = False
+        if factory_ver != "N/A" and upstream_stable != "N/A" and clean_version(factory_ver, package_name) != clean_version(upstream_stable, package_name):
+            needs_update = True
+        if next_ver != "—" and clean_version(next_ver, package_name) != clean_version(version, package_name) and not should_ignore:
+            needs_update = True
+
+        ver_data["needs_update"] = needs_update
+
+        # 4. Save profile cache so state is preserved across launches instantly
+        self.save_profile_cache()
+
+        # 5. Redraw row UI and detail pane instantly!
+        self.update_row_ui(package_name)
+        self.load_package_detail(package_name)
+
+        # 6. Re-evaluate sidebar list filters in-place!
+        self.master_list_box.invalidate_filter()
+
+        # 7. Display floating confirmation toast
+        toast = Adw.Toast.new(toast_text)
+        self.toast_overlay.add_toast(toast)
+
+    def on_window_key_pressed(self, controller, keyval, keycode, state):
+        # 1. Defensive Guard: Never steal key inputs from active VTE terminal tabs!
+        focused_widget = self.get_focus()
+        if focused_widget and focused_widget.get_name().startswith("Vte"):
+            return False
+
+        # 2. Defensive Guard: Never steal inputs if already editing an entry or PR description
+        if focused_widget and (focused_widget.get_name().startswith("GtkEntry") or focused_widget.get_name().startswith("GtkTextView")):
+            return False
+
+        # 3. Detect Ctrl + F or Slash (/) triggers
+        ctrl_pressed = (state & Gdk.ModifierType.CONTROL_MASK) != 0
+        if (ctrl_pressed and keyval == Gdk.KEY_f) or keyval == Gdk.KEY_slash:
+            self.sidebar_search.grab_focus()
+            return True # Consume key event so '/' isn't typed into the focused search entry
+
+        return False
 
     def on_legend_btn_clicked(self, btn):
         """Pops up a modern, elegant, and interactive workflow legend panel on demand."""
@@ -1491,19 +2461,31 @@ class SyncWindow(Adw.ApplicationWindow):
         legend_box.set_size_request(450, -1)
 
         legend_title = Gtk.Label(halign=Gtk.Align.START)
-        legend_title.set_markup("<span weight='bold' size='medium'>ℹ️ openSUSE GNOME Sync Workflow Legend</span>")
+        legend_title.set_markup(f"<span weight='bold' size='medium'>ℹ️ Geckopit SCM Workflow Legend ({self.config.active_workspace})</span>")
         legend_box.append(legend_title)
+
+        stable_b = self.stable_b
+        unstable_b = self.unstable_b or "unstable"
+
+        # Build dynamic text based on whether unstable branch exists (Dual vs Single pipeline)
+        if self.unstable_b:
+            pipeline_text = (
+                f"<span weight='bold'>Unstable Pipeline Sync ({unstable_b} ➔ {stable_b}):</span> Monitors alignment between unstable development and stable branch.\n"
+                f"   • <span foreground='orange' weight='bold'>Behind {stable_b}</span>: Unstable branch is missing stable commits—merge {stable_b} ➔ {unstable_b}.\n"
+                f"   • <span foreground='green' weight='bold'>Ahead of {stable_b}</span>: Unstable branch carries new commits (ready for PR).\n\n"
+            )
+        else:
+            pipeline_text = ""
 
         legend_desc = Gtk.Label(halign=Gtk.Align.START)
         legend_desc.set_justify(Gtk.Justification.LEFT)
         legend_desc.set_wrap(True)
         legend_desc.set_markup(
-            "<span weight='bold'>Pool Sync (Stage 1):</span> Monitors alignment between local Factory checkouts and Gitea's central package pool.\n"
-            "   • <span foreground='orange' weight='bold'>Behind Pool</span>: SCM changes exist in the pool—pull them to catch up.\n"
-            "   • <span foreground='cyan' weight='bold'>Ahead of Pool</span>: Local Factory has local commits not yet in the pool—submit them.\n\n"
-            "<span weight='bold'>Next Branch Sync (Stage 2):</span> Monitors alignment between the unstable next track and stable factory branch.\n"
-            "   • <span foreground='orange' weight='bold'>Next behind Factory</span>: Next is missing commits from Factory—merge factory ➔ next.\n"
-            "   • <span foreground='green' weight='bold'>Next ahead of Factory</span>: Next has additional developmental commits checked in (OK)."
+            f"<span weight='bold'>Gitea Pool Sync (local ➔ pool):</span> Monitors alignment between local SCM checkouts and the central package pool.\n"
+            f"   • <span foreground='orange' weight='bold'>Behind Pool</span>: Upstream changes exist in pool—pull them to catch up.\n"
+            f"   • <span foreground='cyan' weight='bold'>Ahead of Pool</span>: Local {stable_b} branch carries commits not yet submitted to the central pool.\n\n"
+            f"{pipeline_text}"
+            "<span foreground='gray' size='small'>Double-click any sidebar package row to review its code differences.</span>"
         )
         legend_box.append(legend_desc)
 
@@ -1515,13 +2497,33 @@ class SyncWindow(Adw.ApplicationWindow):
             self.detail_stack.set_visible_child(self.empty_page)
             self.current_selected_package = None
             return
-        self.load_package_detail(row.package_name)
+        package_name = row.package_name
+        self.load_package_detail(package_name)
+
+        # Trigger an instant, prioritized priority-thread scan for the newly selected package exactly once on manual selection!
+        # Bypasses the thread pool and avoids infinite recursive updates by never triggering from result callbacks.
+        if package_name not in getattr(self, "refreshed_packages", set()):
+            self.refresh_single_package_priority(package_name)
+
+    def refresh_single_package_priority(self, pkg_name):
+        """Spawns direct, prioritized background threads to bypass the saturated thread pool queue and refresh the selected package instantly."""
+        if not self.repos or pkg_name not in self.repos:
+            return
+
+        # Start direct priority daemon threads to bypass self.executor queue fanning!
+        threading.Thread(target=self.run_bg_sync_single, args=(pkg_name,), daemon=True).start()
+        threading.Thread(target=self.run_bg_version_single, args=(pkg_name,), daemon=True).start()
+        if self.unstable_b:
+            threading.Thread(target=self.run_bg_forward_single, args=(pkg_name,), daemon=True).start()
 
     def load_package_detail(self, package_name):
         self.current_selected_package = package_name
         self.detail_stack.set_visible_child_name("detail")
 
-        self.detail_title_label.set_markup(f"<span size='large' weight='bold'>{package_name}</span>")
+        # Visual indicator for cached details
+        is_fresh = package_name in getattr(self, "refreshed_packages", set())
+        title_suffix = "" if is_fresh else " <span size='small' style='italic' foreground='gray' weight='normal'>(cached)</span>"
+        self.detail_title_label.set_markup(f"<span size='large' weight='bold'>{package_name}</span>{title_suffix}")
 
         pkg_data = self.package_data.get(package_name, {})
         sync = pkg_data.get("sync") or {}
@@ -1541,7 +2543,7 @@ class SyncWindow(Adw.ApplicationWindow):
             self.detail_web_btn.set_sensitive(False)
         else:
             self.detail_web_btn.set_sensitive(True)
-            if factory_ver != upstream_stable and factory_ver != "N/A" and upstream_stable != "N/A":
+            if factory_ver != "N/A" and upstream_stable != "N/A" and clean_version(factory_ver, package_name) != clean_version(upstream_stable, package_name):
                 self.stable_ver_lbl.set_markup(f"<span weight='bold' foreground='red'>{factory_ver}</span> ➔ <span weight='bold' foreground='green'>{upstream_stable} (Update Available)</span>")
                 self.update_factory_btn.set_sensitive(True)
                 self.update_factory_btn.set_label(f"Update Factory to {upstream_stable}")
@@ -1581,15 +2583,24 @@ class SyncWindow(Adw.ApplicationWindow):
         next_ver = ver.get("next_ver", "—")
         upstream_latest = ver.get("upstream_latest", "—")
 
+        # Check if this unstable version is ignored in active profile configs
+        ignored_ver = getattr(self, "ignored_unstable_versions", {}).get(package_name)
+        is_ignored_unstable = (ignored_ver and clean_version(upstream_latest, package_name) == clean_version(ignored_ver, package_name))
+
         if not ver:
             self.unstable_ver_lbl.set_text("Loading...")
             self.update_next_btn.set_sensitive(False)
             self.update_next_btn.set_label("Run SCM Update")
         else:
-            if next_ver != "—" and next_ver != upstream_latest and upstream_latest != "—":
-                self.unstable_ver_lbl.set_markup(f"<span weight='bold' foreground='red'>{next_ver}</span> ➔ <span weight='bold' foreground='green'>{upstream_latest} (Update Available)</span>")
-                self.update_next_btn.set_sensitive(True)
-                self.update_next_btn.set_label(f"Update Next to {upstream_latest}")
+            if next_ver != "—" and upstream_latest != "—" and clean_version(next_ver, package_name) != clean_version(upstream_latest, package_name):
+                if is_ignored_unstable:
+                    self.unstable_ver_lbl.set_markup(f"<span weight='bold'>{next_ver}</span> ➔ <span weight='bold' foreground='gray' style='italic'>{upstream_latest} (Ignored)</span>")
+                    self.update_next_btn.set_sensitive(False)
+                    self.update_next_btn.set_label("Ignored Unstable Update")
+                else:
+                    self.unstable_ver_lbl.set_markup(f"<span weight='bold' foreground='red'>{next_ver}</span> ➔ <span weight='bold' foreground='green'>{upstream_latest} (Update Available)</span>")
+                    self.update_next_btn.set_sensitive(True)
+                    self.update_next_btn.set_label(f"Update Next to {upstream_latest}")
             else:
                 self.unstable_ver_lbl.set_text(f"{next_ver} (Up-To-Date)" if next_ver != "—" else "—")
                 self.update_next_btn.set_sensitive(False)
@@ -1640,6 +2651,11 @@ class SyncWindow(Adw.ApplicationWindow):
                 self.create_pr_btn.set_sensitive(False) # Must merge first!
 
             self.unstable_branch_lbl.set_markup(branch_text)
+
+        # Dynamically update terminal button labels to match configured branch names!
+        self.open_term_fac_btn.set_label(f"🖥️ Terminal ({self.stable_b})")
+        if self.unstable_b:
+            self.open_term_next_btn.set_label(f"🖥️ Terminal ({self.unstable_b})")
 
         # -------------------------------------------------------------
         # 3. POPULATE DIFF REVIEW
@@ -1718,10 +2734,10 @@ class SyncWindow(Adw.ApplicationWindow):
             pr = pkg_data.get("pr") or {}
             pr_url = pr.get("url")
             if pr.get("has_pr") and pr_url:
-                url = pr_url
+                webbrowser.open(pr_url)
             else:
-                url = sb.get_gitea_pr_url(self.current_selected_package)
-            webbrowser.open(url)
+                dialog = SyncCreatePRDialog(self, self.current_selected_package)
+                dialog.present()
 
     def on_detail_pool_diff_clicked(self, btn):
         if getattr(self, "current_selected_package", None):
@@ -1773,17 +2789,25 @@ class SyncWindow(Adw.ApplicationWindow):
                 break
 
     def run_bg_sync(self, repo):
-        name, data = sb.check_repo_sync(repo)
+        name, data = sb.check_repo_sync(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
         GLib.idle_add(self.add_sync_result, name, data)
+
+    def check_and_mark_package_refreshed(self, name):
+        if name in self.refreshed_sync_packages and name in self.refreshed_version_packages:
+            if name not in self.refreshed_packages:
+                self.refreshed_packages.add(name)
+                self.save_profile_cache()
+                if self.current_selected_package == name:
+                    self.load_package_detail(name)
 
     def add_sync_result(self, name, data):
         self.sync_completed_count += 1
 
         if data.get("status") == "success":
             self.package_data[name]["sync"] = data
+            self.refreshed_sync_packages.add(name)
             self.update_row_ui(name)
-            if getattr(self, "current_selected_package", None) == name:
-                self.load_package_detail(name)
+            self.check_and_mark_package_refreshed(name)
 
         self.update_progress_ui()
 
@@ -1801,7 +2825,7 @@ class SyncWindow(Adw.ApplicationWindow):
                 break
 
     def run_bg_version(self, repo):
-        name, data = sb.check_repo_version(repo)
+        name, data = sb.check_repo_version(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p, ignored_unstable_versions=self.ignored_unstable_versions)
         GLib.idle_add(self.add_version_result, name, data)
 
     def add_version_result(self, name, data):
@@ -1809,9 +2833,9 @@ class SyncWindow(Adw.ApplicationWindow):
 
         if data.get("status") == "success":
             self.package_data[name]["version"] = data
+            self.refreshed_version_packages.add(name)
             self.update_row_ui(name)
-            if getattr(self, "current_selected_package", None) == name:
-                self.load_package_detail(name)
+            self.check_and_mark_package_refreshed(name)
 
         self.update_progress_ui()
 
@@ -1829,12 +2853,12 @@ class SyncWindow(Adw.ApplicationWindow):
                 break
 
     def run_bg_forward(self, repo):
-        _, sync_data = sb.check_repo_sync(repo)
+        _, sync_data = sb.check_repo_sync(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
         pr_data = {"has_pr": False}
-        if sync_data.get("status") == "success" and sync_data.get("next_status") != "No next branch":
+        if self.unstable_b and sync_data.get("status") == "success" and sync_data.get("next_status") != "No next branch":
             next_ahead = sync_data.get("next_ahead", 0)
             if next_ahead > 0:
-                _, pr_data = sb.check_repo_pr(repo)
+                _, pr_data = sb.check_repo_pr(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
         GLib.idle_add(self.add_forward_result, repo, sync_data, pr_data)
 
     def add_forward_result(self, name, sync_data, pr_data):
@@ -1865,8 +2889,8 @@ class SyncApp(Adw.Application):
         win.present()
 
 if __name__ == '__main__':
-    GLib.set_prgname("GNOME Sync Dashboard")
-    GLib.set_application_name("GNOME Sync Dashboard")
+    GLib.set_prgname("Geckopit")
+    GLib.set_application_name("Geckopit")
     app = SyncApp()
     sys.argv = [sys.argv[0]]  # Strip extra args to prevent GTK app parsing issues
     sys.exit(app.run(sys.argv))

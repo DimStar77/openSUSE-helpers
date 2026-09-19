@@ -93,10 +93,27 @@ def run_sync_check(repos):
         print(f"| {sb.pad_left(r[0], w1)} | {sb.pad_left(r[1], w2)} | {sb.pad_left(r[2], w3)} | {sb.pad_left(r[3], w4)} |")
 
     print(f"\n*Total packages requiring sync action: {len(rows)}*")
-    print(f"\n💡 {sb.BOLD}Tip:{sb.RESET} Try './check_sync.py --version' to check upstream releases, or '--forward' to find forwardable next branches.")
+    print(f"\n💡 {sb.BOLD}Tip:{sb.RESET} Try './geckopit-cli --version' to check upstream releases, or '--forward' to find forwardable next branches.")
 
+
+def load_config_ignored_versions():
+    import json
+    from pathlib import Path
+    path = Path.home() / ".config" / "geckopit.json"
+    if path.exists():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                active_ws = data.get("active_workspace", "Default")
+                workspaces = data.get("workspaces", {})
+                active_profile = workspaces.get(active_ws, {})
+                return active_profile.get("ignored_unstable_versions", {})
+        except Exception:
+            pass
+    return {}
 
 def run_version_check(repos, branch=None):
+    ignored_versions = load_config_ignored_versions()
     total = len(repos)
     # Be gentle with release-monitoring.org by using 30 parallel workers
     if branch:
@@ -106,7 +123,7 @@ def run_version_check(repos, branch=None):
 
     results = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
-        futures = {executor.submit(sb.check_repo_version, repo, branch): repo for repo in repos}
+        futures = {executor.submit(sb.check_repo_version, repo, branch, ignored_unstable_versions=ignored_versions): repo for repo in repos}
         completed = 0
         for future in concurrent.futures.as_completed(futures):
             repo_name, data = future.result()
@@ -353,7 +370,7 @@ def print_help():
     print(f"{sb.BOLD}openSUSE Workspace Downstream Checker{sb.RESET}")
     print("\nAn optimized parallel dashboard for openSUSE package maintainers.")
     print("\nUsage:")
-    print("  ./check_sync.py [options]")
+    print("  ./geckopit-cli [options]")
     print("\nModes (choose exactly one):")
     print(f"  {sb.BOLD}(default){sb.RESET}          Checks downstream git sync status (pool ➔ devel:factory ➔ devel:next).")
     print(f"  {sb.BOLD}--todo{sb.RESET}             Alias for the default sync checking mode.")
