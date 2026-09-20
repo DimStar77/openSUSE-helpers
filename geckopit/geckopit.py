@@ -462,7 +462,17 @@ class SyncCreatePRDialog(Gtk.Window):
 
         if success:
             toast = Adw.Toast.new("Pull Request created successfully!")
-            url_match = re.search(r'https?://[^\s]+', res_msg)
+            
+            # Clean ANSI escape sequences and OSC 8 hyperlinks to prevent duplicate/invalid URLs
+            clean_msg = res_msg
+            # 1. Clean OSC 8 hyperlink wrapper and keep only the anchor/target URL
+            clean_msg = re.sub(r'\x1b\]8;;([^\x07]*)\x07(.*?)\x1b\]8;;\x07', r'\2', clean_msg)
+            # 2. Clean CSI color sequences (e.g. \x1b[32m)
+            clean_msg = re.sub(r'\x1b\[[0-9;?]*[a-zA-Z]', '', clean_msg)
+            # 3. Clean any other trailing non-printable control sequences like bell or esc
+            clean_msg = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', clean_msg)
+
+            url_match = re.search(r'https?://[^\s]+', clean_msg)
             if url_match:
                 pr_url = url_match.group(0)
                 toast.set_button_label("Open PR")

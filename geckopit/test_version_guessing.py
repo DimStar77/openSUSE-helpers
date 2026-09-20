@@ -80,6 +80,25 @@ class TestSyncWindow(unittest.TestCase):
         except AttributeError as e:
             self.fail(f"check_and_mark_package_refreshed raised AttributeError: {e}")
 
+    @mock.patch('gi.repository.Adw.Toast')
+    def test_pr_created_result_url_extraction(self, MockToast):
+        from geckopit import SyncCreatePRDialog
+
+        mock_dialog = mock.Mock()
+        mock_dialog.is_destroyed = False
+        mock_dialog.package_name = "gcr"
+        mock_dialog.parent = mock.Mock()
+
+        res_msg = "\x1b]8;;https://src.opensuse.org/GNOME/gcr/pulls/2\x07https://src.opensuse.org/GNOME/gcr/pulls/2\x1b]8;;\x07"
+
+        SyncCreatePRDialog.on_pr_created_result(mock_dialog, True, res_msg)
+
+        MockToast.new.assert_called_with("Pull Request created successfully!")
+        mock_toast_inst = MockToast.new.return_value
+        mock_toast_inst.connect.assert_called_once()
+        args, kwargs = mock_toast_inst.connect.call_args
+        self.assertIn("https://src.opensuse.org/GNOME/gcr/pulls/2", args)
+
 
 if __name__ == '__main__':
     unittest.main()
