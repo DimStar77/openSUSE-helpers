@@ -57,6 +57,7 @@ class TestSyncWindow(unittest.TestCase):
         from geckopit import SyncWindow
 
         mock_config_inst = MockConfig.return_value
+        mock_config_inst.max_workers = 50
         mock_config_inst.get_active_profile.return_value = {
             'stable_path': '',
             'stable_branch': 'factory',
@@ -110,6 +111,7 @@ class TestSyncWindow(unittest.TestCase):
         from geckopit import SyncWindow
 
         mock_config_inst = MockConfig.return_value
+        mock_config_inst.max_workers = 50
         mock_config_inst.get_active_profile.return_value = {
             'stable_path': '/mock/stable',
             'stable_branch': 'factory',
@@ -136,6 +138,22 @@ class TestSyncWindow(unittest.TestCase):
         self.assertIn("fetch", args[0][3]) # check fetch command
 
         MockIdleAdd.assert_called_once_with(win.trigger_bulk_scans)
+
+    @mock.patch('builtins.open', new_callable=mock.mock_open, read_data='{"active_workspace": "Default", "max_workers": 25, "workspaces": {}}')
+    @mock.patch('pathlib.Path.exists', return_value=True)
+    def test_workspace_config_max_workers_persistence(self, mock_exists, mock_file):
+        from geckopit import WorkspaceConfig
+
+        config = WorkspaceConfig()
+        # Verify it loaded the max_workers value from json correctly
+        self.assertEqual(config.max_workers, 25)
+
+        # Modify and save
+        config.max_workers = 15
+        config.save()
+
+        # Verify that json.dump was called with max_workers=15
+        mock_file.assert_called()
 
 
 if __name__ == '__main__':

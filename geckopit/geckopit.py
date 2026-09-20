@@ -646,6 +646,7 @@ class SyncDiffDialog(Gtk.Window):
 class WorkspaceConfig:
     def __init__(self):
         self.active_workspace = "Default"
+        self.max_workers = 50
         self.workspaces = {
             "Default": {
                 "stable_path": "",
@@ -663,6 +664,7 @@ class WorkspaceConfig:
                 with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     self.active_workspace = data.get("active_workspace", "Default")
+                    self.max_workers = data.get("max_workers", 50)
                     self.workspaces = data.get("workspaces", self.workspaces)
             except Exception:
                 pass
@@ -674,6 +676,7 @@ class WorkspaceConfig:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump({
                     "active_workspace": self.active_workspace,
+                    "max_workers": self.max_workers,
                     "workspaces": self.workspaces
                 }, f, indent=2)
         except Exception:
@@ -849,6 +852,12 @@ class WorkspaceManagerDialog(Gtk.Window):
         self.unstable_br_entry = Gtk.Entry()
         self.grid.attach(lbl_unstable_br, 0, 4, 1, 1)
         self.grid.attach(self.unstable_br_entry, 1, 4, 2, 1)
+
+        lbl_concurrency = Gtk.Label(label="Background Concurrency:", halign=Gtk.Align.START)
+        adj = Gtk.Adjustment.new(self.config.max_workers, 5, 50, 5, 10, 0)
+        self.concurrency_spin = Gtk.SpinButton(adjustment=adj, numeric=True)
+        self.grid.attach(lbl_concurrency, 0, 5, 1, 1)
+        self.grid.attach(self.concurrency_spin, 1, 5, 2, 1)
 
         main_box.append(self.grid)
 
@@ -1027,6 +1036,7 @@ class WorkspaceManagerDialog(Gtk.Window):
                 del self.config.workspaces[old_ws_name]
 
         self.config.active_workspace = ws_name
+        self.config.max_workers = int(self.concurrency_spin.get_value())
         self.config.save()
         self.destroy()
         self.callback_on_save()
@@ -1066,7 +1076,7 @@ class SyncWindow(Adw.ApplicationWindow):
         self.load_workspace_repositories()
 
         # Background workers configured with daemon threads so they terminate on exit
-        self.executor = DaemonThreadPoolExecutor(max_workers=50)
+        self.executor = DaemonThreadPoolExecutor(max_workers=self.config.max_workers)
 
         # Open tab registry for active monitoring and deduplication
         self.terminal_tabs = []
@@ -1370,6 +1380,13 @@ class SyncWindow(Adw.ApplicationWindow):
 
         # Reload repositories
         self.load_workspace_repositories()
+
+        # Recreate executor pool on-the-fly with new concurrency settings!
+        try:
+            self.executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
+        self.executor = DaemonThreadPoolExecutor(max_workers=self.config.max_workers)
 
         # Update sidebar list row entries dynamically
         self.populate_sidebar_rows()
