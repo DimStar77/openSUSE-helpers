@@ -395,9 +395,9 @@ class SyncCreatePRDialog(Gtk.Window):
         main_layout.append(footer)
         self.set_child(main_layout)
 
-        # Start loading diff asynchronously
+        # Start loading diff asynchronously on a priority thread to bypass the background executor queue!
         self.diff_buffer.set_text("Connecting to pool & loading differences...")
-        parent.executor.submit(self.load_diff_data)
+        threading.Thread(target=self.load_diff_data, daemon=True).start()
 
     def on_destroy(self, widget):
         self.is_destroyed = True
@@ -427,8 +427,8 @@ class SyncCreatePRDialog(Gtk.Window):
         self.title_entry.set_sensitive(False)
         self.desc_view.set_sensitive(False)
 
-        # Final pre-submit double-check to prevent race conditions
-        self.parent.executor.submit(self.run_bg_pre_submit_check, title, description)
+        # Final pre-submit double-check to prevent race conditions (run on priority thread to bypass background queue)
+        threading.Thread(target=self.run_bg_pre_submit_check, args=(title, description), daemon=True).start()
 
     def run_bg_pre_submit_check(self, title, description):
         _, pr_data = sb.check_repo_pr(self.package_name, stable_branch=self.parent.stable_b, unstable_branch=self.parent.unstable_b, workspace_path=self.parent.stable_p)
@@ -449,8 +449,8 @@ class SyncCreatePRDialog(Gtk.Window):
             self.destroy()
             self.parent.refresh_single_package(self.package_name)
         else:
-            # No existing PR, proceed to submit!
-            self.parent.executor.submit(self.run_bg_create_pr, title, description)
+            # No existing PR, proceed to submit (run on priority thread to bypass background queue)
+            threading.Thread(target=self.run_bg_create_pr, args=(title, description), daemon=True).start()
 
     def run_bg_create_pr(self, title, description):
         success, res_msg = sb.create_gitea_pr(self.package_name, title, description, stable_branch=self.parent.stable_b, unstable_branch=self.parent.unstable_b, workspace_path=self.parent.stable_p)
@@ -547,9 +547,8 @@ class SyncDiffDialog(Gtk.Window):
 
         self.set_child(box)
 
-        # Load diff text asynchronously
-        self.executor = parent.executor
-        self.executor.submit(self.load_diff_data)
+        # Load diff text asynchronously on a priority thread to bypass the background queue!
+        threading.Thread(target=self.load_diff_data, daemon=True).start()
 
     def on_destroy(self, widget):
         self.is_destroyed = True
