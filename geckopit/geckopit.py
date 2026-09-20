@@ -2827,9 +2827,9 @@ class SyncWindow(Adw.ApplicationWindow):
         if name in self.refreshed_sync_packages and name in self.refreshed_version_packages:
             if name not in self.refreshed_packages:
                 self.refreshed_packages.add(name)
-                self.save_profile_cache()
-                if self.current_selected_package == name:
-                    self.load_package_detail(name)
+            self.save_profile_cache()
+            if self.current_selected_package == name:
+                self.load_package_detail(name)
 
     def add_sync_result(self, name, data):
         self.sync_completed_count += 1
