@@ -71,6 +71,7 @@ To support multiple SCM workspaces (e.g. `GNOME`, `Games`, `Virt`), Geckopit sto
 ```json
 {
   "active_workspace": "GNOME",
+  "max_workers": 50,
   "workspaces": {
     "GNOME": {
       "stable_path": "/home/dimstar/Documents/src.o.o/GNOME",
@@ -119,6 +120,12 @@ Geckopit enforces a **Selection Lock**: the currently focused package is complet
 
 ### 🎨 4. Adaptive Dark Mode Synchronization
 The inline code-diff viewer and Gitea Pull Request dialogue feature real-time style-scheme listeners connected to `Adw.StyleManager`. If your system is in dark mode, the editors adopt a gorgeous, dark-gray theme (`"oblivion"`); if toggled to light mode, they instantly transition back to light rendering (`"classic"`), eliminating visual fatigue.
+
+### ⚙️ 5. Configurable Background Scan Concurrency
+By default, Geckopit executes up to `50` concurrent background SCM and version scans to maximize throughput. However, on slower internet connections or highly restricted corporate networks, fanning out 50 concurrent `git fetch` and HTTP API calls can saturate your local network or trigger server-side rate limits (e.g. HTTP 429).
+*   **The Tuning Knob**: Open the **Workspace Profile Manager Settings** dialog (gear icon ⚙️) and locate **`Background Concurrency`**.
+*   **Adjusting the Load**: Use the spinner to set your preferred concurrent worker count (ranging from `5` to `50` in increments of `5`).
+*   **On-the-Fly Scaling**: Saving your profile instantly scales the thread pool worker count on-the-fly, allowing you to fine-tune network and CPU usage without needing to restart the application!
 
 ---
 
