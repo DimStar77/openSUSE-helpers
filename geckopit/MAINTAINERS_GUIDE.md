@@ -39,7 +39,8 @@ sudo zypper in \
     typelib-1_0-Gtk-4_0 \
     typelib-1_0-Adw-1 \
     typelib-1_0-Vte-3_91 \
-    gtksourceview5
+    gtksourceview5 \
+    tea
 ```
 
 ### 🔗 Step 2: Clone and Link SCM Dashboard Tools
@@ -148,6 +149,7 @@ Once your unstable staging has been fully tested and upstream cuts a stable rele
 *   Review the code-diff inside the panel.
 *   Click **`Create Pull Request`** to open our custom, in-app PR dialogue.
 *   Review the prefilled source/target branches, edit your PR title and description, and submit—**completely in-app** via secure command integration!
+    *(Note: This uses the official Gitea CLI tool `tea` under the hood. Make sure you have authenticated once by running `tea login add` in your terminal so it has access to create PRs on `src.opensuse.org`!)*
 
 ---
 
