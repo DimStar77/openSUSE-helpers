@@ -1068,6 +1068,7 @@ class SyncWindow(Adw.ApplicationWindow):
         # Initialize filter timeout and state registries
         self.filter_timeout_id = 0
         self.last_diff_package = None
+        self.current_selected_package = None
         self.refreshed_packages = set()
         self.refreshed_sync_packages = set()
         self.refreshed_version_packages = set()
@@ -2286,7 +2287,7 @@ class SyncWindow(Adw.ApplicationWindow):
         active_idx = self.diff_selector.get_selected()
         perspective = "next_factory" if active_idx == 0 else "factory_pool"
         self.diff_buffer.set_text("Loading diff...")
-        
+
         # Bypasses the slow background thread pool queue to load the diff instantly!
         threading.Thread(target=self.run_bg_diff_perspective, args=(package_name, perspective), daemon=True).start()
 
@@ -2299,7 +2300,7 @@ class SyncWindow(Adw.ApplicationWindow):
             try:
                 gitea_name = sb.get_gitea_repo_name(repo_path, package_name)
                 pool_url = f"https://src.opensuse.org/pool/{gitea_name}.git"
-                
+
                 # Bypasses slow, redundant network fetches if the package was already refreshed in the current session!
                 was_fetched = package_name in getattr(self, "refreshed_sync_packages", set())
                 if not was_fetched:
@@ -2307,7 +2308,7 @@ class SyncWindow(Adw.ApplicationWindow):
                         ['git', '-C', repo_path, 'fetch', '--quiet', pool_url, self.stable_b],
                         check=True, capture_output=True
                     )
-                
+
                 res = sb.run_tracked(
                     ['git', '-C', repo_path, 'diff', f'FETCH_HEAD...origin/{self.stable_b}'],
                     check=True, capture_output=True, text=True

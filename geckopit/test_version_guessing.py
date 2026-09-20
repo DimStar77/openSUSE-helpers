@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import unittest
+import unittest.mock as mock
 from geckopit import guess_update_revision
 
 class TestVersionGuessing(unittest.TestCase):
@@ -44,6 +45,41 @@ class TestVersionGuessing(unittest.TestCase):
         guessed, err = guess_update_revision("master", "1.0.0")
         self.assertIsNone(guessed)
         self.assertIn("static development branch", err)
+
+
+class TestSyncWindow(unittest.TestCase):
+    @mock.patch('geckopit.WorkspaceConfig')
+    def test_sync_window_initialization(self, MockConfig):
+        import gi
+        gi.require_version('Gtk', '4.0')
+        gi.require_version('Adw', '1')
+        from gi.repository import Adw
+        from geckopit import SyncWindow
+
+        mock_config_inst = MockConfig.return_value
+        mock_config_inst.get_active_profile.return_value = {
+            'stable_path': '',
+            'stable_branch': 'factory',
+            'unstable_path': '',
+            'unstable_branch': 'next'
+        }
+        mock_config_inst.workspaces = {'Default': mock_config_inst.get_active_profile.return_value}
+        mock_config_inst.active_workspace = 'Default'
+
+        app = Adw.Application()
+        win = SyncWindow(app)
+
+        # Verify that current_selected_package is initialized to None
+        self.assertIsNone(win.current_selected_package)
+
+        # Verify that checking and marking package refreshed doesn't raise AttributeError
+        win.refreshed_sync_packages.add("test-package")
+        win.refreshed_version_packages.add("test-package")
+        try:
+            win.check_and_mark_package_refreshed("test-package")
+        except AttributeError as e:
+            self.fail(f"check_and_mark_package_refreshed raised AttributeError: {e}")
+
 
 if __name__ == '__main__':
     unittest.main()
