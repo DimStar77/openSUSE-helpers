@@ -99,6 +99,44 @@ class TestSyncWindow(unittest.TestCase):
         args, kwargs = mock_toast_inst.connect.call_args
         self.assertIn("https://src.opensuse.org/GNOME/gcr/pulls/2", args)
 
+    @mock.patch('geckopit.sb.run_tracked')
+    @mock.patch('geckopit.GLib.idle_add')
+    @mock.patch('geckopit.WorkspaceConfig')
+    def test_refresh_all_key_probe(self, MockConfig, MockIdleAdd, MockRunTracked):
+        import gi
+        gi.require_version('Gtk', '4.0')
+        gi.require_version('Adw', '1')
+        from gi.repository import Adw
+        from geckopit import SyncWindow
+
+        mock_config_inst = MockConfig.return_value
+        mock_config_inst.get_active_profile.return_value = {
+            'stable_path': '/mock/stable',
+            'stable_branch': 'factory',
+            'unstable_path': '',
+            'unstable_branch': 'next'
+        }
+        mock_config_inst.workspaces = {'Default': mock_config_inst.get_active_profile.return_value}
+        mock_config_inst.active_workspace = 'Default'
+
+        app = Adw.Application()
+        win = SyncWindow(app)
+
+        win.repos = ["gcr", "glib2"]
+
+        # Reset mocks to clear initialization side effects!
+        MockRunTracked.reset_mock()
+        MockIdleAdd.reset_mock()
+
+        win.run_initial_key_probe_then_scan()
+
+        MockRunTracked.assert_called_once()
+        args, kwargs = MockRunTracked.call_args
+        self.assertIn("gcr", args[0][2]) # check repo_path
+        self.assertIn("fetch", args[0][3]) # check fetch command
+
+        MockIdleAdd.assert_called_once_with(win.trigger_bulk_scans)
+
 
 if __name__ == '__main__':
     unittest.main()

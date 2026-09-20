@@ -1701,6 +1701,27 @@ class SyncWindow(Adw.ApplicationWindow):
         if not getattr(self, "package_rows", None):
             self.populate_sidebar_rows()
 
+        # Run initial key probe in a background thread to prevent UI freezing
+        # while forcing the SSH key unlock dialog to be single-threaded.
+        threading.Thread(target=self.run_initial_key_probe_then_scan, daemon=True).start()
+
+    def run_initial_key_probe_then_scan(self):
+        if self.repos:
+            # Probe exactly one repo to trigger the SSH unlock dialog sequentially
+            first_repo = self.repos[0]
+            repo_path = os.path.join(self.stable_p, first_repo)
+            try:
+                sb.run_tracked(
+                    ['git', '-C', repo_path, 'fetch', '--quiet', 'origin'],
+                    capture_output=True
+                )
+            except Exception:
+                pass
+
+        # Now trigger the parallel scans on the main GLib thread safely!
+        GLib.idle_add(self.trigger_bulk_scans)
+
+    def trigger_bulk_scans(self):
         self.start_sync_scan()
         self.start_version_scan()
         if self.unstable_b:
