@@ -81,6 +81,57 @@ class TestSyncWindow(unittest.TestCase):
         except AttributeError as e:
             self.fail(f"check_and_mark_package_refreshed raised AttributeError: {e}")
 
+    @mock.patch('geckopit.GLib.idle_add')
+    @mock.patch('geckopit.WorkspaceConfig')
+    def test_on_terminal_spawned_one_shot_idle(self, MockConfig, MockIdleAdd):
+        import gi
+        gi.require_version('Gtk', '4.0')
+        gi.require_version('Adw', '1')
+        from gi.repository import Adw
+        from geckopit import SyncWindow
+
+        mock_config_inst = MockConfig.return_value
+        mock_config_inst.max_workers = 50
+        mock_config_inst.get_active_profile.return_value = {
+            'stable_path': '',
+            'stable_branch': 'factory',
+            'unstable_path': '',
+            'unstable_branch': 'next'
+        }
+        mock_config_inst.workspaces = {'Default': mock_config_inst.get_active_profile.return_value}
+        mock_config_inst.active_workspace = 'Default'
+
+        app = Adw.Application()
+        win = SyncWindow(app)
+
+        # Mock self.notebook.page_num to avoid real widget calls
+        win.notebook = mock.Mock()
+        win.notebook.page_num.return_value = 0
+
+        # Mock monitor_terminals to verify it is called
+        win.monitor_terminals = mock.Mock()
+
+        # Reset mock to clear initialization side effects!
+        MockIdleAdd.reset_mock()
+
+        # Call on_terminal_spawned
+        terminal_mock = mock.Mock()
+        tab_state = {"scroll_widget": mock.Mock()}
+        win.on_terminal_spawned(terminal_mock, 12345, None, tab_state)
+
+        # Verify we stored the shell_pid
+        self.assertEqual(tab_state["shell_pid"], 12345)
+
+        # Verify that GLib.idle_add was called with a callback
+        MockIdleAdd.assert_called_once()
+        callback = MockIdleAdd.call_args[0][0]
+
+        # Call the callback and assert that it returns False (to terminate the idle source)
+        # and that win.monitor_terminals was called.
+        res = callback()
+        self.assertFalse(res)
+        win.monitor_terminals.assert_called_once()
+
     @mock.patch('gi.repository.Adw.Toast')
     def test_pr_created_result_url_extraction(self, MockToast):
         from geckopit import SyncCreatePRDialog

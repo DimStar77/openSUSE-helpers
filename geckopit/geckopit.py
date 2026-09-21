@@ -1565,7 +1565,10 @@ class SyncWindow(Adw.ApplicationWindow):
                 return
 
             tab_state["shell_pid"] = pid
-            GLib.idle_add(self.monitor_terminals)
+            def one_shot_monitor():
+                self.monitor_terminals()
+                return False
+            GLib.idle_add(one_shot_monitor)
         else:
             scroll_widget = tab_state.get("scroll_widget")
             if scroll_widget:
