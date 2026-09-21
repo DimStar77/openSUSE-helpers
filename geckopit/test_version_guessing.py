@@ -141,6 +141,7 @@ class TestSyncWindow(unittest.TestCase):
         mock_dialog.package_name = "gcr"
         mock_dialog.parent = mock.Mock()
 
+        # 1. Test BEL (\x07) style terminator
         res_msg = "\x1b]8;;https://src.opensuse.org/GNOME/gcr/pulls/2\x07https://src.opensuse.org/GNOME/gcr/pulls/2\x1b]8;;\x07"
 
         SyncCreatePRDialog.on_pr_created_result(mock_dialog, True, res_msg)
@@ -148,6 +149,14 @@ class TestSyncWindow(unittest.TestCase):
         MockToast.new.assert_called_with("Pull Request created successfully!")
         mock_toast_inst = MockToast.new.return_value
         mock_toast_inst.connect.assert_called_once()
+        args, kwargs = mock_toast_inst.connect.call_args
+        self.assertIn("https://src.opensuse.org/GNOME/gcr/pulls/2", args)
+
+        # 2. Test ESC \ (\x1b\\) style terminator
+        MockToast.reset_mock()
+        res_msg_esc = "\x1b]8;;https://src.opensuse.org/GNOME/gcr/pulls/2\x1b\\https://src.opensuse.org/GNOME/gcr/pulls/2\x1b]8;;\x1b\\"
+        SyncCreatePRDialog.on_pr_created_result(mock_dialog, True, res_msg_esc)
+        mock_toast_inst = MockToast.new.return_value
         args, kwargs = mock_toast_inst.connect.call_args
         self.assertIn("https://src.opensuse.org/GNOME/gcr/pulls/2", args)
 
