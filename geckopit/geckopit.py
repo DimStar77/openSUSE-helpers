@@ -2933,7 +2933,7 @@ class SyncWindow(Adw.ApplicationWindow):
 
 class SyncApp(Adw.Application):
     def __init__(self):
-        super().__init__(application_id=None)
+        super().__init__(application_id="org.opensuse.geckopit")
 
     def do_activate(self):
         win = SyncWindow(self)
