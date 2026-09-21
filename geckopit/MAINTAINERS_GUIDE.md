@@ -39,8 +39,7 @@ sudo zypper in \
     typelib-1_0-Gtk-4_0 \
     typelib-1_0-Adw-1 \
     typelib-1_0-Vte-3_91 \
-    gtksourceview5 \
-    tea
+    gitea-tea
 ```
 
 ### 🔗 Step 2: Clone and Link SCM Dashboard Tools
