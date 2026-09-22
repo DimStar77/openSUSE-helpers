@@ -155,7 +155,10 @@ Once your unstable staging has been fully tested and upstream cuts a stable rele
 *   Open the **Forward & PR** tab in Geckopit.
 *   Review the code-diff inside the panel.
 *   Click **`Create Pull Request`** to open our custom, in-app PR dialogue.
-*   Review the prefilled source/target branches, edit your PR title and description, and submit—**completely in-app** via secure command integration!
+*   Geckopit **automatically analyzes branch changes**:
+    *   **Smart Title**: If a version bump occurred, the title auto-populates to `Update <pkg> to version <ver>`; if packaging fixes were added without a version bump, it auto-populates with the commit subject.
+    *   **Smart Description**: The PR description is automatically pre-filled with the exact added entries from the `*.changes` git diff, ready for immediate review or editing.
+*   Review the prefilled fields and submit—**completely in-app** via secure command integration!
     *(Note: This uses the official Gitea CLI tool `tea` under the hood. Make sure you have authenticated once by running `tea login add` in your terminal so it has access to create PRs on `src.opensuse.org`!)*
 
 ---
@@ -186,6 +189,12 @@ Navigate and filter your packages rapidly without taking your hands off the keyb
     *   `Ctrl` + `4`: Toggle **🟠 Unstable Updates** track
     *   `Ctrl` + `5`: Toggle **🔀 Forwarding** track
 *   *Note: All shortcuts feature defensive input-stealing guards, ensuring key events are never intercepted while you are typing inside an embedded terminal or editing a text input.*
+
+### 📋 5. One-Click Diff Copying
+Click the **`edit-copy-symbolic`** (Copy icon 📋) in the diff viewer or diff dialog header to copy raw git patch contents directly to your clipboard, accompanied by a floating confirmation toast.
+
+### 📑 6. Drag-and-Drop Terminal Tab Reordering
+When multiple embedded terminals are open in the bottom drawer, rearrange tabs by dragging and dropping their tab headers. When you close a tab (via `exit` or the close button), keyboard focus smoothly and automatically transfers to the active shell in the remaining tab.
 
 ---
 
