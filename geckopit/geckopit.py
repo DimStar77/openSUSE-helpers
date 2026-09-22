@@ -674,6 +674,7 @@ class WorkspaceConfig:
     def __init__(self):
         self.active_workspace = "Default"
         self.max_workers = 50
+        self.sidebar_width = 500
         self.workspaces = {
             "Default": {
                 "stable_path": "",
@@ -692,6 +693,7 @@ class WorkspaceConfig:
                     data = json.load(f)
                     self.active_workspace = data.get("active_workspace", "Default")
                     self.max_workers = data.get("max_workers", 50)
+                    self.sidebar_width = data.get("sidebar_width", 500)
                     self.workspaces = data.get("workspaces", self.workspaces)
             except Exception:
                 pass
@@ -704,6 +706,7 @@ class WorkspaceConfig:
                 json.dump({
                     "active_workspace": self.active_workspace,
                     "max_workers": self.max_workers,
+                    "sidebar_width": self.sidebar_width,
                     "workspaces": self.workspaces
                 }, f, indent=2)
         except Exception:
@@ -1074,6 +1077,7 @@ class SyncWindow(Adw.ApplicationWindow):
         super().__init__(application=app, title="Geckopit")
         self.set_default_size(1250, 780)
         self.set_size_request(950, 620) # Prevent GTK Paned measurement warning at startup
+        self.maximize()
         # Set window icon natively from our custom SVG vector icon!
         icon_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "org.opensuse.geckopit.svg")
         if os.path.exists(icon_path):
@@ -1134,6 +1138,9 @@ class SyncWindow(Adw.ApplicationWindow):
         self.horizontal_paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
         self.horizontal_paned.set_start_child(self.sidebar_box)
         self.horizontal_paned.set_end_child(self.detail_pane)
+        self.horizontal_paned.set_shrink_start_child(False)
+        self.horizontal_paned.set_resize_start_child(False)
+        self.horizontal_paned.set_resize_end_child(True)
 
         # Header Bar Workspace Selector and Settings Button
         self.header_bar = Adw.HeaderBar()
@@ -1219,7 +1226,12 @@ class SyncWindow(Adw.ApplicationWindow):
         self.timeout_id = GLib.timeout_add(1500, self.monitor_terminals)
 
         # Set split positions asynchronously after initial layout frames to prevent measurement warnings!
-        GLib.idle_add(lambda: self.horizontal_paned.set_position(420))
+        sidebar_w = getattr(self.config, "sidebar_width", 500)
+        try:
+            initial_sidebar_w = max(460, int(sidebar_w))
+        except (TypeError, ValueError):
+            initial_sidebar_w = 500
+        GLib.idle_add(lambda: self.horizontal_paned.set_position(initial_sidebar_w))
         GLib.idle_add(lambda: self.main_paned.set_position(520))
 
         # Kick off background loading
@@ -1249,6 +1261,12 @@ class SyncWindow(Adw.ApplicationWindow):
 
     def on_close_request(self, window):
         """Gracefully dismantles GLib timers, closes thread pools, and terminates shell children."""
+        if hasattr(self, "horizontal_paned") and hasattr(self, "config"):
+            pos = self.horizontal_paned.get_position()
+            if pos >= 460:
+                self.config.sidebar_width = pos
+                self.config.save()
+
         if hasattr(self, "timeout_id") and self.timeout_id:
             GLib.Source.remove(self.timeout_id)
             self.timeout_id = 0
@@ -1850,7 +1868,7 @@ class SyncWindow(Adw.ApplicationWindow):
 
     def build_sidebar(self):
         sidebar_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        sidebar_box.set_size_request(420, -1)
+        sidebar_box.set_size_request(460, -1)
 
         # Sidebar Header Bar
         sidebar_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)

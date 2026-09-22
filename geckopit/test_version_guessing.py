@@ -131,6 +131,13 @@ class TestSyncWindow(unittest.TestCase):
         # Verify that current_selected_package is initialized to None
         self.assertIsNone(win.current_selected_package)
 
+        # Verify that the main window is maximized by default
+        self.assertTrue(win.is_maximized())
+
+        # Verify sidebar paned constraints
+        self.assertFalse(win.horizontal_paned.get_shrink_start_child())
+        self.assertFalse(win.horizontal_paned.get_resize_start_child())
+
         # Verify that checking and marking package refreshed doesn't raise AttributeError
         win.refreshed_sync_packages.add("test-package")
         win.refreshed_version_packages.add("test-package")
@@ -266,8 +273,12 @@ class TestSyncWindow(unittest.TestCase):
         # Verify it loaded the max_workers value from json correctly
         self.assertEqual(config.max_workers, 25)
 
+        # Verify default sidebar_width is 500 when omitted in json
+        self.assertEqual(config.sidebar_width, 500)
+
         # Modify and save
         config.max_workers = 15
+        config.sidebar_width = 520
         config.save()
 
         # Verify that json.dump was called with max_workers=15
