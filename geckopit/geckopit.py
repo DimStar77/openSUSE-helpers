@@ -1211,6 +1211,7 @@ class SyncWindow(Adw.ApplicationWindow):
 
         # Native Vte Tabbed Notebook Widget
         self.notebook = Gtk.Notebook()
+        self.notebook.set_focusable(False)
         self.notebook.set_hexpand(True)
         self.notebook.set_vexpand(True)
         self.notebook.set_scrollable(True)
@@ -1551,6 +1552,7 @@ class SyncWindow(Adw.ApplicationWindow):
         close_tab_btn.add_css_class("flat")
         close_tab_btn.add_css_class("circular")
         close_tab_btn.set_tooltip_text("Close Tab")
+        close_tab_btn.set_focusable(False)
         close_tab_btn.connect("clicked", lambda btn: self.close_terminal_tab(scroll))
         tab_box.append(close_tab_btn)
 
@@ -1709,6 +1711,10 @@ class SyncWindow(Adw.ApplicationWindow):
         if page_num != -1:
             self.notebook.set_current_page(page_num)
             self.terminal_drawer.set_visible(True)
+            for tab in self.terminal_tabs:
+                if tab["scroll_widget"] == scroll_widget and tab.get("terminal"):
+                    GLib.idle_add(tab["terminal"].grab_focus)
+                    break
 
     def on_notebook_switch_page(self, notebook, page, page_num):
         for tab in self.terminal_tabs:
@@ -1720,6 +1726,9 @@ class SyncWindow(Adw.ApplicationWindow):
                     except Exception:
                         pass
                     tab["active_toast"] = None
+                terminal = tab.get("terminal")
+                if terminal:
+                    GLib.idle_add(terminal.grab_focus)
                 break
 
     def close_terminal_tab(self, page_widget):
@@ -1760,6 +1769,15 @@ class SyncWindow(Adw.ApplicationWindow):
 
         if self.notebook.get_n_pages() == 0:
             self.hide_terminal()
+        else:
+            current_idx = self.notebook.get_current_page()
+            if current_idx != -1:
+                active_page = self.notebook.get_nth_page(current_idx)
+                for tab in self.terminal_tabs:
+                    if tab["scroll_widget"] == active_page and tab.get("terminal"):
+                        terminal = tab["terminal"]
+                        GLib.idle_add(terminal.grab_focus)
+                        break
 
     def hide_terminal(self):
         self.terminal_drawer.set_visible(False)

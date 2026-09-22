@@ -450,6 +450,36 @@ class TestSyncWindow(unittest.TestCase):
         mock_clipboard.set.assert_called_with("diff --git a/test b/test")
         mock_win.toast_overlay.add_toast.assert_called()
 
+    @mock.patch('geckopit.GLib.idle_add')
+    def test_close_terminal_tab_focuses_remaining_terminal(self, MockIdleAdd):
+        from geckopit import SyncWindow
+
+        mock_win = mock.Mock()
+        mock_win.notebook = mock.Mock()
+        mock_win.notebook.page_num.return_value = 1
+        mock_win.notebook.get_n_pages.return_value = 1
+        mock_win.notebook.get_current_page.return_value = 0
+
+        scroll1 = mock.Mock()
+        terminal1 = mock.Mock()
+        tab1 = {"scroll_widget": scroll1, "terminal": terminal1, "pkg_name": "pkg1", "shell_pid": None}
+
+        scroll2 = mock.Mock()
+        terminal2 = mock.Mock()
+        tab2 = {"scroll_widget": scroll2, "terminal": terminal2, "pkg_name": "pkg2", "shell_pid": None}
+
+        mock_win.notebook.get_nth_page.return_value = scroll1
+        mock_win.terminal_tabs = [tab1, tab2]
+
+        SyncWindow.close_terminal_tab(mock_win, scroll2)
+
+        # Verify page 2 was removed
+        mock_win.notebook.remove_page.assert_called_with(1)
+        # Verify tab2 was removed from terminal_tabs
+        self.assertNotIn(tab2, mock_win.terminal_tabs)
+        # Verify terminal1 grab_focus was scheduled
+        MockIdleAdd.assert_called_with(terminal1.grab_focus)
+
     def test_sync_diff_dialog_copy_action(self):
         from geckopit import SyncDiffDialog
 
