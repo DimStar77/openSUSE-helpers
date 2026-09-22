@@ -285,6 +285,125 @@ class TestSyncWindow(unittest.TestCase):
         mock_file.assert_called()
 
 
+    def test_keyboard_navigation_and_filter_shortcuts(self):
+        import gi
+        gi.require_version('Gtk', '4.0')
+        gi.require_version('Gdk', '4.0')
+        from gi.repository import Gtk, Gdk
+        from geckopit import SyncWindow
+
+        mock_win = mock.Mock()
+        mock_win.get_focus.return_value = None
+
+        # 1. Filter toggle shortcuts (Ctrl+1 .. Ctrl+5)
+        mock_win.filter_needs_action = mock.Mock()
+        mock_win.filter_needs_action.get_active.return_value = True
+
+        res = SyncWindow.on_window_key_pressed(
+            mock_win, None, Gdk.KEY_1, 0, Gdk.ModifierType.CONTROL_MASK
+        )
+        self.assertTrue(res)
+        mock_win.filter_needs_action.set_active.assert_called_with(False)
+
+        mock_win.filter_pool_sync = mock.Mock()
+        mock_win.filter_pool_sync.get_active.return_value = False
+        res = SyncWindow.on_window_key_pressed(
+            mock_win, None, Gdk.KEY_2, 0, Gdk.ModifierType.CONTROL_MASK
+        )
+        self.assertTrue(res)
+        mock_win.filter_pool_sync.set_active.assert_called_with(True)
+
+        mock_win.filter_stable = mock.Mock()
+        mock_win.filter_stable.get_active.return_value = False
+        res = SyncWindow.on_window_key_pressed(
+            mock_win, None, Gdk.KEY_3, 0, Gdk.ModifierType.CONTROL_MASK
+        )
+        self.assertTrue(res)
+        mock_win.filter_stable.set_active.assert_called_with(True)
+
+        mock_win.filter_unstable = mock.Mock()
+        mock_win.filter_unstable.get_active.return_value = False
+        res = SyncWindow.on_window_key_pressed(
+            mock_win, None, Gdk.KEY_4, 0, Gdk.ModifierType.CONTROL_MASK
+        )
+        self.assertTrue(res)
+        mock_win.filter_unstable.set_active.assert_called_with(True)
+
+        mock_win.filter_forwarding = mock.Mock()
+        mock_win.filter_forwarding.get_active.return_value = False
+        res = SyncWindow.on_window_key_pressed(
+            mock_win, None, Gdk.KEY_5, 0, Gdk.ModifierType.CONTROL_MASK
+        )
+        self.assertTrue(res)
+        mock_win.filter_forwarding.set_active.assert_called_with(True)
+
+        # 2. Focus search entry with Ctrl+F and Slash
+        mock_win.sidebar_search = mock.Mock()
+        res = SyncWindow.on_window_key_pressed(
+            mock_win, None, Gdk.KEY_f, 0, Gdk.ModifierType.CONTROL_MASK
+        )
+        self.assertTrue(res)
+        mock_win.sidebar_search.grab_focus.assert_called()
+
+        mock_win.sidebar_search.reset_mock()
+        res = SyncWindow.on_window_key_pressed(
+            mock_win, None, Gdk.KEY_slash, 0, 0
+        )
+        self.assertTrue(res)
+        mock_win.sidebar_search.grab_focus.assert_called()
+
+        # 3. Vim-style list navigation (j/k and Up/Down)
+        mock_win.navigate_package_list = mock.Mock(return_value=True)
+        res = SyncWindow.on_window_key_pressed(mock_win, None, Gdk.KEY_j, 0, 0)
+        self.assertTrue(res)
+        mock_win.navigate_package_list.assert_called_with(1)
+
+        res = SyncWindow.on_window_key_pressed(mock_win, None, Gdk.KEY_k, 0, 0)
+        self.assertTrue(res)
+        mock_win.navigate_package_list.assert_called_with(-1)
+
+        # 4. Defensive Guard: Terminal focus should never be stolen
+        mock_terminal = mock.Mock()
+        mock_terminal.get_name.return_value = "VteTerminal"
+        mock_win.get_focus.return_value = mock_terminal
+
+        res = SyncWindow.on_window_key_pressed(
+            mock_win, None, Gdk.KEY_1, 0, Gdk.ModifierType.CONTROL_MASK
+        )
+        self.assertFalse(res)
+
+        res = SyncWindow.on_window_key_pressed(mock_win, None, Gdk.KEY_j, 0, 0)
+        self.assertFalse(res)
+
+    def test_search_key_pressed_hand_off(self):
+        import gi
+        gi.require_version('Gtk', '4.0')
+        gi.require_version('Gdk', '4.0')
+        from gi.repository import Gtk, Gdk
+        from geckopit import SyncWindow
+
+        mock_win = mock.Mock()
+        mock_win.navigate_package_list = mock.Mock(return_value=True)
+        mock_win.sidebar_search = mock.Mock()
+        mock_win.sidebar_search.get_text.return_value = "gcr"
+
+        # Return / Enter hands off to package list
+        res = SyncWindow.on_search_key_pressed(mock_win, None, Gdk.KEY_Return, 0, 0)
+        self.assertTrue(res)
+        mock_win.navigate_package_list.assert_called_with(1)
+
+        # Down arrow hands off to package list
+        mock_win.navigate_package_list.reset_mock()
+        res = SyncWindow.on_search_key_pressed(mock_win, None, Gdk.KEY_Down, 0, 0)
+        self.assertTrue(res)
+        mock_win.navigate_package_list.assert_called_with(1)
+
+        # Escape clears text
+        res = SyncWindow.on_search_key_pressed(mock_win, None, Gdk.KEY_Escape, 0, 0)
+        self.assertTrue(res)
+        mock_win.sidebar_search.set_text.assert_called_with("")
+
+
 class TestPRPrefill(unittest.TestCase):
     def test_parse_changes_diff_single_entry(self):
         import sync_backend as sb

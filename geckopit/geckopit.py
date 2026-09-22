@@ -1915,7 +1915,12 @@ class SyncWindow(Adw.ApplicationWindow):
 
         self.sidebar_search = Gtk.SearchEntry()
         self.sidebar_search.set_placeholder_text("Search packages...")
+        self.sidebar_search.set_tooltip_text("Search packages... (Press / or Ctrl+F to focus, Enter/Down to select)")
         self.sidebar_search.connect("search-changed", lambda entry: self.master_list_box.invalidate_filter())
+
+        search_key_ctrl = Gtk.EventControllerKey.new()
+        search_key_ctrl.connect("key-pressed", self.on_search_key_pressed)
+        self.sidebar_search.add_controller(search_key_ctrl)
         control_bar.append(self.sidebar_search)
 
         # Track-focused filter toggle buttons (multi-select / combination logic)
@@ -1927,7 +1932,7 @@ class SyncWindow(Adw.ApplicationWindow):
         self.filter_needs_action = Gtk.ToggleButton(label="⚠️ Needs")
         self.filter_needs_action.set_active(True)
         self.filter_needs_action.set_tooltip_text(
-            "⚠️ FILTER: NEEDS ACTION ONLY (Global Modifier)\n"
+            "⚠️ FILTER: NEEDS ACTION ONLY (Global Modifier) [Shortcut: Ctrl+1]\n"
             "─────────────────────────────────────────────\n"
             "When enabled, the package list is strictly filtered to display only those\n"
             "repositories that require immediate attention (e.g. have pending upstream\n"
@@ -1941,7 +1946,7 @@ class SyncWindow(Adw.ApplicationWindow):
         self.filter_pool_sync = Gtk.ToggleButton(label="📡 Pool")
         self.filter_pool_sync.set_active(False)
         self.filter_pool_sync.set_tooltip_text(
-            "📡 FILTER: GITEA POOL SYNC TRACK\n"
+            "📡 FILTER: GITEA POOL SYNC TRACK [Shortcut: Ctrl+2]\n"
             "────────────────────────────────\n"
             "Filters the package checkout list to display repositories matching our Stage 1 Pool Sync.\n\n"
             "Includes repositories that are:\n"
@@ -1956,7 +1961,7 @@ class SyncWindow(Adw.ApplicationWindow):
         self.filter_stable = Gtk.ToggleButton(label="🟢 Stable")
         self.filter_stable.set_active(False)
         self.filter_stable.set_tooltip_text(
-            "🟢 FILTER: STABLE TRACK (Factory ➔ Upstream)\n"
+            "🟢 FILTER: STABLE TRACK (Factory ➔ Upstream) [Shortcut: Ctrl+3]\n"
             "────────────────────────────────────────────\n"
             "Filters the package checkout list to track GNOME's stable releases.\n\n"
             "Includes packages matching:\n"
@@ -1970,7 +1975,7 @@ class SyncWindow(Adw.ApplicationWindow):
         self.filter_unstable = Gtk.ToggleButton(label="🟠 Unst.")
         self.filter_unstable.set_active(False)
         self.filter_unstable.set_tooltip_text(
-            "🟠 FILTER: UNSTABLE TRACK (Next ➔ Upstream)\n"
+            "🟠 FILTER: UNSTABLE TRACK (Next ➔ Upstream) [Shortcut: Ctrl+4]\n"
             "───────────────────────────────────────────\n"
             "Filters the package checkout list to track unstable pre-release development.\n\n"
             "Includes packages matching:\n"
@@ -1984,7 +1989,7 @@ class SyncWindow(Adw.ApplicationWindow):
         self.filter_forwarding = Gtk.ToggleButton(label="🔀 Fwd.")
         self.filter_forwarding.set_active(False)
         self.filter_forwarding.set_tooltip_text(
-            "🔀 FILTER: PENDING COMMIT FORWARDING (Next ➔ Factory)\n"
+            "🔀 FILTER: PENDING COMMIT FORWARDING (Next ➔ Factory) [Shortcut: Ctrl+5]\n"
             "───────────────────────────────────────────────────\n"
             "Filters the package checkout list to display GNOME unstable promotion tracks.\n\n"
             "Includes packages matching:\n"
@@ -2526,21 +2531,102 @@ class SyncWindow(Adw.ApplicationWindow):
         toast = Adw.Toast.new(toast_text)
         self.toast_overlay.add_toast(toast)
 
+    def get_visible_package_rows(self):
+        """Returns all currently visible (non-filtered) ListBoxRow children in master_list_box."""
+        visible = []
+        child = self.master_list_box.get_first_child()
+        while child:
+            if isinstance(child, Gtk.ListBoxRow) and child.get_child_visible():
+                visible.append(child)
+            child = child.get_next_sibling()
+        return visible
+
+    def navigate_package_list(self, direction):
+        """
+        direction: +1 for next, -1 for previous.
+        Selects and focuses the next/previous visible package row in master_list_box.
+        """
+        visible_rows = self.get_visible_package_rows()
+        if not visible_rows:
+            return False
+
+        current_row = self.master_list_box.get_selected_row()
+        if not current_row or current_row not in visible_rows:
+            target_idx = 0 if direction > 0 else len(visible_rows) - 1
+        else:
+            current_idx = visible_rows.index(current_row)
+            target_idx = current_idx + direction
+            target_idx = max(0, min(target_idx, len(visible_rows) - 1))
+
+        target_row = visible_rows[target_idx]
+        self.master_list_box.select_row(target_row)
+        target_row.grab_focus()
+
+        # Ensure detail is loaded if row was already selected
+        if getattr(self, "current_selected_package", None) != target_row.package_name:
+            self.load_package_detail(target_row.package_name)
+
+        return True
+
+    def on_search_key_pressed(self, controller, keyval, keycode, state):
+        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter, Gdk.KEY_Down):
+            return self.navigate_package_list(1)
+        elif keyval == Gdk.KEY_Escape:
+            if self.sidebar_search.get_text():
+                self.sidebar_search.set_text("")
+                return True
+            else:
+                visible_rows = self.get_visible_package_rows()
+                if visible_rows:
+                    visible_rows[0].grab_focus()
+                    return True
+        return False
+
     def on_window_key_pressed(self, controller, keyval, keycode, state):
         # 1. Defensive Guard: Never steal key inputs from active VTE terminal tabs!
         focused_widget = self.get_focus()
         if focused_widget and focused_widget.get_name().startswith("Vte"):
             return False
 
-        # 2. Defensive Guard: Never steal inputs if already editing an entry or PR description
-        if focused_widget and (focused_widget.get_name().startswith("GtkEntry") or focused_widget.get_name().startswith("GtkTextView")):
+        ctrl_pressed = (state & Gdk.ModifierType.CONTROL_MASK) != 0
+
+        # 2. Global Shortcuts: Ctrl + 1..5 for filter toggles (active everywhere except VTE)
+        if ctrl_pressed:
+            if keyval in (Gdk.KEY_1, Gdk.KEY_KP_1):
+                self.filter_needs_action.set_active(not self.filter_needs_action.get_active())
+                return True
+            elif keyval in (Gdk.KEY_2, Gdk.KEY_KP_2):
+                self.filter_pool_sync.set_active(not self.filter_pool_sync.get_active())
+                return True
+            elif keyval in (Gdk.KEY_3, Gdk.KEY_KP_3):
+                self.filter_stable.set_active(not self.filter_stable.get_active())
+                return True
+            elif keyval in (Gdk.KEY_4, Gdk.KEY_KP_4):
+                self.filter_unstable.set_active(not self.filter_unstable.get_active())
+                return True
+            elif keyval in (Gdk.KEY_5, Gdk.KEY_KP_5):
+                self.filter_forwarding.set_active(not self.filter_forwarding.get_active())
+                return True
+            elif keyval == Gdk.KEY_f:
+                self.sidebar_search.grab_focus()
+                return True
+
+        # 3. Defensive Guard: Never steal printable inputs if already editing an entry or PR description
+        if focused_widget and (focused_widget.get_name().startswith("GtkEntry") or
+                               focused_widget.get_name().startswith("GtkText") or
+                               isinstance(focused_widget, (Gtk.Entry, Gtk.SearchEntry, Gtk.TextView))):
             return False
 
-        # 3. Detect Ctrl + F or Slash (/) triggers
-        ctrl_pressed = (state & Gdk.ModifierType.CONTROL_MASK) != 0
-        if (ctrl_pressed and keyval == Gdk.KEY_f) or keyval == Gdk.KEY_slash:
+        # 4. Search bar shortcut: '/'
+        if keyval == Gdk.KEY_slash:
             self.sidebar_search.grab_focus()
-            return True # Consume key event so '/' isn't typed into the focused search entry
+            return True
+
+        # 5. Vim-style / Arrow navigation across packages
+        if keyval in (Gdk.KEY_j, Gdk.KEY_J, Gdk.KEY_Down):
+            return self.navigate_package_list(1)
+        elif keyval in (Gdk.KEY_k, Gdk.KEY_K, Gdk.KEY_Up):
+            return self.navigate_package_list(-1)
 
         return False
 

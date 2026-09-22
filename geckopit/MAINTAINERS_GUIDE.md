@@ -174,6 +174,19 @@ When working inside the tabbed terminal drawer, scale fonts dynamically:
 ### 🖱️ 3. SCM Right-Click Context Menu
 Right-click on any package row in the sidebar list to instantly open terminal tabs in your unstable or stable worktrees, trigger manual scans, or execute SCM updates.
 
+### ⌨️ 4. Keyboard Shortcuts & Quick Navigation
+Navigate and filter your packages rapidly without taking your hands off the keyboard:
+*   **Search Packages**: Press `Ctrl` + `F` or `/` from anywhere in the app to instantly focus the search bar.
+*   **Select First Match**: Press `Enter` or `Down` inside the search bar to immediately hand off focus and select the first matching package in the list.
+*   **Navigate Package List**: Press `j` or `Down` to step to the next package, and `k` or `Up` to step to the previous package, loading details and diffs in real-time.
+*   **Toggle Filter Tracks**:
+    *   `Ctrl` + `1`: Toggle **⚠️ Needs Action** global filter
+    *   `Ctrl` + `2`: Toggle **📡 Pool Sync** track
+    *   `Ctrl` + `3`: Toggle **🟢 Stable Updates** track
+    *   `Ctrl` + `4`: Toggle **🟠 Unstable Updates** track
+    *   `Ctrl` + `5`: Toggle **🔀 Forwarding** track
+*   *Note: All shortcuts feature defensive input-stealing guards, ensuring key events are never intercepted while you are typing inside an embedded terminal or editing a text input.*
+
 ---
 
 ## 🛠️ PART 6: ADVANCED COCKPIT SECRETS (POWER USER GUIDE)
