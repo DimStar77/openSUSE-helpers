@@ -546,6 +546,12 @@ class SyncDiffDialog(Gtk.Window):
         self.title_label.set_markup("<span size='large' weight='bold'>Loading repository diff...</span>")
         header.append(self.title_label)
 
+        # Copy button
+        copy_btn = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
+        copy_btn.set_tooltip_text("Copy Diff to Clipboard")
+        copy_btn.connect("clicked", self.on_copy_diff_clicked)
+        header.append(copy_btn)
+
         # Close button
         close_btn = Gtk.Button(label="Close")
         close_btn.connect("clicked", lambda btn: self.destroy())
@@ -586,6 +592,16 @@ class SyncDiffDialog(Gtk.Window):
 
         # Load diff text asynchronously on a priority thread to bypass the background queue!
         threading.Thread(target=self.load_diff_data, daemon=True).start()
+
+    def on_copy_diff_clicked(self, btn):
+        start_iter = self.buffer.get_start_iter()
+        end_iter = self.buffer.get_end_iter()
+        text = self.buffer.get_text(start_iter, end_iter, True).strip()
+        if text and not text.startswith("Loading"):
+            self.get_clipboard().set(text)
+            toast = Adw.Toast.new("Diff copied to clipboard!")
+            if hasattr(self.parent, "toast_overlay"):
+                self.parent.toast_overlay.add_toast(toast)
 
     def on_destroy(self, widget):
         self.is_destroyed = True
@@ -1539,6 +1555,7 @@ class SyncWindow(Adw.ApplicationWindow):
         tab_box.append(close_tab_btn)
 
         page_index = self.notebook.append_page(scroll, tab_box)
+        self.notebook.set_tab_reorderable(scroll, True)
         self.notebook.set_current_page(page_index)
 
         key_controller = Gtk.EventControllerKey.new()
@@ -2272,6 +2289,12 @@ class SyncWindow(Adw.ApplicationWindow):
         self.refresh_diff_btn.connect("clicked", self.on_refresh_diff_clicked)
         diff_header.append(self.refresh_diff_btn)
 
+        # Copy Diff Button
+        self.copy_diff_btn = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
+        self.copy_diff_btn.set_tooltip_text("Copy Diff to Clipboard")
+        self.copy_diff_btn.connect("clicked", self.on_copy_detail_diff_clicked)
+        diff_header.append(self.copy_diff_btn)
+
         box.append(diff_header)
 
         # Scrolled View
@@ -2378,6 +2401,15 @@ class SyncWindow(Adw.ApplicationWindow):
     def on_refresh_diff_clicked(self, btn):
         if getattr(self, "current_selected_package", None):
             self.refresh_active_diff()
+
+    def on_copy_detail_diff_clicked(self, btn):
+        start_iter = self.diff_buffer.get_start_iter()
+        end_iter = self.diff_buffer.get_end_iter()
+        text = self.diff_buffer.get_text(start_iter, end_iter, True).strip()
+        if text and not text.startswith("Loading diff"):
+            self.get_clipboard().set(text)
+            toast = Adw.Toast.new("Diff copied to clipboard!")
+            self.toast_overlay.add_toast(toast)
 
     def refresh_active_diff(self):
         package_name = self.current_selected_package

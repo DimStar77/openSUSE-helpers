@@ -404,6 +404,71 @@ class TestSyncWindow(unittest.TestCase):
         mock_win.sidebar_search.set_text.assert_called_with("")
 
 
+    @mock.patch('geckopit.WorkspaceConfig')
+    def test_terminal_tab_reorderable(self, MockConfig):
+        import gi
+        gi.require_version('Gtk', '4.0')
+        gi.require_version('Adw', '1')
+        from gi.repository import Adw, Gtk
+        from geckopit import SyncWindow
+
+        mock_config_inst = MockConfig.return_value
+        mock_config_inst.max_workers = 50
+        mock_config_inst.get_active_profile.return_value = {
+            'stable_path': '',
+            'stable_branch': 'factory',
+            'unstable_path': '',
+            'unstable_branch': 'next'
+        }
+        mock_config_inst.workspaces = {'Default': mock_config_inst.get_active_profile.return_value}
+        mock_config_inst.active_workspace = 'Default'
+
+        app = Adw.Application()
+        win = SyncWindow(app)
+
+        test_scroll = Gtk.ScrolledWindow()
+        test_tab_box = Gtk.Box()
+        win.notebook.append_page(test_scroll, test_tab_box)
+        win.notebook.set_tab_reorderable(test_scroll, True)
+
+        self.assertTrue(win.notebook.get_tab_reorderable(test_scroll))
+
+    def test_copy_detail_diff_action(self):
+        from geckopit import SyncWindow
+
+        mock_win = mock.Mock()
+        mock_win.diff_buffer = mock.Mock()
+        mock_win.diff_buffer.get_start_iter.return_value = 0
+        mock_win.diff_buffer.get_end_iter.return_value = 1
+        mock_win.diff_buffer.get_text.return_value = "diff --git a/test b/test"
+        mock_win.get_clipboard = mock.Mock()
+        mock_clipboard = mock_win.get_clipboard.return_value
+        mock_win.toast_overlay = mock.Mock()
+
+        SyncWindow.on_copy_detail_diff_clicked(mock_win, None)
+
+        mock_clipboard.set.assert_called_with("diff --git a/test b/test")
+        mock_win.toast_overlay.add_toast.assert_called()
+
+    def test_sync_diff_dialog_copy_action(self):
+        from geckopit import SyncDiffDialog
+
+        mock_dialog = mock.Mock()
+        mock_dialog.buffer = mock.Mock()
+        mock_dialog.buffer.get_start_iter.return_value = 0
+        mock_dialog.buffer.get_end_iter.return_value = 1
+        mock_dialog.buffer.get_text.return_value = "--- a/file\n+++ b/file"
+        mock_dialog.get_clipboard = mock.Mock()
+        mock_clipboard = mock_dialog.get_clipboard.return_value
+        mock_dialog.parent = mock.Mock()
+        mock_dialog.parent.toast_overlay = mock.Mock()
+
+        SyncDiffDialog.on_copy_diff_clicked(mock_dialog, None)
+
+        mock_clipboard.set.assert_called_with("--- a/file\n+++ b/file")
+        mock_dialog.parent.toast_overlay.add_toast.assert_called()
+
+
 class TestPRPrefill(unittest.TestCase):
     def test_parse_changes_diff_single_entry(self):
         import sync_backend as sb
