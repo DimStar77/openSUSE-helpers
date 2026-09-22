@@ -44,6 +44,10 @@ MISSING_PACKAGES=()
 
 # 1. Python dependency and GObject Introspection checks
 python3 -c "
+import rpm
+" >&3 2>&4 || MISSING_PACKAGES+=("python3-rpm")
+
+python3 -c "
 import requests
 " >&3 2>&4 || MISSING_PACKAGES+=("python3-requests")
 

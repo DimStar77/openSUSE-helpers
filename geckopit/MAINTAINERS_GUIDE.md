@@ -34,6 +34,7 @@ Install the required GTK4, Libadwaita, GObject Introspection bindings, and VTE t
 
 ```bash
 sudo zypper in \
+    python3-rpm \
     python3-requests \
     python3-gobject \
     typelib-1_0-Gtk-4_0 \
@@ -104,17 +105,17 @@ cp ~/Documents/git-rw/openSUSE-helpers/geckopit/org.opensuse.geckopit.svg ~/.loc
 Geckopit integrates cutting-edge performance and ergonomics to manage massive monorepos containing 500+ checkouts with zero interface lag:
 
 ### 💾 1. Instant Startup Caching
-Fanning out 500+ parallel SCM git queries and Gitea API calls takes several seconds. To make the interface **instantaneous (0.01 seconds launch)**, Geckopit saves and serializes states inside profile-specific cache files (`~/.cache/geckopit/cache_{profile}.json`). 
+Fanning out 500+ parallel SCM git queries and Gitea API calls takes several seconds. To make the interface **instantaneous (0.01 seconds launch)**, Geckopit saves and serializes states inside profile-specific cache files (`~/.cache/geckopit/cache_{profile}.json`).
 *   **The `(cached)` Badge**: When starting or swapping profiles, Geckopit instantly draws your entire layout using cached data. Package headers carry a gray `(cached)` badge signaling that the cockpit is showing last-run details.
 *   **Quiet Background Resyncs**: While you browse the cached state, a background pool of 50 workers quietly fanned out to fetch live states.
 *   **Live Freshness Swapping**: Once both SCM sync and version scans finish for a package, the `(cached)` tag vanishes, and your action cards instantly redraw to represent the fresh, live SCM state.
 
 ### 🚦 2. User-Selected Priority Threading
-If you select a package from the sidebar while the slow background sweep is running, Geckopit **immediately prioritizes it**. 
+If you select a package from the sidebar while the slow background sweep is running, Geckopit **immediately prioritizes it**.
 It spawns **direct, dedicated priority threads** that completely bypass the saturated background queue, fetching stable, unstable, and Gitea SCM details instantly. Furthermore, the **code-diff viewer** bypasses the thread pool, loading your syntax-highlighted diffs in milliseconds!
 
 ### 🔒 3. The Selection Lock Safeguard
-If you select a package row under the `"Needs Action"` filter, and a background scan discovers that someone has already updated it, running a list refilter would normally delete the row from your sidebar, causing sudden layout shifts. 
+If you select a package row under the `"Needs Action"` filter, and a background scan discovers that someone has already updated it, running a list refilter would normally delete the row from your sidebar, causing sudden layout shifts.
 Geckopit enforces a **Selection Lock**: the currently focused package is completely immune to being filtered out. Its badges will resolve in-place (e.g. changing to a green `✅` or `"Fully In Sync"`), but the row remains visible in your sidebar until you select a different package, respecting your active focus.
 
 ### 🎨 4. Adaptive Dark Mode Synchronization
@@ -150,7 +151,7 @@ When other maintainers check stable bugfixes directly into your stable branch, y
 *   Commit and push to remote.
 
 ### 📤 3. Standard Gitea PR Promotion
-Once your unstable staging has been fully tested and upstream cuts a stable release, you can merge unstable back into your stable branch and push. 
+Once your unstable staging has been fully tested and upstream cuts a stable release, you can merge unstable back into your stable branch and push.
 *   Open the **Forward & PR** tab in Geckopit.
 *   Review the code-diff inside the panel.
 *   Click **`Create Pull Request`** to open our custom, in-app PR dialogue.
