@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import unittest
 import unittest.mock as mock
-from geckopit import guess_update_revision
+from geckopit import guess_update_revision, compare_versions, is_version_newer, is_version_equal
 
 class TestVersionGuessing(unittest.TestCase):
     def test_simdutf_prefix_v(self):
@@ -45,6 +45,64 @@ class TestVersionGuessing(unittest.TestCase):
         guessed, err = guess_update_revision("master", "1.0.0")
         self.assertIsNone(guessed)
         self.assertIn("static development branch", err)
+
+    def test_target_underscores_local_dots(self):
+        # 8. Target has underscores but current revision uses dots (libiptcdata style)
+        guessed, err = guess_update_revision("1.0.4", "1_0_5")
+        self.assertEqual(guessed, "1.0.5")
+        self.assertIsNone(err)
+
+    def test_prefix_and_underscores(self):
+        # 9. Current revision has prefix and underscores (release_1_0_4 style)
+        guessed, err = guess_update_revision("release_1_0_4", "1.0.5")
+        self.assertEqual(guessed, "release_1_0_5")
+        self.assertIsNone(err)
+
+
+class TestSemanticVersionComparison(unittest.TestCase):
+    def test_underscore_and_dot_equality(self):
+        # 1.0.5 and 1_0_5 are semantically identical under RPM rules
+        self.assertTrue(is_version_equal("1.0.5", "1_0_5"))
+        self.assertTrue(is_version_equal("1_0_5", "1.0.5"))
+        self.assertFalse(is_version_newer("1_0_5", "1.0.5"))
+        self.assertFalse(is_version_newer("1.0.5", "1_0_5"))
+
+    def test_genuine_updates(self):
+        # True newer versions must be flagged regardless of separator style
+        self.assertTrue(is_version_newer("1.0.6", "1.0.5"))
+        self.assertTrue(is_version_newer("1_0_6", "1.0.5"))
+        self.assertTrue(is_version_newer("1.0.6", "1_0_5"))
+        self.assertTrue(is_version_newer("v1.0.6", "1.0.5"))
+        self.assertTrue(is_version_newer("V1.0.6", "1.0.5"))
+
+    def test_git_snapshot_comparisons(self):
+        # Git snapshots (e.g. 1.0.0+git) are post-release increments and not older than 1.0.0
+        self.assertFalse(is_version_newer("1.0.0", "1.0.0+git"))
+        self.assertFalse(is_version_newer("1.0.0", "1.0.0+git42"))
+        # An actual next release is newer than the snapshot
+        self.assertTrue(is_version_newer("1.0.1", "1.0.0+git42"))
+
+    def test_lagging_upstream_and_pre_releases(self):
+        # dasher: upstream stable 4_11_0 is older than local 5.0.0+199
+        self.assertFalse(is_version_newer("4_11_0", "5.0.0+199"))
+        # dasher: upstream beta 5_0_0_beta is older than post-release snapshot 5.0.0+199
+        self.assertFalse(is_version_newer("5_0_0_beta", "5.0.0+199"))
+
+    def test_downstream_branding_git_snapshot(self):
+        # gnome-tour: local has downstream branding and git snapshot (50.0.openSUSE+git20260413.334ffbd)
+        tour_local = "50.0.openSUSE+git20260413.334ffbd"
+        # Upstream 50.0 is not newer than our post-50.0 branded snapshot
+        self.assertFalse(is_version_newer("50.0", tour_local))
+        # An actual next release (50.1) is newer and properly triggers an update
+        self.assertTrue(is_version_newer("50.1", tour_local))
+
+    def test_placeholders_and_empty_values(self):
+        self.assertFalse(is_version_newer("1.0.5", "—"))
+        self.assertFalse(is_version_newer("—", "1.0.5"))
+        self.assertFalse(is_version_newer("1.0.5", "N/A"))
+        self.assertFalse(is_version_newer("N/A", "1.0.5"))
+        self.assertFalse(is_version_newer("", ""))
+        self.assertFalse(is_version_newer(None, None))
 
 
 class TestSyncWindow(unittest.TestCase):

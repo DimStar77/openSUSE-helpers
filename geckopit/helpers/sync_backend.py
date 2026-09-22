@@ -1,5 +1,5 @@
-import threading
 #!/usr/bin/env python3
+import threading
 """
 openSUSE Workspace Downstream Sync Backend
 Houses core logic for checking repo sync states, querying Gitea API for PRs,
@@ -16,6 +16,11 @@ import concurrent.futures
 import unicodedata
 import configparser
 import requests
+
+try:
+    import rpm
+except ImportError:
+    rpm = None
 
 _active_processes_lock = threading.Lock()
 _active_processes = []
@@ -346,29 +351,154 @@ def check_repo_sync(repo_name, stable_branch="factory", unstable_branch="next", 
         "needs_action": needs_action,
     }
 
-# Centralized registry of special-case version normalization overrides
-# Key: package name (repo_name)
-# Value: a function (or a list of regex/string replacers) to apply
-CUSTOM_VERSION_NORMALIZERS = {
-    "gnome-tour": lambda v: re.sub(r'\.openSUSE\b', '', v, flags=re.IGNORECASE)
-}
-
 def clean_version(version_str, repo_name=None):
     """
-    Normalize version string by splitting on '+' to strip downstream git snapshot increments safely,
-    and applying package-specific custom overrides from our centralized registry.
+    Normalize version string for comparison:
+    Strips leading 'v' or 'V' prefix if immediately followed by a digit (e.g. 'v1.0.5' -> '1.0.5').
     """
     if not version_str:
         return ""
 
-    # 1. Base normalization: strip downstream git snapshot suffixes
-    cleaned = version_str.split('+')[0].strip()
+    cleaned = str(version_str).strip()
 
-    # 2. Package-specific overrides (Centralized Registry)
-    if repo_name and repo_name in CUSTOM_VERSION_NORMALIZERS:
-        cleaned = CUSTOM_VERSION_NORMALIZERS[repo_name](cleaned)
+    # Strip leading 'v'/'V' prefix if immediately followed by a digit
+    return re.sub(r'^[vV](?=\d)', '', cleaned)
 
-    return cleaned
+def _pure_rpmvercmp(a, b):
+    """
+    Pure Python implementation of RPM's rpmvercmp algorithm for systems
+    without native python3-rpm bindings.
+    """
+    if a == b:
+        return 0
+    i, j = 0, 0
+    len_a, len_b = len(a), len(b)
+    while i < len_a or j < len_b:
+        # Handle tilde (~) which sorts before everything (even empty string)
+        while (i < len_a and a[i] == "~") or (j < len_b and b[j] == "~"):
+            if i < len_a and a[i] == "~" and (j >= len_b or b[j] != "~"):
+                return -1
+            if j < len_b and b[j] == "~" and (i >= len_a or a[i] != "~"):
+                return 1
+            i += 1
+            j += 1
+
+        # Handle caret (^) which sorts before all other chars EXCEPT empty string and tilde
+        while (i < len_a and a[i] == "^") or (j < len_b and b[j] == "^"):
+            if i < len_a and a[i] == "^" and (j >= len_b or b[j] != "^"):
+                if j >= len_b:
+                    return 1
+                return -1
+            if j < len_b and b[j] == "^" and (i >= len_a or a[i] != "^"):
+                if i >= len_a:
+                    return -1
+                return 1
+            i += 1
+            j += 1
+
+        # Skip non-alphanumeric separators
+        while i < len_a and not a[i].isalnum() and a[i] not in "~^":
+            i += 1
+        while j < len_b and not b[j].isalnum() and b[j] not in "~^":
+            j += 1
+
+        if i >= len_a and j >= len_b:
+            return 0
+        if i >= len_a:
+            return -1 if b[j] != "~" else 1
+        if j >= len_b:
+            return 1 if a[i] != "~" else -1
+
+        # Extract next segment
+        if a[i].isdigit():
+            seg_a_start = i
+            while i < len_a and a[i].isdigit():
+                i += 1
+            seg_a = a[seg_a_start:i]
+            is_num_a = True
+        else:
+            seg_a_start = i
+            while i < len_a and a[i].isalpha():
+                i += 1
+            seg_a = a[seg_a_start:i]
+            is_num_a = False
+
+        if b[j].isdigit():
+            seg_b_start = j
+            while j < len_b and b[j].isdigit():
+                j += 1
+            seg_b = b[seg_b_start:j]
+            is_num_b = True
+        else:
+            seg_b_start = j
+            while j < len_b and b[j].isalpha():
+                j += 1
+            seg_b = b[seg_b_start:j]
+            is_num_b = False
+
+        # Numeric segment always > alpha segment
+        if is_num_a and not is_num_b:
+            return 1
+        if not is_num_a and is_num_b:
+            return -1
+
+        if is_num_a:
+            val_a = int(seg_a)
+            val_b = int(seg_b)
+            if val_a != val_b:
+                return 1 if val_a > val_b else -1
+        else:
+            if seg_a != seg_b:
+                return 1 if seg_a > seg_b else -1
+
+    return 0
+
+def compare_versions(v1, v2, repo_name=None):
+    """
+    Compare two version strings using RPM version comparison semantics (rpmvercmp).
+    Returns:
+        1 if v1 > v2
+        0 if v1 == v2
+       -1 if v1 < v2
+    """
+    c1 = clean_version(v1, repo_name)
+    c2 = clean_version(v2, repo_name)
+
+    if c1 == c2:
+        return 0
+    if not c1:
+        return -1
+    if not c2:
+        return 1
+
+    if rpm is not None:
+        try:
+            res = rpm.labelCompare(("", c1, ""), ("", c2, ""))
+            return 1 if res > 0 else (-1 if res < 0 else 0)
+        except Exception:
+            pass
+
+    return _pure_rpmvercmp(c1, c2)
+
+def is_version_newer(upstream, local, repo_name=None) -> bool:
+    """
+    Returns True if upstream version is semantically newer than local version.
+    Returns False if either version is missing, empty, '—', or 'N/A'.
+    """
+    if not upstream or upstream in ("—", "N/A"):
+        return False
+    if not local or local in ("—", "N/A"):
+        return False
+    return compare_versions(upstream, local, repo_name) > 0
+
+def is_version_equal(v1, v2, repo_name=None) -> bool:
+    """
+    Returns True if two versions are semantically equal under RPM rules
+    (e.g. '1.0.5' and '1_0_5').
+    """
+    if not v1 or not v2 or v1 in ("—", "N/A") or v2 in ("—", "N/A"):
+        return False
+    return compare_versions(v1, v2, repo_name) == 0
 
 def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable_branch="next", workspace_path=".", ignored_unstable_versions=None):
     repo_path = os.path.join(workspace_path, repo_name)
@@ -465,17 +595,17 @@ def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable
             "next_ver": next_ver or "—"
         }
 
-    # Compare versions with normalization to ignore git snapshot increments (+git...)
+    # Compare versions using semantic RPM rules: only trigger if upstream is newer than local
     needs_update = False
 
     if (branch is None or branch == stable_branch or branch == "factory") and factory_ver and upstream_stable:
-        if clean_version(factory_ver, repo_name) != clean_version(upstream_stable, repo_name):
+        if is_version_newer(upstream_stable, factory_ver, repo_name):
             needs_update = True
 
     if unstable_branch and (branch is None or branch == unstable_branch or branch == "next") and next_ver and next_ver != "—" and upstream_latest:
-        if clean_version(next_ver, repo_name) != clean_version(upstream_latest, repo_name):
+        if is_version_newer(upstream_latest, next_ver, repo_name):
             # Check if this specific found unstable version is in our ignore list!
-            is_ignored = (ignored_ver and clean_version(upstream_latest, repo_name) == clean_version(ignored_ver, repo_name))
+            is_ignored = bool(ignored_ver and is_version_equal(upstream_latest, ignored_ver, repo_name))
             if not is_ignored:
                 needs_update = True
 

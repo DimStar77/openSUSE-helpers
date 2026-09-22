@@ -50,8 +50,17 @@ RE_VERSION_3 = re.compile(r'(\d+)([\._])(\d+)\2(\d+)')
 RE_VERSION_2 = re.compile(r'(\d+)([\._])(\d+)')
 
 def clean_version(version_str, repo_name=None):
-    """Normalize version string by leveraging our centralized sync_backend custom overrides."""
+    """Normalize version string for comparison using sync_backend."""
     return sb.clean_version(version_str, repo_name)
+
+def compare_versions(v1, v2, repo_name=None):
+    return sb.compare_versions(v1, v2, repo_name)
+
+def is_version_newer(upstream, local, repo_name=None):
+    return sb.is_version_newer(upstream, local, repo_name)
+
+def is_version_equal(v1, v2, repo_name=None):
+    return sb.is_version_equal(v1, v2, repo_name)
 
 def apply_source_view_style_scheme(buffer):
     """Dynamically applies GtkSourceView style schemes based on system dark/light preference."""
@@ -131,8 +140,8 @@ def guess_update_revision(current_revision: Optional[str], target_version: str) 
         prefix = current_revision[:start_idx]
         suffix = current_revision[end_idx:]
 
-        # Format the target version with the same separator
-        new_ver_str = target_version.replace('.', separator)
+        # Format the target version with the same separator (normalizing any existing dots/underscores)
+        new_ver_str = re.sub(r'[._]', separator, target_version)
         guessed_revision = f"{prefix}{new_ver_str}{suffix}"
         return guessed_revision, None
 
@@ -253,11 +262,11 @@ class PackageRow(Gtk.ListBoxRow):
             next_ver = version_data.get("next_ver", "—")
             upstream_latest = version_data.get("upstream_latest", "—")
 
-            if factory_ver != "N/A" and upstream_stable != "N/A" and clean_version(factory_ver, self.package_name) != clean_version(upstream_stable, self.package_name):
+            if is_version_newer(upstream_stable, factory_ver, self.package_name):
                 subtitle_parts.append("Stable Update")
                 self.badges_box.append(self.create_badge("Stable 🔺", "green"))
 
-            if next_ver != "—" and upstream_latest != "—" and clean_version(next_ver, self.package_name) != clean_version(upstream_latest, self.package_name):
+            if is_version_newer(upstream_latest, next_ver, self.package_name):
                 subtitle_parts.append("Unstable Update")
                 self.badges_box.append(self.create_badge("Unstable 🔺", "purple"))
 
@@ -462,7 +471,7 @@ class SyncCreatePRDialog(Gtk.Window):
 
         if success:
             toast = Adw.Toast.new("Pull Request created successfully!")
-            
+
             # Clean ANSI escape sequences and OSC 8 hyperlinks to prevent duplicate/invalid URLs
             clean_msg = res_msg
             # 1. Clean OSC 8 hyperlink wrapper: OSC starts with ESC ], contains no ESC or BEL, ends with BEL or ESC \
@@ -1992,7 +2001,7 @@ class SyncWindow(Adw.ApplicationWindow):
         factory_ver = ver.get("factory_ver", "N/A")
         upstream_stable = ver.get("upstream_stable", "N/A")
         is_stable_track = (factory_ver != "N/A")
-        stable_needs_action = (factory_ver != "N/A" and upstream_stable != "N/A" and clean_version(factory_ver, row.package_name) != clean_version(upstream_stable, row.package_name))
+        stable_needs_action = is_version_newer(upstream_stable, factory_ver, row.package_name)
 
         # C. Unstable/Next Tracking state
         next_ver = ver.get("next_ver", "—")
@@ -2001,8 +2010,8 @@ class SyncWindow(Adw.ApplicationWindow):
 
         # We defensively check if this found unstable update matches our active profile's ignore list!
         ignored_ver = getattr(self, "ignored_unstable_versions", {}).get(row.package_name)
-        is_ignored_unstable = (ignored_ver and clean_version(upstream_latest, row.package_name) == clean_version(ignored_ver, row.package_name))
-        unstable_needs_action = (next_ver != "—" and upstream_latest != "—" and clean_version(next_ver, row.package_name) != clean_version(upstream_latest, row.package_name) and not is_ignored_unstable)
+        is_ignored_unstable = bool(ignored_ver and is_version_equal(upstream_latest, ignored_ver, row.package_name))
+        unstable_needs_action = (is_version_newer(upstream_latest, next_ver, row.package_name) and not is_ignored_unstable)
 
         # D. Forwarding state
         next_ahead = sync.get("next_ahead", 0)
@@ -2417,7 +2426,7 @@ class SyncWindow(Adw.ApplicationWindow):
             box.set_margin_bottom(8)
 
             ignored_ver = self.ignored_unstable_versions.get(package_name)
-            is_ignored = (ignored_ver and clean_version(upstream_latest, package_name) == clean_version(ignored_ver, package_name))
+            is_ignored = bool(ignored_ver and is_version_equal(upstream_latest, ignored_ver, package_name))
 
             if is_ignored:
                 btn = Gtk.Button(label=f"🔄 Unignore Version {upstream_latest}")
@@ -2460,9 +2469,9 @@ class SyncWindow(Adw.ApplicationWindow):
 
         # Recalculate needs_update
         needs_update = False
-        if factory_ver != "N/A" and upstream_stable != "N/A" and clean_version(factory_ver, package_name) != clean_version(upstream_stable, package_name):
+        if is_version_newer(upstream_stable, factory_ver, package_name):
             needs_update = True
-        if next_ver != "—" and clean_version(next_ver, package_name) != clean_version(version, package_name) and not should_ignore:
+        if is_version_newer(version, next_ver, package_name) and not should_ignore:
             needs_update = True
 
         ver_data["needs_update"] = needs_update
@@ -2594,7 +2603,7 @@ class SyncWindow(Adw.ApplicationWindow):
             self.detail_web_btn.set_sensitive(False)
         else:
             self.detail_web_btn.set_sensitive(True)
-            if factory_ver != "N/A" and upstream_stable != "N/A" and clean_version(factory_ver, package_name) != clean_version(upstream_stable, package_name):
+            if is_version_newer(upstream_stable, factory_ver, package_name):
                 self.stable_ver_lbl.set_markup(f"<span weight='bold' foreground='red'>{factory_ver}</span> ➔ <span weight='bold' foreground='green'>{upstream_stable} (Update Available)</span>")
                 self.update_factory_btn.set_sensitive(True)
                 self.update_factory_btn.set_label(f"Update Factory to {upstream_stable}")
@@ -2636,14 +2645,14 @@ class SyncWindow(Adw.ApplicationWindow):
 
         # Check if this unstable version is ignored in active profile configs
         ignored_ver = getattr(self, "ignored_unstable_versions", {}).get(package_name)
-        is_ignored_unstable = (ignored_ver and clean_version(upstream_latest, package_name) == clean_version(ignored_ver, package_name))
+        is_ignored_unstable = bool(ignored_ver and is_version_equal(upstream_latest, ignored_ver, package_name))
 
         if not ver:
             self.unstable_ver_lbl.set_text("Loading...")
             self.update_next_btn.set_sensitive(False)
             self.update_next_btn.set_label("Run SCM Update")
         else:
-            if next_ver != "—" and upstream_latest != "—" and clean_version(next_ver, package_name) != clean_version(upstream_latest, package_name):
+            if is_version_newer(upstream_latest, next_ver, package_name):
                 if is_ignored_unstable:
                     self.unstable_ver_lbl.set_markup(f"<span weight='bold'>{next_ver}</span> ➔ <span weight='bold' foreground='gray' style='italic'>{upstream_latest} (Ignored)</span>")
                     self.update_next_btn.set_sensitive(False)

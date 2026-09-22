@@ -151,7 +151,7 @@ def run_version_check(repos, branch=None):
         if data["needs_update"]:
             if branch == "factory":
                 # Only factory columns
-                if data["factory_ver"] != data["upstream_stable"]:
+                if sb.is_version_newer(data["upstream_stable"], data["factory_ver"], repo):
                     f_local = f"{sb.RED}{data['factory_ver']}{sb.RESET}"
                     f_up = f"{sb.GREEN}{data['upstream_stable']}{sb.RESET}"
                 else:
@@ -161,7 +161,7 @@ def run_version_check(repos, branch=None):
 
             elif branch == "next":
                 # Only next columns
-                if data["next_ver"] != "—" and data["next_ver"] != data["upstream_latest"]:
+                if data["next_ver"] != "—" and sb.is_version_newer(data["upstream_latest"], data["next_ver"], repo):
                     n_local = f"{sb.RED}{data['next_ver']}{sb.RESET}"
                     n_up = f"{sb.GREEN}{data['upstream_latest']}{sb.RESET}"
                 else:
@@ -172,7 +172,7 @@ def run_version_check(repos, branch=None):
             else:
                 # Default (both branches)
                 # Format factory columns
-                if data["factory_ver"] != data["upstream_stable"]:
+                if sb.is_version_newer(data["upstream_stable"], data["factory_ver"], repo):
                     f_local = f"{sb.RED}{data['factory_ver']}{sb.RESET}"
                     f_up = f"{sb.GREEN}{data['upstream_stable']}{sb.RESET}"
                 else:
@@ -180,7 +180,7 @@ def run_version_check(repos, branch=None):
                     f_up = f"{sb.GREEN}{data['upstream_stable']}{sb.RESET}"
 
                 # Format next columns
-                if data["next_ver"] != "—" and data["next_ver"] != data["upstream_latest"]:
+                if data["next_ver"] != "—" and sb.is_version_newer(data["upstream_latest"], data["next_ver"], repo):
                     n_local = f"{sb.RED}{data['next_ver']}{sb.RESET}"
                     n_up = f"{sb.GREEN}{data['upstream_latest']}{sb.RESET}"
                 else:
