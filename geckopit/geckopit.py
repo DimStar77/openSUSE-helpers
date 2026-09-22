@@ -332,9 +332,10 @@ class SyncCreatePRDialog(Gtk.Window):
         # 3. PR Title
         title_input_lbl = Gtk.Label(halign=Gtk.Align.START)
         title_input_lbl.set_markup("<span weight='bold'>PR Title:</span>")
+        self.default_title = f"Forward {self.parent.unstable_b} to {self.parent.stable_b}: {package_name}"
         self.title_entry = Gtk.Entry()
         self.title_entry.set_hexpand(True)
-        self.title_entry.set_text(f"Forward {self.parent.unstable_b} to {self.parent.stable_b}: {package_name}")
+        self.title_entry.set_text(self.default_title)
         grid.attach(title_input_lbl, 0, 1, 1, 1)
         grid.attach(self.title_entry, 1, 1, 3, 1)
 
@@ -342,14 +343,15 @@ class SyncCreatePRDialog(Gtk.Window):
         desc_input_lbl = Gtk.Label(halign=Gtk.Align.START)
         desc_input_lbl.set_markup("<span weight='bold'>Description:</span>")
 
+        self.default_desc = f"Automated {self.parent.unstable_b}-to-{self.parent.stable_b} branch forwarding for {package_name} via Geckopit."
         self.desc_buffer = Gtk.TextBuffer()
-        self.desc_buffer.set_text(f"Automated {self.parent.unstable_b}-to-{self.parent.stable_b} branch forwarding for {package_name} via Geckopit.")
+        self.desc_buffer.set_text(self.default_desc)
         self.desc_view = Gtk.TextView(buffer=self.desc_buffer)
         self.desc_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
 
         desc_scroll = Gtk.ScrolledWindow()
         desc_scroll.set_child(self.desc_view)
-        desc_scroll.set_size_request(-1, 80)
+        desc_scroll.set_size_request(-1, 140)
         grid.attach(desc_input_lbl, 0, 2, 1, 1)
         grid.attach(desc_scroll, 1, 2, 3, 1)
 
@@ -413,11 +415,27 @@ class SyncCreatePRDialog(Gtk.Window):
 
     def load_diff_data(self):
         diff_text = sb.get_git_diff(self.package_name, stable_branch=self.parent.stable_b, unstable_branch=self.parent.unstable_b, workspace_path=self.parent.stable_p)
-        GLib.idle_add(self.update_diff_text, diff_text)
+        prefill_title, prefill_desc = sb.get_pr_prefill_info(self.package_name, stable_branch=self.parent.stable_b, unstable_branch=self.parent.unstable_b, workspace_path=self.parent.stable_p)
+        GLib.idle_add(self.update_diff_and_prefill, diff_text, prefill_title, prefill_desc)
 
     def update_diff_text(self, text):
         if not self.is_destroyed:
             self.diff_buffer.set_text(text)
+
+    def update_diff_and_prefill(self, diff_text, prefill_title, prefill_desc):
+        if not self.is_destroyed:
+            self.diff_buffer.set_text(diff_text)
+            current_title = self.title_entry.get_text().strip()
+            if not current_title or current_title == self.default_title:
+                if prefill_title:
+                    self.title_entry.set_text(prefill_title)
+
+            start_iter = self.desc_buffer.get_start_iter()
+            end_iter = self.desc_buffer.get_end_iter()
+            current_desc = self.desc_buffer.get_text(start_iter, end_iter, True).strip()
+            if not current_desc or current_desc == self.default_desc:
+                if prefill_desc:
+                    self.desc_buffer.set_text(prefill_desc)
 
     def on_create_pr_clicked(self, btn):
         title = self.title_entry.get_text().strip()

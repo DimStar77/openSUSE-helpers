@@ -628,7 +628,7 @@ def get_git_diff(repo_name, stable_branch="factory", unstable_branch="next", wor
         return "No unstable branch configured for this workspace."
     try:
         res = run_tracked(
-            ['git', '-C', repo_path, 'diff', f'origin/{stable_branch}...origin/{unstable_branch}'],
+            ['git', '-C', repo_path, 'diff', '--no-ext-diff', f'origin/{stable_branch}...origin/{unstable_branch}'],
             capture_output=True, text=True, check=True
         )
         diff_text = res.stdout
@@ -637,6 +637,132 @@ def get_git_diff(repo_name, stable_branch="factory", unstable_branch="next", wor
         return diff_text
     except Exception as e:
         return f"Error loading diff: {str(e)}"
+
+def parse_changes_diff(diff_output):
+    """
+    Extracts added changelog content from a git diff of *.changes.
+    Returns cleaned markdown/text suitable for a PR description.
+    """
+    if not diff_output:
+        return ""
+
+    added_lines = []
+    in_hunk = False
+
+    for line in diff_output.splitlines():
+        if line.startswith("@@"):
+            in_hunk = True
+            continue
+        if in_hunk:
+            if line.startswith("+++ ") or line.startswith("--- "):
+                continue
+            if line.startswith("+"):
+                added_lines.append(line[1:])
+
+    if not added_lines:
+        return ""
+
+    text = "\n".join(added_lines).strip()
+    text = re.sub(r"^[-]{20,}\s*\n", "", text)
+    text = re.sub(r"\n[-]{20,}\s*$", "", text)
+    return text.strip()
+
+def get_pr_prefill_info(repo_name, stable_branch="factory", unstable_branch="next", workspace_path="."):
+    """
+    Inspects branch differences between origin/{stable_branch} and origin/{unstable_branch}
+    to generate an intelligent PR title and prefilled description.
+
+    1. If a version bump is detected (unstable > stable), title is:
+       'Update {repo_name} to version {unstable_ver}'
+    2. If no version bump:
+       - 1 commit: commit subject line
+       - Multiple commits: '{first_commit_subject} (+N more commits)'
+       - Fallback: 'Forward {unstable_branch} to {stable_branch}: {repo_name}'
+    3. Description is extracted from the added lines in the *.changes git diff.
+    """
+    repo_path = os.path.join(workspace_path, repo_name)
+    if not unstable_branch:
+        return f"Update {repo_name}", ""
+
+    # 1. Find spec file locally
+    spec_file = None
+    try:
+        for f in os.listdir(repo_path):
+            if f.endswith('.spec'):
+                spec_file = f
+                break
+    except Exception:
+        pass
+    if not spec_file:
+        spec_file = f"{repo_name}.spec"
+
+    # 2. Extract versions from spec file in both branches
+    stable_ver = None
+    unstable_ver = None
+    try:
+        res_s = run_tracked(
+            ['git', '-C', repo_path, 'show', f'refs/remotes/origin/{stable_branch}:{spec_file}'],
+            capture_output=True, text=True
+        )
+        for line in res_s.stdout.splitlines():
+            if line.strip().lower().startswith('version:'):
+                stable_ver = line.split(':', 1)[1].strip()
+                break
+    except Exception:
+        pass
+
+    try:
+        res_u = run_tracked(
+            ['git', '-C', repo_path, 'show', f'refs/remotes/origin/{unstable_branch}:{spec_file}'],
+            capture_output=True, text=True
+        )
+        for line in res_u.stdout.splitlines():
+            if line.strip().lower().startswith('version:'):
+                unstable_ver = line.split(':', 1)[1].strip()
+                break
+    except Exception:
+        pass
+
+    # 3. Retrieve non-merge commit subjects between branches
+    commits = []
+    try:
+        res_log = run_tracked(
+            ['git', '-C', repo_path, 'log', '--no-merges', '--format=%s', f'refs/remotes/origin/{stable_branch}..refs/remotes/origin/{unstable_branch}'],
+            capture_output=True, text=True
+        )
+        commits = [line.strip() for line in res_log.stdout.splitlines() if line.strip()]
+    except Exception:
+        pass
+
+    # 4. Determine smart PR Title
+    if unstable_ver and stable_ver and is_version_newer(unstable_ver, stable_ver, repo_name):
+        title = f"Update {repo_name} to version {unstable_ver}"
+    elif unstable_ver and stable_ver and unstable_ver != stable_ver:
+        title = f"Update {repo_name} to version {unstable_ver}"
+    elif len(commits) == 1:
+        title = commits[0]
+    elif len(commits) == 2:
+        title = f"{commits[0]} (+1 more commit)"
+    elif len(commits) > 2:
+        title = f"{commits[0]} (+{len(commits) - 1} more commits)"
+    else:
+        title = f"Forward {unstable_branch} to {stable_branch}: {repo_name}"
+
+    # 5. Extract *.changes diff for PR Description
+    description = ""
+    try:
+        res_diff = run_tracked(
+            ['git', '-C', repo_path, 'diff', '--no-ext-diff', f'refs/remotes/origin/{stable_branch}...refs/remotes/origin/{unstable_branch}', '--', '*.changes'],
+            capture_output=True, text=True
+        )
+        description = parse_changes_diff(res_diff.stdout)
+    except Exception:
+        pass
+
+    if not description:
+        description = f"Automated {unstable_branch}-to-{stable_branch} branch forwarding for {repo_name} via Geckopit."
+
+    return title, description
 
 def get_gitea_pr_url(repo_name, stable_branch="factory", unstable_branch="next", workspace_path="."):
     """
