@@ -45,6 +45,51 @@ BUILD_CANDIDATES = [
 ]
 
 
+MAX_LFS_SMUDGE_SIZE = 100 * 1024 * 1024  # 100 MB safety guard for in-memory smudging
+
+
+def parse_lfs_pointer(file_path: str) -> Tuple[bool, Optional[str], Optional[int]]:
+    """
+    Parses a file to determine if it is a Git LFS pointer.
+    Returns (is_lfs, oid, size_in_bytes).
+    """
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as fh:
+            header = fh.read(250)
+            if header.startswith("version https://git-lfs.github.com/spec/"):
+                m_oid = re.search(r"^oid\s+sha256:([0-9a-fA-F]{64})", header, re.MULTILINE)
+                m_size = re.search(r"^size\s+(\d+)", header, re.MULTILINE)
+                oid = m_oid.group(1) if m_oid else None
+                size = int(m_size.group(1)) if m_size else None
+                return True, oid, size
+    except Exception:
+        pass
+    return False, None, None
+
+
+def find_local_lfs_object(pkg_dir: str, oid: str) -> Optional[str]:
+    """
+    Checks if a Git LFS object is already cached on local disk under .git/lfs/objects/.
+    """
+    if not oid or len(oid) < 4:
+        return None
+    try:
+        common_dir = subprocess.run(
+            ["git", "-C", pkg_dir, "rev-parse", "--git-common-dir"],
+            capture_output=True,
+            text=True,
+            check=True
+        ).stdout.strip()
+        if not os.path.isabs(common_dir):
+            common_dir = os.path.abspath(os.path.join(pkg_dir, common_dir))
+        candidate = os.path.join(common_dir, "lfs", "objects", oid[:2], oid[2:4], oid)
+        if os.path.isfile(candidate):
+            return candidate
+    except Exception:
+        pass
+    return None
+
+
 class TarballUpgradeHelper(BaseUpgradeHelper):
     name: str = "tarball"
     description: str = "Direct Tarball / Spec (download_files / .spec)"
@@ -116,40 +161,46 @@ class TarballUpgradeHelper(BaseUpgradeHelper):
     ) -> Optional[str]:
         """
         Extracts text content of a named member from a tarball archive without unpacking to disk.
-        Seamlessly streams contents through 'git lfs smudge' if the archive on disk is a Git-LFS pointer.
+        Safely resolves Git-LFS pointers using direct local disk cache access or size-guarded smudging.
         """
         pkg_dir = package_dir or os.path.dirname(archive_path)
 
         # 1. Check if archive is a Git LFS pointer
-        is_lfs = False
-        try:
-            with open(archive_path, "rb") as fh:
-                header = fh.read(100)
-                if header.startswith(b"version https://git-lfs.github.com/spec/"):
-                    is_lfs = True
-        except Exception:
-            pass
+        is_lfs, oid, size = parse_lfs_pointer(archive_path)
 
+        tar_source = archive_path
         fileobj = None
-        if is_lfs:
-            try:
-                res = subprocess.run(
-                    ["git", "-C", pkg_dir, "lfs", "smudge"],
-                    input=open(archive_path, "rb").read(),
-                    capture_output=True,
-                    check=True
-                )
-                if res.stdout:
-                    fileobj = io.BytesIO(res.stdout)
-            except Exception:
-                fileobj = None
 
-        # 2. Open tar archive (from memory buffer or disk file)
+        if is_lfs:
+            # A. Check if the object is already stored on local disk in .git/lfs/objects/
+            local_cache = find_local_lfs_object(pkg_dir, oid) if oid else None
+            if local_cache:
+                # Open directly from disk cache: zero RAM overhead and zero network calls!
+                tar_source = local_cache
+            else:
+                # B. Not cached locally: enforce defensive size guard before invoking smudge
+                if size and size > MAX_LFS_SMUDGE_SIZE:
+                    # Giant archive (e.g. chromium, libreoffice): skip to protect memory/bandwidth
+                    return None
+
+                try:
+                    res = subprocess.run(
+                        ["git", "-C", pkg_dir, "lfs", "smudge"],
+                        input=open(archive_path, "rb").read(),
+                        capture_output=True,
+                        check=True
+                    )
+                    if res.stdout:
+                        fileobj = io.BytesIO(res.stdout)
+                except Exception:
+                    return None
+
+        # 2. Open tar archive (from disk file or in-memory buffer)
         try:
             if fileobj:
                 tf = tarfile.open(fileobj=fileobj, mode="r:*")
             else:
-                tf = tarfile.open(archive_path, "r:*")
+                tf = tarfile.open(tar_source, mode="r:*")
 
             with tf:
                 for member in tf.getmembers():

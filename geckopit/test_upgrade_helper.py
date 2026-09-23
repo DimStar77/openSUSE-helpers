@@ -341,6 +341,32 @@ Release:        0
         diff_with_retro = '--- NEWS.old\n+++ NEWS.new\n@@ -1,15 +1,20 @@\n+Changes in 1.1\n+==============\n+* Feature A\n+\n Changes in 1.0\n ==============\n * Bug fix\n+* (CVE-2026-1234)\n'
         self.assertTrue(check_retrospective_news_changes(diff_with_retro))
 
+    def test_parse_lfs_pointer(self):
+        from upgrade.tarball import parse_lfs_pointer
+        with tempfile.NamedTemporaryFile("w", delete=False) as tf:
+            tf.write('version https://git-lfs.github.com/spec/v1\noid sha256:b6630bd24f8161b0e2546d2acbb014a3b3249f5c0d75f2a863ade898b9034d3d\nsize 45932\n')
+            tmp_path = tf.name
+
+        try:
+            is_lfs, oid, size = parse_lfs_pointer(tmp_path)
+            self.assertTrue(is_lfs)
+            self.assertEqual(oid, "b6630bd24f8161b0e2546d2acbb014a3b3249f5c0d75f2a863ade898b9034d3d")
+            self.assertEqual(size, 45932)
+        finally:
+            os.remove(tmp_path)
+
+    def test_lfs_giant_archive_size_guard(self):
+        from upgrade.tarball import TarballUpgradeHelper, MAX_LFS_SMUDGE_SIZE
+        with tempfile.NamedTemporaryFile("w", delete=False) as tf:
+            tf.write(f"version https://git-lfs.github.com/spec/v1\noid sha256:0000000000000000000000000000000000000000000000000000000000000000\nsize {MAX_LFS_SMUDGE_SIZE + 1000}\n")
+            tmp_path = tf.name
+
+        try:
+            res = TarballUpgradeHelper.extract_member_content(tmp_path, "NEWS")
+            self.assertIsNone(res)
+        finally:
+            os.remove(tmp_path)
+
     def test_tarball_helper_can_handle(self):
         from upgrade.tarball import TarballUpgradeHelper
         with tempfile.TemporaryDirectory() as tmpdir:
