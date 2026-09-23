@@ -405,6 +405,20 @@ class TestSyncWindow(unittest.TestCase):
         mock_win.sidebar_search.set_text.assert_called_with("")
 
 
+    def test_terminal_zoom_indicator(self):
+        import gi
+        gi.require_version('Gtk', '4.0')
+        from geckopit import SyncWindow
+
+        mock_win = mock.Mock()
+        mock_win.term_zoom_label = mock.Mock()
+        mock_win.term_zoom_revealer = mock.Mock()
+        mock_win.term_zoom_timeout_id = 0
+
+        SyncWindow.show_terminal_zoom_indicator(mock_win, 1.2)
+        mock_win.term_zoom_label.set_markup.assert_called_with("<span size='small' weight='bold' foreground='#3584e4'>🔍 120%</span>")
+        mock_win.term_zoom_revealer.set_reveal_child.assert_called_with(True)
+
     @mock.patch('geckopit.WorkspaceConfig')
     def test_terminal_tab_reorderable(self, MockConfig):
         import gi

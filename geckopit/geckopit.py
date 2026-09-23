@@ -1157,6 +1157,7 @@ class SyncWindow(Adw.ApplicationWindow):
 
         # Initialize filter timeout and state registries
         self.filter_timeout_id = 0
+        self.term_zoom_timeout_id = 0
         self.last_diff_package = None
         self.current_selected_package = None
         self.refreshed_packages = set()
@@ -1225,6 +1226,16 @@ class SyncWindow(Adw.ApplicationWindow):
         self.term_title_label.set_halign(Gtk.Align.START)
         self.term_title_label.set_markup("<span weight='bold'>Terminal Console Drawer</span>")
         term_header.append(self.term_title_label)
+
+        # Temporary Zoom Percentage Indicator
+        self.term_zoom_revealer = Gtk.Revealer()
+        self.term_zoom_revealer.set_transition_type(Gtk.RevealerTransitionType.CROSSFADE)
+        self.term_zoom_revealer.set_transition_duration(250)
+        self.term_zoom_label = Gtk.Label()
+        self.term_zoom_label.add_css_class("pill")
+        self.term_zoom_label.set_margin_end(8)
+        self.term_zoom_revealer.set_child(self.term_zoom_label)
+        term_header.append(self.term_zoom_revealer)
 
         # Hide terminal button
         hide_btn = Gtk.Button.new_from_icon_name("window-close-symbolic")
@@ -1627,18 +1638,37 @@ class SyncWindow(Adw.ApplicationWindow):
         )
         terminal.grab_focus()
 
+    def show_terminal_zoom_indicator(self, scale):
+        """Displays temporary floating zoom percentage badge in the terminal drawer header."""
+        pct = int(round(scale * 100))
+        self.term_zoom_label.set_markup(f"<span size='small' weight='bold' foreground='#3584e4'>🔍 {pct}%</span>")
+        self.term_zoom_revealer.set_reveal_child(True)
+
+        if getattr(self, "term_zoom_timeout_id", 0) != 0:
+            GLib.source_remove(self.term_zoom_timeout_id)
+
+        def hide_zoom():
+            self.term_zoom_revealer.set_reveal_child(False)
+            self.term_zoom_timeout_id = 0
+            return False
+
+        self.term_zoom_timeout_id = GLib.timeout_add(1000, hide_zoom)
+
     def on_terminal_key_pressed(self, controller, keyval, keycode, state, terminal):
         is_ctrl = (state & Gdk.ModifierType.CONTROL_MASK) != 0
         if is_ctrl:
             current_scale = terminal.get_font_scale()
+            new_scale = None
             if keyval in (Gdk.KEY_plus, Gdk.KEY_equal, Gdk.KEY_KP_Add):
-                terminal.set_font_scale(min(4.0, current_scale + 0.1))
-                return True
+                new_scale = min(4.0, current_scale + 0.1)
             elif keyval in (Gdk.KEY_minus, Gdk.KEY_underscore, Gdk.KEY_KP_Subtract):
-                terminal.set_font_scale(max(0.5, current_scale - 0.1))
-                return True
+                new_scale = max(0.5, current_scale - 0.1)
             elif keyval in (Gdk.KEY_0, Gdk.KEY_KP_0):
-                terminal.set_font_scale(1.0)
+                new_scale = 1.0
+
+            if new_scale is not None:
+                terminal.set_font_scale(new_scale)
+                self.show_terminal_zoom_indicator(new_scale)
                 return True
         return False
 
