@@ -979,3 +979,119 @@ def pad_left(text, width):
     """Pads a left-aligned string using the calculated visual display width."""
     v_len = visual_len(text)
     return text + ' ' * max(0, width - v_len)
+
+
+def is_package_dir(path="."):
+    """Checks if path is an individual openSUSE package directory (contains .git and spec/service/changes)."""
+    if not os.path.exists(os.path.join(path, ".git")):
+        return False
+    try:
+        entries = os.listdir(path)
+        has_spec = any(f.endswith(".spec") for f in entries)
+        has_service = "_service" in entries
+        has_changes = any(f.endswith(".changes") for f in entries)
+        has_obsinfo = any(f.endswith(".obsinfo") for f in entries)
+        return has_spec or has_service or has_changes or has_obsinfo
+    except OSError:
+        return False
+
+
+def get_package_name_from_dir(path="."):
+    """Extracts package name from spec file, _service, obsinfo, or directory name."""
+    path = os.path.abspath(path)
+    try:
+        for f in os.listdir(path):
+            if f.endswith(".spec"):
+                return f[:-5]
+    except OSError:
+        pass
+    service_file = os.path.join(path, "_service")
+    if os.path.isfile(service_file):
+        try:
+            with open(service_file, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            m = re.search(r'<param\s+name=["\']url["\']>([^<]+)</param>', content)
+            if m:
+                url = m.group(1).strip()
+                url = re.sub(r'\.git/?$', '', url)
+                name = url.rstrip('/').split('/')[-1]
+                if name:
+                    return name
+        except Exception:
+            pass
+    try:
+        for f in os.listdir(path):
+            if f.endswith(".obsinfo"):
+                return f[:-8]
+    except OSError:
+        pass
+    return os.path.basename(path)
+
+
+def load_geckopit_profile_config():
+    """Loads active workspace profile settings from ~/.config/geckopit.json."""
+    from pathlib import Path
+    path = Path.home() / ".config" / "geckopit.json"
+    config = {
+        "active_workspace": "Default",
+        "stable_branch": "factory",
+        "unstable_branch": "next",
+        "stable_path": ".",
+        "unstable_path": None,
+        "ignored_unstable_versions": {}
+    }
+    if path.exists():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                active_ws = data.get("active_workspace", "Default")
+                workspaces = data.get("workspaces", {})
+                active_profile = workspaces.get(active_ws, {})
+                config["active_workspace"] = active_ws
+                config["stable_branch"] = active_profile.get("stable_branch", "factory") or "factory"
+                config["unstable_branch"] = active_profile.get("unstable_branch", "next") or "next"
+                config["stable_path"] = active_profile.get("stable_path", ".") or "."
+                config["unstable_path"] = active_profile.get("unstable_path")
+                config["ignored_unstable_versions"] = active_profile.get("ignored_unstable_versions", {})
+        except Exception:
+            pass
+    return config
+
+
+def check_single_package_full(pkg_dir=".", stable_branch=None, unstable_branch=None):
+    """
+    Gathers all synchronization, version, PR, and local worktree data for a single package directory.
+    Queries backend services concurrently.
+    """
+    pkg_dir = os.path.abspath(pkg_dir)
+    parent_dir = os.path.dirname(pkg_dir)
+    repo_name = get_package_name_from_dir(pkg_dir)
+
+    prof = load_geckopit_profile_config()
+    st_branch = stable_branch or prof.get("stable_branch", "factory") or "factory"
+    unst_branch = unstable_branch or prof.get("unstable_branch", "next") or "next"
+    ignored_vers = prof.get("ignored_unstable_versions", {})
+
+    wt = check_worktree_status(pkg_dir, expected_branch=unst_branch)
+    active_branch = wt.get("head") or "unknown"
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+        f_sync = ex.submit(check_repo_sync, repo_name, st_branch, unst_branch, parent_dir)
+        f_ver = ex.submit(check_repo_version, repo_name, None, st_branch, unst_branch, parent_dir, ignored_vers)
+        f_pr = ex.submit(check_repo_pr, repo_name, st_branch, unst_branch, parent_dir)
+
+        sync = f_sync.result()[1]
+        ver = f_ver.result()[1]
+        pr = f_pr.result()[1]
+
+    return {
+        "repo_name": repo_name,
+        "pkg_dir": pkg_dir,
+        "active_branch": active_branch,
+        "stable_branch": st_branch,
+        "unstable_branch": unst_branch,
+        "worktree": wt,
+        "sync": sync,
+        "version": ver,
+        "pr": pr
+    }

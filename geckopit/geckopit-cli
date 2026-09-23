@@ -2,6 +2,7 @@
 """
 openSUSE Workspace Downstream Checker CLI
 CLI Frontend relying on sync_backend.py for core logic.
+Supports both Project-wide multi-package batch scans and single-package focused dashboards.
 """
 
 import os
@@ -11,6 +12,211 @@ import concurrent.futures
 # Make sure we can import sync_backend from helpers/ by resolving symlinks
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), 'helpers'))
 import sync_backend as sb
+
+def render_single_package_dashboard(data):
+    repo = data['repo_name']
+    wt = data['worktree']
+    sync = data['sync']
+    ver = data['version']
+    pr = data['pr']
+    branch = data['active_branch']
+
+    print(f"{sb.BOLD}{'='*72}{sb.RESET}")
+    print(f"📦 {sb.BOLD}GECKOPIT PACKAGE DASHBOARD: {sb.CYAN}{repo}{sb.RESET}")
+    print(f"{sb.BOLD}{'='*72}{sb.RESET}")
+    print(f"  Directory:     {data['pkg_dir']}")
+    upstream_ref = wt.get('upstream') or f"origin/{branch}"
+    print(f"  Checked Out:   {sb.BOLD}{branch}{sb.RESET} (tracking {upstream_ref})")
+    project = ver.get('project', repo)
+    print(f"  Upstream URL:  https://release-monitoring.org/project/{project}/")
+    print()
+
+    # Section 1: Local Worktree Status
+    print(f"── {sb.BOLD}💻 Local Worktree Status{sb.RESET} {'─'*45}")
+    ahead = wt.get('ahead', 0)
+    behind = wt.get('behind', 0)
+    dirty = wt.get('dirty', False)
+    untracked = wt.get('untracked', False)
+
+    if behind > 0 and ahead > 0:
+        align_str = f"{sb.RED}❌ Diverged from {upstream_ref} (Behind {behind}, Ahead {ahead}){sb.RESET}"
+    elif behind > 0:
+        align_str = f"{sb.YELLOW}⚠️ Behind {upstream_ref} by {behind} commit{'s' if behind > 1 else ''} (Pull needed){sb.RESET}"
+    elif ahead > 0:
+        align_str = f"{sb.CYAN}📤 Ahead of {upstream_ref} by {ahead} commit{'s' if ahead > 1 else ''} (Unpushed){sb.RESET}"
+    else:
+        align_str = f"{sb.GREEN}✅ Up-to-date with {upstream_ref}{sb.RESET}"
+    print(f"  Alignment:     {align_str}")
+
+    if dirty and untracked:
+        tree_str = f"{sb.YELLOW}⚠️ Dirty (uncommitted modifications + untracked files){sb.RESET}"
+    elif dirty:
+        tree_str = f"{sb.YELLOW}⚠️ Dirty (uncommitted modifications){sb.RESET}"
+    elif untracked:
+        tree_str = f"{sb.YELLOW}⚠️ Untracked files present{sb.RESET}"
+    else:
+        tree_str = f"{sb.GREEN}✅ Clean working directory{sb.RESET}"
+    print(f"  Working Tree:  {tree_str}")
+    print()
+
+    # Section 2: Downstream SCM Sync (Gitea & Pool)
+    print(f"── {sb.BOLD}🔄 Downstream SCM Sync (Gitea & Pool){sb.RESET} {'─'*32}")
+    pool_behind = sync.get('pool_behind', 0)
+    pool_ahead = sync.get('pool_ahead', 0)
+    pool_status = sync.get('pool_status', 'unknown')
+    if pool_behind > 0 and pool_ahead > 0:
+        pool_str = f"{sb.RED}❌ Diverged (Behind {pool_behind}, Ahead {pool_ahead}){sb.RESET}"
+    elif pool_behind > 0:
+        pool_str = f"{sb.YELLOW}📥 Behind central pool by {pool_behind} commits (Pull needed){sb.RESET}"
+    elif pool_ahead > 0:
+        pool_str = f"{sb.CYAN}📤 Ahead of central pool by {pool_ahead} commits (Submit needed){sb.RESET}"
+    elif pool_status == 'Not in Pool':
+        pool_str = f"{sb.YELLOW}❓ Not in Pool{sb.RESET}"
+    else:
+        pool_str = f"{sb.GREEN}✅ In Sync with pool{sb.RESET}"
+    print(f"  Gitea Pool:    {pool_str}")
+
+    next_ahead = sync.get('next_ahead', 0)
+    next_behind = sync.get('next_behind', 0)
+    next_status = sync.get('next_status', 'unknown')
+    if next_status == 'No next branch':
+        fwd_str = '— (No next branch configured)'
+    elif next_behind > 0 and next_ahead > 0:
+        fwd_str = f"{sb.RED}❌ Diverged (Behind {next_behind}, Ahead {next_ahead}){sb.RESET}"
+    elif next_behind > 0:
+        fwd_str = f"{sb.YELLOW}⚠️ Behind factory by {next_behind} commits (Catch-up merge needed){sb.RESET}"
+    elif next_ahead > 0:
+        fwd_str = f"{sb.GREEN}🔀 Ahead of factory by {next_ahead} commits (Ready to forward){sb.RESET}"
+    else:
+        fwd_str = f"{sb.GREEN}✅ In Sync (no unforwarded next commits){sb.RESET}"
+    print(f"  Branch Sync:   {fwd_str}")
+
+    if pr.get('has_pr', False):
+        pr_str = f"{sb.GREEN}🟢 PR #{pr.get('number')}: {pr.get('url')}{sb.RESET}"
+    else:
+        pr_str = "None (no active PR)"
+    print(f"  Active PR:     {pr_str}")
+    print()
+
+    # Section 3: Upstream Release Versions
+    print(f"── {sb.BOLD}📦 Upstream Release Versions{sb.RESET} {'─'*41}")
+    f_ver = ver.get('factory_ver', 'N/A')
+    u_stable = ver.get('upstream_stable', 'N/A')
+    n_ver = ver.get('next_ver', '—')
+    u_latest = ver.get('upstream_latest', '—')
+
+    if sb.is_version_newer(u_stable, f_ver, repo):
+        f_status = f"{sb.YELLOW}🔺 Update available: {f_ver} ➔ {u_stable}{sb.RESET}"
+    else:
+        f_status = f"{sb.GREEN}✅ Up-to-date ({f_ver}){sb.RESET}"
+    print(f"  Factory:       {f_status}")
+
+    if n_ver != '—':
+        if sb.is_version_newer(u_latest, n_ver, repo):
+            n_status = f"{sb.YELLOW}🔺 Update available: {n_ver} ➔ {u_latest}{sb.RESET}"
+        else:
+            n_status = f"{sb.GREEN}✅ Up-to-date ({n_ver}){sb.RESET}"
+        print(f"  Next:          {n_status}")
+    print()
+
+    # Section 4: Recommended Actions
+    actions = []
+    if behind > 0:
+        actions.append(f"📥 Pull remote commits: {sb.BOLD}git pull --ff-only{sb.RESET}")
+    if pool_behind > 0:
+        actions.append(f"📥 Pull upstream changes from Pool: {sb.BOLD}git fetch https://src.opensuse.org/pool/{repo}.git factory && git merge FETCH_HEAD{sb.RESET}")
+    if next_behind > 0:
+        actions.append(f"🔀 Catch-up merge from factory: {sb.BOLD}git merge origin/factory{sb.RESET}")
+    if next_ahead > 0 and not pr.get('has_pr'):
+        actions.append(f"📤 Create Gitea Pull Request from {branch} to factory")
+    if ver.get('needs_update'):
+        target_v = u_latest if branch == 'next' and u_latest != '—' else u_stable
+        actions.append(f"⚙️  Run upgrade helper: {sb.BOLD}geckopit-upgrade {target_v}{sb.RESET}")
+
+    print(f"── {sb.BOLD}💡 Recommended Actions{sb.RESET} {'─'*46}")
+    if actions:
+        for a in actions:
+            print(f"  • {a}")
+    else:
+        print(f"  {sb.GREEN}✅ Package is fully in sync and up-to-date. No action needed!{sb.RESET}")
+    print(f"{sb.BOLD}{'='*72}{sb.RESET}")
+
+
+def run_single_package_dashboard(pkg_dir="."):
+    pkg_name = sb.get_package_name_from_dir(pkg_dir)
+    print(f"Inspecting package '{pkg_name}'...", file=sys.stderr)
+    data = sb.check_single_package_full(pkg_dir)
+    render_single_package_dashboard(data)
+
+
+def run_single_package_version(pkg_dir=".", branch=None):
+    pkg_name = sb.get_package_name_from_dir(pkg_dir)
+    print(f"Checking upstream versions for '{pkg_name}'...", file=sys.stderr)
+    parent_dir = os.path.dirname(os.path.abspath(pkg_dir))
+    prof = sb.load_geckopit_profile_config()
+    st_b = prof.get("stable_branch", "factory") or "factory"
+    unst_b = prof.get("unstable_branch", "next") or "next"
+    ignored = prof.get("ignored_unstable_versions", {})
+
+    _, data = sb.check_repo_version(pkg_name, branch, st_b, unst_b, parent_dir, ignored)
+    print(f"\n📦 {sb.BOLD}Package Upstream Version: {sb.CYAN}{pkg_name}{sb.RESET}")
+    print(f"{sb.BOLD}{'='*60}{sb.RESET}")
+    f_ver = data.get("factory_ver", "N/A")
+    u_stable = data.get("upstream_stable", "N/A")
+    n_ver = data.get("next_ver", "—")
+    u_latest = data.get("upstream_latest", "—")
+
+    if not branch or branch == "factory":
+        if sb.is_version_newer(u_stable, f_ver, pkg_name):
+            status = f"{sb.YELLOW}🔺 Update available: {f_ver} ➔ {u_stable}{sb.RESET}"
+        else:
+            status = f"{sb.GREEN}✅ Up-to-date ({f_ver}){sb.RESET}"
+        print(f"  Factory Branch: {status}")
+
+    if not branch or branch == "next":
+        if n_ver != "—":
+            if sb.is_version_newer(u_latest, n_ver, pkg_name):
+                status = f"{sb.YELLOW}🔺 Update available: {n_ver} ➔ {u_latest}{sb.RESET}"
+            else:
+                status = f"{sb.GREEN}✅ Up-to-date ({n_ver}){sb.RESET}"
+            print(f"  Next Branch:    {status}")
+    print(f"{sb.BOLD}{'='*60}{sb.RESET}")
+
+
+def run_single_package_forward(pkg_dir=".", show_pr=False, only_no_pr=False):
+    pkg_name = sb.get_package_name_from_dir(pkg_dir)
+    print(f"Checking forwarding status for '{pkg_name}'...", file=sys.stderr)
+    parent_dir = os.path.dirname(os.path.abspath(pkg_dir))
+    prof = sb.load_geckopit_profile_config()
+    st_b = prof.get("stable_branch", "factory") or "factory"
+    unst_b = prof.get("unstable_branch", "next") or "next"
+
+    _, sync = sb.check_repo_sync(pkg_name, st_b, unst_b, parent_dir)
+    _, pr = sb.check_repo_pr(pkg_name, st_b, unst_b, parent_dir)
+
+    print(f"\n🔀 {sb.BOLD}Package Forwarding State: {sb.CYAN}{pkg_name}{sb.RESET}")
+    print(f"{sb.BOLD}{'='*60}{sb.RESET}")
+    next_ahead = sync.get("next_ahead", 0)
+    next_behind = sync.get("next_behind", 0)
+
+    print(f"  Commits Ahead (on next):    {sb.GREEN}{next_ahead}{sb.RESET}")
+    print(f"  Commits Behind (factory):   {sb.RED if next_behind > 0 else sb.GREEN}{next_behind}{sb.RESET}")
+
+    if next_behind > 0:
+        fwd = f"{sb.YELLOW}⚠️ Needs Catch-up Merge first{sb.RESET}"
+    elif next_ahead > 0:
+        fwd = f"{sb.GREEN}✅ Ready to Forward (Clean){sb.RESET}"
+    else:
+        fwd = f"{sb.GREEN}✅ In Sync{sb.RESET}"
+    print(f"  Forward Status:             {fwd}")
+
+    if pr.get("has_pr"):
+        pr_str = f"{sb.GREEN}Yes (PR #{pr.get('number')}) - {pr.get('url')}{sb.RESET}"
+    else:
+        pr_str = f"{sb.RED}No{sb.RESET}"
+    print(f"  PR Pending:                 {pr_str}")
+    print(f"{sb.BOLD}{'='*60}{sb.RESET}")
+
 
 def run_sync_check(repos):
     total = len(repos)
@@ -96,26 +302,10 @@ def run_sync_check(repos):
     print(f"\n💡 {sb.BOLD}Tip:{sb.RESET} Try './geckopit-cli --version' to check upstream releases, or '--forward' to find forwardable next branches.")
 
 
-def load_config_ignored_versions():
-    import json
-    from pathlib import Path
-    path = Path.home() / ".config" / "geckopit.json"
-    if path.exists():
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                active_ws = data.get("active_workspace", "Default")
-                workspaces = data.get("workspaces", {})
-                active_profile = workspaces.get(active_ws, {})
-                return active_profile.get("ignored_unstable_versions", {})
-        except Exception:
-            pass
-    return {}
-
 def run_version_check(repos, branch=None):
-    ignored_versions = load_config_ignored_versions()
+    prof = sb.load_geckopit_profile_config()
+    ignored_versions = prof.get("ignored_unstable_versions", {})
     total = len(repos)
-    # Be gentle with release-monitoring.org by using 30 parallel workers
     if branch:
         print(f"Checking {branch} versions for {total} packages against release-monitoring.org (30 threads)...", file=sys.stderr)
     else:
@@ -150,7 +340,6 @@ def run_version_check(repos, branch=None):
 
         if data["needs_update"]:
             if branch == "factory":
-                # Only factory columns
                 if sb.is_version_newer(data["upstream_stable"], data["factory_ver"], repo):
                     f_local = f"{sb.RED}{data['factory_ver']}{sb.RESET}"
                     f_up = f"{sb.GREEN}{data['upstream_stable']}{sb.RESET}"
@@ -160,7 +349,6 @@ def run_version_check(repos, branch=None):
                 rows.append((repo, f_local, f_up))
 
             elif branch == "next":
-                # Only next columns
                 if data["next_ver"] != "—" and sb.is_version_newer(data["upstream_latest"], data["next_ver"], repo):
                     n_local = f"{sb.RED}{data['next_ver']}{sb.RESET}"
                     n_up = f"{sb.GREEN}{data['upstream_latest']}{sb.RESET}"
@@ -170,8 +358,6 @@ def run_version_check(repos, branch=None):
                 rows.append((repo, n_local, n_up))
 
             else:
-                # Default (both branches)
-                # Format factory columns
                 if sb.is_version_newer(data["upstream_stable"], data["factory_ver"], repo):
                     f_local = f"{sb.RED}{data['factory_ver']}{sb.RESET}"
                     f_up = f"{sb.GREEN}{data['upstream_stable']}{sb.RESET}"
@@ -179,12 +365,10 @@ def run_version_check(repos, branch=None):
                     f_local = f"{sb.GREEN}{data['factory_ver']}{sb.RESET}"
                     f_up = f"{sb.GREEN}{data['upstream_stable']}{sb.RESET}"
 
-                # Format next columns
                 if data["next_ver"] != "—" and sb.is_version_newer(data["upstream_latest"], data["next_ver"], repo):
                     n_local = f"{sb.RED}{data['next_ver']}{sb.RESET}"
                     n_up = f"{sb.GREEN}{data['upstream_latest']}{sb.RESET}"
                 else:
-                    # If they match or there's no next branch
                     n_local = f"{sb.GREEN}{data['next_ver']}{sb.RESET}" if data["next_ver"] != "—" else "—"
                     n_up = f"{sb.GREEN}{data['upstream_latest']}{sb.RESET}" if data["upstream_latest"] != "—" else "—"
 
@@ -256,7 +440,6 @@ def run_forward_check(repos, show_pr=False, only_no_pr=False):
                 print(f"Progress: {completed}/{total} checked...", end='\r', file=sys.stderr)
     print("", file=sys.stderr)
 
-    # Filter to packages with next branches that are ahead
     forward_candidates = []
     for repo in sorted(results.keys()):
         data = results[repo]
@@ -267,7 +450,6 @@ def run_forward_check(repos, show_pr=False, only_no_pr=False):
             if next_ahead > 0:
                 forward_candidates.append(repo)
 
-    # Check Gitea PRs in parallel if requested (or required by only_no_pr)
     pr_status = {}
     if (show_pr or only_no_pr) and forward_candidates:
         print(f"Checking Gitea pull requests for {len(forward_candidates)} candidates (20 threads)...", file=sys.stderr)
@@ -296,8 +478,6 @@ def run_forward_check(repos, show_pr=False, only_no_pr=False):
 
             if next_ahead > 0:
                 pr_info = pr_status.get(repo, {"has_pr": False, "url": None, "number": None})
-
-                # If filtering for only no PR, skip repositories that have a pending PR!
                 if only_no_pr and pr_info["has_pr"]:
                     continue
 
@@ -309,7 +489,6 @@ def run_forward_check(repos, show_pr=False, only_no_pr=False):
                     needs_merge_count += 1
 
                 if show_pr or only_no_pr:
-                    # Determine PR Status display
                     if pr_info["has_pr"]:
                         pr_display = f"{sb.GREEN}Yes (PR #{pr_info['number']}){sb.RESET}"
                     else:
@@ -369,15 +548,16 @@ def run_forward_check(repos, show_pr=False, only_no_pr=False):
 def print_help():
     print(f"{sb.BOLD}openSUSE Workspace Downstream Checker{sb.RESET}")
     print("\nAn optimized parallel dashboard for openSUSE package maintainers.")
+    print("Supports both Project meta-checkouts and single-package directories.")
     print("\nUsage:")
-    print("  ./geckopit-cli [options]")
+    print("  geckopit-cli [package] [options]")
     print("\nModes (choose exactly one):")
-    print(f"  {sb.BOLD}(default){sb.RESET}          Checks downstream git sync status (pool ➔ devel:factory ➔ devel:next).")
+    print(f"  {sb.BOLD}(default){sb.RESET}          Checks sync status (or displays comprehensive single-package dashboard).")
     print(f"  {sb.BOLD}--todo{sb.RESET}             Alias for the default sync checking mode.")
     print(f"  {sb.BOLD}--version, -v [branch]{sb.RESET}")
-    print("                     Compares package versions in factory & next against release-monitoring.org.")
+    print("                     Compares package versions against release-monitoring.org.")
     print("                     Optional branch: 'factory' or 'next' to filter output.")
-    print(f"  {sb.BOLD}--forward, -f{sb.RESET}      Identifies which next branches can be cleanly forwarded to factory.")
+    print(f"  {sb.BOLD}--forward, -f{sb.RESET}      Identifies forwardable next branches.")
     print("\nOptions:")
     print(f"  {sb.BOLD}-p, --pr{sb.RESET}           Include Gitea pull request pending status in forwarding mode.")
     print(f"  {sb.BOLD}--no-pr{sb.RESET}            In forwarding mode, only show packages without a pending pull request.")
@@ -391,10 +571,19 @@ def main():
         print_help()
         sys.exit(0)
 
-    repos = sorted([
-        d for d in os.listdir('.')
-        if os.path.isdir(d) and os.path.exists(os.path.join(d, '.git'))
-    ])
+    # Detect if a target argument was provided (e.g. 'geckopit-cli baobab')
+    target_arg = None
+    for arg in sys.argv[1:]:
+        if not arg.startswith("-") and arg not in ("factory", "next"):
+            target_arg = arg
+            break
+
+    # Determine if we are operating in Single-Package context
+    target_pkg_dir = None
+    if sb.is_package_dir("."):
+        target_pkg_dir = "."
+    elif target_arg and sb.is_package_dir(target_arg):
+        target_pkg_dir = target_arg
 
     show_versions = False
     version_branch = None
@@ -436,6 +625,24 @@ def main():
     show_no_pr = "--no-pr" in sys.argv
     show_pr = "--pr" in sys.argv or "-p" in sys.argv
 
+    # Route to single-package dashboard if operating in a package directory
+    if target_pkg_dir:
+        if show_versions:
+            run_single_package_version(target_pkg_dir, version_branch)
+        elif show_forward:
+            run_single_package_forward(target_pkg_dir, show_pr, show_no_pr)
+        else:
+            run_single_package_dashboard(target_pkg_dir)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        return
+
+    # Operating in Project Directory (Multi-Package batch mode)
+    repos = sorted([
+        d for d in os.listdir('.')
+        if os.path.isdir(d) and os.path.exists(os.path.join(d, '.git'))
+    ])
+
     if show_versions:
         run_version_check(repos, version_branch)
     elif show_forward:
@@ -450,7 +657,5 @@ if __name__ == '__main__':
     try:
         main()
     except BrokenPipeError:
-        # Handle BrokenPipeError gracefully when piping output to commands like head or less
-        # Use os._exit(0) to bypass Python's high-level interpreter shutdown stream flushing.
         import os
         os._exit(0)

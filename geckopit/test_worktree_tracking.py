@@ -130,5 +130,36 @@ class TestWorktreeTracking(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("rejected", msg)
 
+    def test_is_package_dir_detection(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Empty folder without .git is not a package dir
+            self.assertFalse(sb.is_package_dir(tmpdir))
+
+            # Folder with .git but no packaging files is not a package dir
+            os.makedirs(os.path.join(tmpdir, '.git'))
+            self.assertFalse(sb.is_package_dir(tmpdir))
+
+            # Adding a .spec file makes it a package dir
+            with open(os.path.join(tmpdir, 'pkg.spec'), 'w') as f: f.write('Name: pkg\n')
+            self.assertTrue(sb.is_package_dir(tmpdir))
+
+    def test_get_package_name_from_dir(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # From .spec file
+            with open(os.path.join(tmpdir, 'mypkg.spec'), 'w') as f: f.write('Name: mypkg\n')
+            self.assertEqual(sb.get_package_name_from_dir(tmpdir), 'mypkg')
+
+            # Without spec, fallback to basename
+            os.remove(os.path.join(tmpdir, 'mypkg.spec'))
+            self.assertEqual(sb.get_package_name_from_dir(tmpdir), os.path.basename(tmpdir))
+
+    def test_load_geckopit_profile_config(self):
+        conf = sb.load_geckopit_profile_config()
+        self.assertIn('stable_branch', conf)
+        self.assertIn('unstable_branch', conf)
+        self.assertEqual(conf.get('stable_branch'), 'factory')
+
 if __name__ == '__main__':
     unittest.main()
