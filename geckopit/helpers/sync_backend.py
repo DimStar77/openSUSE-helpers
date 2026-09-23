@@ -806,6 +806,165 @@ def create_gitea_pr(repo_name, title, description, stable_branch="factory", unst
     except Exception as e:
         return False, f"Exception occurred: {str(e)}"
 
+
+def check_worktree_status(repo_path, expected_branch=None):
+    """
+    Checks the local on-disk git status for a repository checkout or worktree.
+    Returns a dict with:
+      - exists: bool
+      - head: str (branch name or '(detached)')
+      - upstream: str (e.g. 'origin/next')
+      - ahead: int (commits local is ahead of upstream)
+      - behind: int (commits local is behind upstream)
+      - dirty: bool (uncommitted tracked changes)
+      - untracked: bool (untracked files)
+    """
+    if not repo_path or not os.path.exists(repo_path):
+        return {
+            "exists": False,
+            "head": None,
+            "upstream": None,
+            "ahead": 0,
+            "behind": 0,
+            "dirty": False,
+            "untracked": False
+        }
+
+    try:
+        res = run_tracked(
+            ['git', '-C', repo_path, 'status', '--porcelain=v2', '--branch'],
+            capture_output=True, text=True, check=True
+        )
+        head = None
+        upstream = None
+        ahead = 0
+        behind = 0
+        dirty = False
+        untracked = False
+
+        for line in res.stdout.splitlines():
+            if line.startswith('# branch.head '):
+                head = line.split()[2]
+            elif line.startswith('# branch.upstream '):
+                upstream = line.split()[2]
+            elif line.startswith('# branch.ab '):
+                parts = line.split()
+                for p in parts[2:]:
+                    if p.startswith('+'):
+                        ahead = int(p[1:])
+                    elif p.startswith('-'):
+                        behind = int(p[1:])
+            elif line.startswith('? '):
+                untracked = True
+            elif line.startswith('1 ') or line.startswith('2 ') or line.startswith('u '):
+                dirty = True
+
+        if upstream is None and expected_branch:
+            try:
+                rl = run_tracked(
+                    ['git', '-C', repo_path, 'rev-list', '--left-right', '--count', f'HEAD...origin/{expected_branch}'],
+                    capture_output=True, text=True, check=True
+                )
+                pts = rl.stdout.strip().split()
+                if len(pts) == 2:
+                    ahead = int(pts[0])
+                    behind = int(pts[1])
+            except Exception:
+                pass
+
+        return {
+            "exists": True,
+            "head": head,
+            "upstream": upstream,
+            "ahead": ahead,
+            "behind": behind,
+            "dirty": dirty,
+            "untracked": untracked
+        }
+    except Exception as e:
+        return {
+            "exists": True,
+            "head": None,
+            "upstream": None,
+            "ahead": 0,
+            "behind": 0,
+            "dirty": False,
+            "untracked": False,
+            "error": str(e)
+        }
+
+
+def check_repo_worktrees(repo_name, stable_path=None, unstable_path=None, stable_branch="factory", unstable_branch="next"):
+    """
+    Checks worktree statuses for both stable and unstable checkouts of a given repo.
+    """
+    stable_wt = None
+    if stable_path:
+        p = os.path.join(stable_path, repo_name)
+        stable_wt = check_worktree_status(p, expected_branch=stable_branch)
+
+    unstable_wt = None
+    if unstable_path:
+        p = os.path.join(unstable_path, repo_name)
+        unstable_wt = check_worktree_status(p, expected_branch=unstable_branch)
+
+    return repo_name, {
+        "stable": stable_wt,
+        "unstable": unstable_wt
+    }
+
+
+def pull_worktree(repo_path, remote="origin", branch=None):
+    """
+    Attempts a fast-forward pull (git pull --ff-only) in the given repo_path.
+    Returns (success: bool, message: str).
+    """
+    if not repo_path or not os.path.exists(repo_path):
+        return False, "Worktree directory does not exist"
+
+    cmd = ['git', '-C', repo_path, 'pull', '--ff-only']
+    if remote and branch:
+        cmd.extend([remote, branch])
+
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+
+    try:
+        res = run_tracked(cmd, capture_output=True, text=True, check=True, env=env)
+        msg = (res.stdout or res.stderr or "").strip()
+        return True, msg or "Fast-forward pull succeeded."
+    except subprocess.CalledProcessError as e:
+        err = (e.stderr or e.stdout or "").strip()
+        return False, err or f"Pull failed with exit code {e.returncode}"
+    except Exception as e:
+        return False, str(e)
+
+
+def push_worktree(repo_path, remote="origin", branch=None):
+    """
+    Pushes local commits to remote (git push).
+    Returns (success: bool, message: str).
+    """
+    if not repo_path or not os.path.exists(repo_path):
+        return False, "Worktree directory does not exist"
+
+    cmd = ['git', '-C', repo_path, 'push']
+    if remote and branch:
+        cmd.extend([remote, branch])
+
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+
+    try:
+        res = run_tracked(cmd, capture_output=True, text=True, check=True, env=env)
+        msg = (res.stdout or res.stderr or "").strip()
+        return True, msg or "Push succeeded."
+    except subprocess.CalledProcessError as e:
+        err = (e.stderr or e.stdout or "").strip()
+        return False, err or f"Push failed with exit code {e.returncode}"
+    except Exception as e:
+        return False, str(e)
+
 def strip_ansi(text):
     """Strip ANSI escape sequences from text for accurate visual width calculations."""
     ansi_escape = re.compile(r'\x1b\[[0-9;]*m')

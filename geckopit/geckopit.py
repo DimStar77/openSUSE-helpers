@@ -223,7 +223,7 @@ class PackageRow(Gtk.ListBoxRow):
         label.set_markup(f"<span size='x-small' weight='bold' foreground='black' background='{hex_color}'>  {text}  </span>")
         return label
 
-    def update_ui(self, sync_data, version_data, pr_data):
+    def update_ui(self, sync_data, version_data, pr_data, worktree_data=None):
         # Clear existing badges
         while True:
             child = self.badges_box.get_first_child()
@@ -275,6 +275,28 @@ class PackageRow(Gtk.ListBoxRow):
             pr_num = pr_data.get("number", "PR")
             subtitle_parts.append(f"PR #{pr_num}")
             self.badges_box.append(self.create_badge(f"PR #{pr_num}", "green"))
+
+        # 4. Local worktree status (compact subtitle only to strictly preserve left-pane space)
+        if worktree_data:
+            stable_wt = worktree_data.get("stable") or {}
+            unstable_wt = worktree_data.get("unstable") or {}
+            s_behind = stable_wt.get("behind", 0)
+            u_behind = unstable_wt.get("behind", 0)
+            s_ahead = stable_wt.get("ahead", 0)
+            u_ahead = unstable_wt.get("ahead", 0)
+            dirty = stable_wt.get("dirty", False) or unstable_wt.get("dirty", False)
+
+            if s_behind > 0 or u_behind > 0:
+                max_behind = max(s_behind, u_behind)
+                subtitle_parts.append(f"Pull needed (-{max_behind})")
+                self.badges_box.append(self.create_badge(f"Local -{max_behind}", "orange"))
+            elif s_ahead > 0 or u_ahead > 0:
+                max_ahead = max(s_ahead, u_ahead)
+                subtitle_parts.append(f"Unpushed (+{max_ahead})")
+                self.badges_box.append(self.create_badge(f"Local +{max_ahead}", "cyan"))
+            elif dirty:
+                subtitle_parts.append("Modified")
+                self.badges_box.append(self.create_badge("Dirty", "yellow"))
 
         # Apply subtitle
         if subtitle_parts:
@@ -1113,6 +1135,7 @@ class SyncWindow(Adw.ApplicationWindow):
         # Branch states
         active_prof = self.config.get_active_profile()
         self.stable_p = active_prof.get("stable_path", ".") or "."
+        self.unstable_p = active_prof.get("unstable_path")
         self.stable_b = active_prof.get("stable_branch", "factory") or "factory"
         self.unstable_b = active_prof.get("unstable_branch", "next") or "next"
         self.ignored_unstable_versions = active_prof.get("ignored_unstable_versions", {})
@@ -1336,7 +1359,8 @@ class SyncWindow(Adw.ApplicationWindow):
             repo: {
                 "sync": {},
                 "version": {},
-                "pr": {}
+                "pr": {},
+                "worktree": {}
             } for repo in self.repos
         }
         self.load_profile_cache()
@@ -1431,6 +1455,7 @@ class SyncWindow(Adw.ApplicationWindow):
         # Update stable and unstable branch maps
         active_prof = self.config.get_active_profile()
         self.stable_p = active_prof.get("stable_path", ".") or "."
+        self.unstable_p = active_prof.get("unstable_path")
         self.stable_b = active_prof.get("stable_branch", "factory") or "factory"
         self.unstable_b = active_prof.get("unstable_branch", "next") or "next"
         self.ignored_unstable_versions = active_prof.get("ignored_unstable_versions", {})
@@ -1795,6 +1820,14 @@ class SyncWindow(Adw.ApplicationWindow):
             row = PackageRow(repo, self)
             self.master_list_box.append(row)
             self.package_rows[repo] = row
+            cached = self.package_data.get(repo)
+            if cached and (cached.get("sync") or cached.get("version") or cached.get("worktree")):
+                row.update_ui(
+                    cached.get("sync"),
+                    cached.get("version"),
+                    cached.get("pr"),
+                    cached.get("worktree")
+                )
 
     def refresh_all(self):
         # Ensure rows are fully populated
@@ -1839,13 +1872,28 @@ class SyncWindow(Adw.ApplicationWindow):
         except RuntimeError:
             pass
 
+    def check_worktrees_for_repo(self, repo):
+        stable_p = getattr(self, "stable_p", None)
+        unstable_p = getattr(self, "unstable_p", None)
+        _, wt = sb.check_repo_worktrees(
+            repo,
+            stable_path=stable_p,
+            unstable_path=unstable_p,
+            stable_branch=getattr(self, "stable_b", "factory"),
+            unstable_branch=getattr(self, "unstable_b", "next")
+        )
+        return wt
+
     def run_bg_sync_single(self, repo):
         name, data = sb.check_repo_sync(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
-        GLib.idle_add(self.update_sync_row_single, name, data)
+        wt_data = self.check_worktrees_for_repo(repo)
+        GLib.idle_add(self.update_sync_row_single, name, data, wt_data)
 
-    def update_sync_row_single(self, name, data):
+    def update_sync_row_single(self, name, data, wt_data=None):
         if data.get("status") == "success":
             self.package_data[name]["sync"] = data
+            if wt_data:
+                self.package_data[name]["worktree"] = wt_data
             self.refreshed_sync_packages.add(name)
             self.update_row_ui(name)
             self.check_and_mark_package_refreshed(name)
@@ -1885,7 +1933,8 @@ class SyncWindow(Adw.ApplicationWindow):
             row.update_ui(
                 pkg_data.get("sync"),
                 pkg_data.get("version"),
-                pkg_data.get("pr")
+                pkg_data.get("pr"),
+                pkg_data.get("worktree")
             )
             self.queue_filter_invalidation()
 
@@ -2094,6 +2143,13 @@ class SyncWindow(Adw.ApplicationWindow):
         is_forwarding_track = (next_ver != "—")
         forwarding_needs_action = (next_ahead > 0)
 
+        # E. Local Worktree state
+        wt = pkg_data.get("worktree") or {}
+        stable_wt = wt.get("stable") or {}
+        unstable_wt = wt.get("unstable") or {}
+        stable_wt_needs_action = (stable_wt.get("behind", 0) > 0)
+        unstable_wt_needs_action = (unstable_wt.get("behind", 0) > 0)
+
         # Determine if we match any of the selected tracks
         # If no tracks are selected, we treat it as matching all tracks!
         any_track_selected = (
@@ -2118,7 +2174,7 @@ class SyncWindow(Adw.ApplicationWindow):
 
             if self.filter_stable.get_active():
                 if self.filter_needs_action.get_active():
-                    if stable_needs_action:
+                    if stable_needs_action or stable_wt_needs_action:
                         matches_track = True
                 else:
                     if is_stable_track:
@@ -2126,7 +2182,7 @@ class SyncWindow(Adw.ApplicationWindow):
 
             if self.filter_unstable.get_active():
                 if self.filter_needs_action.get_active():
-                    if unstable_needs_action:
+                    if unstable_needs_action or unstable_wt_needs_action:
                         matches_track = True
                 else:
                     if is_unstable_track:
@@ -2143,7 +2199,14 @@ class SyncWindow(Adw.ApplicationWindow):
         # If no tracks are checked, but "Needs Action Only" is checked:
         # We must make sure the package has SOME action pending on ANY track!
         if not any_track_selected and self.filter_needs_action.get_active():
-            has_any_action = pool_needs_action or stable_needs_action or unstable_needs_action or forwarding_needs_action
+            has_any_action = (
+                pool_needs_action or
+                stable_needs_action or
+                unstable_needs_action or
+                forwarding_needs_action or
+                stable_wt_needs_action or
+                unstable_wt_needs_action
+            )
             if not has_any_action:
                 return False
 
@@ -2182,11 +2245,26 @@ class SyncWindow(Adw.ApplicationWindow):
         self.stable_pool_lbl = Gtk.Label(label="Loading...", halign=Gtk.Align.START)
         grid.attach(self.stable_pool_lbl, 1, 1, 1, 1)
 
+        lbl_wt = Gtk.Label(label="Local Checkout:", halign=Gtk.Align.START)
+        grid.attach(lbl_wt, 0, 2, 1, 1)
+        self.stable_wt_lbl = Gtk.Label(label="Checking...", halign=Gtk.Align.START)
+        grid.attach(self.stable_wt_lbl, 1, 2, 1, 1)
+
         box.append(grid)
 
         # Actions Toolbar
         actions_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         actions_box.set_margin_top(6)
+
+        self.pull_stable_btn = Gtk.Button(label="📥 Pull")
+        self.pull_stable_btn.set_tooltip_text("Fast-forward pull latest commits from remote")
+        self.pull_stable_btn.connect("clicked", lambda btn: self.on_pull_worktree_clicked("factory"))
+        actions_box.append(self.pull_stable_btn)
+
+        self.push_stable_btn = Gtk.Button(label="📤 Push")
+        self.push_stable_btn.set_tooltip_text("Push local commits to remote")
+        self.push_stable_btn.connect("clicked", lambda btn: self.on_push_worktree_clicked("factory"))
+        actions_box.append(self.push_stable_btn)
 
         self.pull_pool_btn = Gtk.Button(label="📥 Pull Pool")
         self.pull_pool_btn.connect("clicked", self.on_pull_pool_clicked)
@@ -2243,11 +2321,26 @@ class SyncWindow(Adw.ApplicationWindow):
         self.unstable_branch_lbl = Gtk.Label(label="Loading...", halign=Gtk.Align.START)
         grid.attach(self.unstable_branch_lbl, 1, 1, 1, 1)
 
+        lbl_wt = Gtk.Label(label="Local Checkout:", halign=Gtk.Align.START)
+        grid.attach(lbl_wt, 0, 2, 1, 1)
+        self.unstable_wt_lbl = Gtk.Label(label="Checking...", halign=Gtk.Align.START)
+        grid.attach(self.unstable_wt_lbl, 1, 2, 1, 1)
+
         box.append(grid)
 
         # Actions Toolbar
         actions_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         actions_box.set_margin_top(6)
+
+        self.pull_unstable_btn = Gtk.Button(label="📥 Pull")
+        self.pull_unstable_btn.set_tooltip_text("Fast-forward pull latest commits from remote")
+        self.pull_unstable_btn.connect("clicked", lambda btn: self.on_pull_worktree_clicked("next"))
+        actions_box.append(self.pull_unstable_btn)
+
+        self.push_unstable_btn = Gtk.Button(label="📤 Push")
+        self.push_unstable_btn.set_tooltip_text("Push local commits to remote")
+        self.push_unstable_btn.connect("clicked", lambda btn: self.on_push_worktree_clicked("next"))
+        actions_box.append(self.push_unstable_btn)
 
         self.catchup_merge_btn = Gtk.Button(label="🔀 Catch-up Merge")
         self.catchup_merge_btn.connect("clicked", self.on_catchup_merge_clicked)
@@ -2890,12 +2983,148 @@ class SyncWindow(Adw.ApplicationWindow):
             self.open_term_next_btn.set_label(f"🖥️ Terminal ({self.unstable_b})")
 
         # -------------------------------------------------------------
+        # POPULATE LOCAL WORKTREE STATUS
+        # -------------------------------------------------------------
+        stable_repo_p = self.get_mapped_worktree_path(package_name, "factory")
+        unstable_repo_p = self.get_mapped_worktree_path(package_name, "next") if self.unstable_b else None
+
+        stable_wt = sb.check_worktree_status(stable_repo_p, expected_branch=self.stable_b)
+        unstable_wt = sb.check_worktree_status(unstable_repo_p, expected_branch=self.unstable_b) if unstable_repo_p else None
+
+        if "worktree" not in self.package_data[package_name]:
+            self.package_data[package_name]["worktree"] = {}
+        self.package_data[package_name]["worktree"]["stable"] = stable_wt
+        self.package_data[package_name]["worktree"]["unstable"] = unstable_wt
+
+        self.render_worktree_ui(stable_wt, self.stable_b, self.stable_wt_lbl, self.pull_stable_btn, self.push_stable_btn)
+        if self.unstable_b:
+            self.render_worktree_ui(unstable_wt, self.unstable_b, self.unstable_wt_lbl, self.pull_unstable_btn, self.push_unstable_btn)
+        self.update_row_ui(package_name)
+
+        # -------------------------------------------------------------
         # 3. POPULATE DIFF REVIEW
         # -------------------------------------------------------------
         if not sync:
             self.diff_buffer.set_text("")
         else:
             self.refresh_active_diff()
+
+    def render_worktree_ui(self, wt_info, target_branch, lbl_widget, pull_btn, push_btn):
+        if not wt_info or not wt_info.get("exists", False):
+            lbl_widget.set_markup("<span foreground='gray'>No local checkout directory found</span>")
+            pull_btn.set_sensitive(False)
+            pull_btn.set_label("📥 Pull")
+            push_btn.set_sensitive(False)
+            push_btn.set_label("📤 Push")
+            return
+
+        ahead = wt_info.get("ahead", 0)
+        behind = wt_info.get("behind", 0)
+        dirty = wt_info.get("dirty", False)
+        untracked = wt_info.get("untracked", False)
+
+        dirty_flag = ""
+        if dirty and untracked:
+            dirty_flag = " <span foreground='#f5c211' size='small'>[modified + untracked]</span>"
+        elif dirty:
+            dirty_flag = " <span foreground='#f5c211' size='small'>[uncommitted changes]</span>"
+        elif untracked:
+            dirty_flag = " <span foreground='#f5c211' size='small'>[untracked files]</span>"
+
+        if behind > 0 and ahead > 0:
+            lbl_widget.set_markup(
+                f"<span weight='bold' foreground='red'>Diverged from origin/{target_branch}</span> "
+                f"(Behind: {behind} / Ahead: {ahead}){dirty_flag}"
+            )
+            pull_btn.set_sensitive(True)
+            pull_btn.set_label(f"📥 Pull ({behind})")
+            push_btn.set_sensitive(False)
+            push_btn.set_label(f"📤 Push ({ahead})")
+        elif behind > 0:
+            lbl_widget.set_markup(
+                f"<span weight='bold' foreground='orange'>Behind origin/{target_branch} by {behind} commit{'s' if behind > 1 else ''}</span> "
+                f"(Pull needed){dirty_flag}"
+            )
+            pull_btn.set_sensitive(True)
+            pull_btn.set_label(f"📥 Pull ({behind})")
+            push_btn.set_sensitive(False)
+            push_btn.set_label("📤 Push")
+        elif ahead > 0:
+            lbl_widget.set_markup(
+                f"<span weight='bold' foreground='cyan'>Ahead of origin/{target_branch} by {ahead} commit{'s' if ahead > 1 else ''}</span> "
+                f"(Unpushed){dirty_flag}"
+            )
+            pull_btn.set_sensitive(False)
+            pull_btn.set_label("📥 Pull")
+            push_btn.set_sensitive(True)
+            push_btn.set_label(f"📤 Push ({ahead})")
+        else:
+            if dirty or untracked:
+                lbl_widget.set_markup(f"<span foreground='#2ec27e'>In sync with origin/{target_branch}</span>{dirty_flag}")
+            else:
+                lbl_widget.set_markup(f"<span foreground='#2ec27e'>In sync with origin/{target_branch}</span>")
+            pull_btn.set_sensitive(False)
+            pull_btn.set_label("📥 Pull")
+            push_btn.set_sensitive(False)
+            push_btn.set_label("📤 Push")
+
+    def on_pull_worktree_clicked(self, target_branch):
+        if not getattr(self, "current_selected_package", None):
+            return
+        pkg_name = self.current_selected_package
+        repo_path = self.get_mapped_worktree_path(pkg_name, target_branch)
+        if not os.path.exists(repo_path):
+            return
+
+        btn = self.pull_stable_btn if target_branch == "factory" else self.pull_unstable_btn
+        btn.set_sensitive(False)
+
+        def do_pull():
+            branch_name = self.stable_b if target_branch == "factory" else self.unstable_b
+            ok, msg = sb.pull_worktree(repo_path, remote="origin", branch=branch_name)
+
+            def on_done():
+                if ok:
+                    toast = Adw.Toast.new(f"✅ Pulled latest origin/{branch_name} for {pkg_name}")
+                    self.toast_overlay.add_toast(toast)
+                    self.load_package_detail(pkg_name)
+                    self.update_row_ui(pkg_name)
+                else:
+                    toast = Adw.Toast.new(f"⚠️ Pull failed: {msg[:60]}. Opening terminal...")
+                    self.toast_overlay.add_toast(toast)
+                    self.allocate_terminal(pkg_name, target_branch, "git pull")
+            GLib.idle_add(on_done)
+
+        threading.Thread(target=do_pull, daemon=True).start()
+
+    def on_push_worktree_clicked(self, target_branch):
+        if not getattr(self, "current_selected_package", None):
+            return
+        pkg_name = self.current_selected_package
+        repo_path = self.get_mapped_worktree_path(pkg_name, target_branch)
+        if not os.path.exists(repo_path):
+            return
+
+        btn = self.push_stable_btn if target_branch == "factory" else self.push_unstable_btn
+        btn.set_sensitive(False)
+
+        def do_push():
+            branch_name = self.stable_b if target_branch == "factory" else self.unstable_b
+            ok, msg = sb.push_worktree(repo_path, remote="origin", branch=branch_name)
+
+            def on_done():
+                if ok:
+                    toast = Adw.Toast.new(f"✅ Pushed {pkg_name} commits to origin/{branch_name}")
+                    self.toast_overlay.add_toast(toast)
+                    self.load_package_detail(pkg_name)
+                    self.update_row_ui(pkg_name)
+                else:
+                    toast = Adw.Toast.new(f"⚠️ Push failed: {msg[:60]}. Opening terminal...")
+                    self.toast_overlay.add_toast(toast)
+                    self.allocate_terminal(pkg_name, target_branch, "git push")
+            GLib.idle_add(on_done)
+
+        threading.Thread(target=do_push, daemon=True).start()
 
     def on_detail_update_next_clicked(self, btn):
         if getattr(self, "current_selected_package", None):
@@ -2907,7 +3136,15 @@ class SyncWindow(Adw.ApplicationWindow):
                 guessed_revision, confidence_err = guess_update_revision(current_revision, upstream_latest)
 
                 if guessed_revision and not confidence_err:
-                    command = f"obs_scm-update.sh {shlex.quote(guessed_revision)}"
+                    base_cmd = f"obs_scm-update.sh {shlex.quote(guessed_revision)}"
+                    wt = self.package_data.get(self.current_selected_package, {}).get("worktree", {}).get("unstable") or {}
+                    behind = wt.get("behind", 0)
+                    if behind > 0:
+                        command = f"git pull --ff-only && {base_cmd}"
+                        toast = Adw.Toast.new(f"📥 Pulling {behind} remote commit{'s' if behind > 1 else ''} before updating...")
+                        self.toast_overlay.add_toast(toast)
+                    else:
+                        command = base_cmd
                     self.allocate_terminal(self.current_selected_package, "next", command)
                 else:
                     title_text = f"⚠️  Unable to confidently guess target revision for {self.current_selected_package}."
@@ -2935,7 +3172,15 @@ class SyncWindow(Adw.ApplicationWindow):
                 guessed_revision, confidence_err = guess_update_revision(current_revision, upstream_stable)
 
                 if guessed_revision and not confidence_err:
-                    command = f"obs_scm-update.sh {shlex.quote(guessed_revision)}"
+                    base_cmd = f"obs_scm-update.sh {shlex.quote(guessed_revision)}"
+                    wt = self.package_data.get(self.current_selected_package, {}).get("worktree", {}).get("stable") or {}
+                    behind = wt.get("behind", 0)
+                    if behind > 0:
+                        command = f"git pull --ff-only && {base_cmd}"
+                        toast = Adw.Toast.new(f"📥 Pulling {behind} remote commit{'s' if behind > 1 else ''} before updating...")
+                        self.toast_overlay.add_toast(toast)
+                    else:
+                        command = base_cmd
                     self.allocate_terminal(self.current_selected_package, "factory", command)
                 else:
                     title_text = f"⚠️  Unable to confidently guess target revision for {self.current_selected_package}."
@@ -3022,7 +3267,8 @@ class SyncWindow(Adw.ApplicationWindow):
 
     def run_bg_sync(self, repo):
         name, data = sb.check_repo_sync(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
-        GLib.idle_add(self.add_sync_result, name, data)
+        wt_data = self.check_worktrees_for_repo(repo)
+        GLib.idle_add(self.add_sync_result, name, data, wt_data)
 
     def check_and_mark_package_refreshed(self, name):
         if name in self.refreshed_sync_packages and name in self.refreshed_version_packages:
@@ -3032,11 +3278,13 @@ class SyncWindow(Adw.ApplicationWindow):
             if self.current_selected_package == name:
                 self.load_package_detail(name)
 
-    def add_sync_result(self, name, data):
+    def add_sync_result(self, name, data, wt_data=None):
         self.sync_completed_count += 1
 
         if data.get("status") == "success":
             self.package_data[name]["sync"] = data
+            if wt_data:
+                self.package_data[name]["worktree"] = wt_data
             self.refreshed_sync_packages.add(name)
             self.update_row_ui(name)
             self.check_and_mark_package_refreshed(name)
