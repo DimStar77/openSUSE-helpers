@@ -3136,7 +3136,7 @@ class SyncWindow(Adw.ApplicationWindow):
                 guessed_revision, confidence_err = guess_update_revision(current_revision, upstream_latest)
 
                 if guessed_revision and not confidence_err:
-                    base_cmd = f"obs_scm-update.sh {shlex.quote(guessed_revision)}"
+                    base_cmd = f"geckopit-upgrade {shlex.quote(guessed_revision)}"
                     wt = self.package_data.get(self.current_selected_package, {}).get("worktree", {}).get("unstable") or {}
                     behind = wt.get("behind", 0)
                     if behind > 0:
@@ -3157,7 +3157,7 @@ class SyncWindow(Adw.ApplicationWindow):
                         lines.append(f"   Current revision in _service: \033[1m{current_revision}\033[0m")
                     lines.append(f"   Suggested target version:     \033[1;32m{upstream_latest}\033[0m")
                     lines.append("")
-                    lines.append("👉 \033[1mRun obs_scm-update.sh manually with your preferred parameter.\033[0m")
+                    lines.append("👉 \033[1mRun geckopit-upgrade manually with your preferred parameter.\033[0m")
 
                     hint_msg = " && ".join(f"echo {shlex.quote(line)}" for line in lines)
                     self.allocate_terminal(self.current_selected_package, "next", hint_msg)
@@ -3172,7 +3172,7 @@ class SyncWindow(Adw.ApplicationWindow):
                 guessed_revision, confidence_err = guess_update_revision(current_revision, upstream_stable)
 
                 if guessed_revision and not confidence_err:
-                    base_cmd = f"obs_scm-update.sh {shlex.quote(guessed_revision)}"
+                    base_cmd = f"geckopit-upgrade {shlex.quote(guessed_revision)}"
                     wt = self.package_data.get(self.current_selected_package, {}).get("worktree", {}).get("stable") or {}
                     behind = wt.get("behind", 0)
                     if behind > 0:
@@ -3193,7 +3193,7 @@ class SyncWindow(Adw.ApplicationWindow):
                         lines.append(f"   Current revision in _service: \033[1m{current_revision}\033[0m")
                     lines.append(f"   Suggested target version:     \033[1;32m{upstream_stable}\033[0m")
                     lines.append("")
-                    lines.append("👉 \033[1mRun obs_scm-update.sh manually with your preferred parameter.\033[0m")
+                    lines.append("👉 \033[1mRun geckopit-upgrade manually with your preferred parameter.\033[0m")
 
                     hint_msg = " && ".join(f"echo {shlex.quote(line)}" for line in lines)
                     self.allocate_terminal(self.current_selected_package, "factory", hint_msg)

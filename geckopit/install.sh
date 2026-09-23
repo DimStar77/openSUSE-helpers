@@ -125,6 +125,7 @@ mkdir -p "$HOME/bin"
 
 ln -sf "${SCRIPT_DIR}/geckopit.py" "$HOME/bin/geckopit"
 ln -sf "${SCRIPT_DIR}/geckopit-cli" "$HOME/bin/geckopit-cli"
+ln -sf "${SCRIPT_DIR}/geckopit-upgrade" "$HOME/bin/geckopit-upgrade"
 
 # Check if ~/bin is in PATH
 if [[ ":$PATH:" != *":$HOME/bin:"* ]]; then
