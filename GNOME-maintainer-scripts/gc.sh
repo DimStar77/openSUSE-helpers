@@ -1,6 +1,11 @@
 #!/bin/bash
 # gc.sh - The Complete OBS-to-Git Commit Tool
 
+# Defer to geckopit-cli --commit if available in PATH
+if command -v geckopit-cli >/dev/null 2>&1; then
+    exec geckopit-cli --commit "$@"
+fi
+
 # --- 1. THE ADD/REMOVE PHASE ---
 # Equivalent to 'osc addremove'
 git add -u . && find . -maxdepth 1 -type f -exec git add {} +

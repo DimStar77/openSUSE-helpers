@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# Defer to geckopit-cli --upgrade if available in PATH
+if command -v geckopit-cli >/dev/null 2>&1; then
+    exec geckopit-cli --upgrade "$@"
+fi
+
 if [ ! -f _service ]; then
   echo "Found no _service file - aborting"
   exit 1
