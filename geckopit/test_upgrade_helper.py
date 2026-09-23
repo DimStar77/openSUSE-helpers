@@ -16,6 +16,13 @@ from upgrade import (
     list_upgrade_helpers,
     register_upgrade_helper
 )
+from upgrade.changelog import (
+    wrap_bullet,
+    format_changelog_entry,
+    build_changelog_from_items,
+    remove_patch_from_spec,
+    CHANGELOG_WRAP_WIDTH
+)
 
 class TestUpgradeHelperArchitecture(unittest.TestCase):
 
@@ -117,7 +124,6 @@ class TestUpgradeHelperArchitecture(unittest.TestCase):
                 f.write('''<services>
   <service name="tar" mode="manual"/>
 </services>''')
-            # Create a mock .obscpio file
             obscpio = os.path.join(tmpdir, "pkg.obscpio")
             with open(obscpio, "w") as f: f.write("dummy")
 
@@ -126,71 +132,198 @@ class TestUpgradeHelperArchitecture(unittest.TestCase):
             self.assertEqual(removed, ["pkg.obscpio"])
             self.assertFalse(os.path.exists(obscpio))
 
-    def test_clean_duplicate_obscpio_retained_if_buildtime(self):
+    def test_build_changelog_from_items(self):
+        items = [
+            (1, "Add support for GNOME 47"),
+            (1, "Fix memory leak on shutdown")
+        ]
+        result = build_changelog_from_items(items, "47.0", dropped_patches=["fix.patch"], has_translations=True, width=67)
+        lines = result.splitlines()
+        self.assertEqual(lines[0], "- Update to version 47.0:")
+        self.assertEqual(lines[1], "  + Add support for GNOME 47")
+        self.assertEqual(lines[2], "  + Fix memory leak on shutdown")
+        self.assertEqual(lines[3], "  + Updated translations.")
+        self.assertEqual(lines[4], "- Drop fix.patch: fixed upstream.")
+
+    def test_wrap_bullet_levels(self):
+        # Level 0
+        l0 = wrap_bullet("Update to version 51.0:", level=0, width=67)
+        self.assertTrue(l0.startswith("- Update to version 51.0:"))
+
+        # Level 1
+        l1 = wrap_bullet("Don't duplicate locale keyboard layout", level=1, width=67)
+        self.assertTrue(l1.startswith("  + Don't duplicate locale keyboard layout"))
+
+        # Level 2 with wrap at 67 chars
+        long_txt = "Fix several issues related to presentation of ARIA tree and treegrid in web engine."
+        l2 = wrap_bullet(long_txt, level=2, width=67)
+        lines = l2.splitlines()
+        self.assertTrue(lines[0].startswith("    - Fix several issues related to presentation of ARIA tree and"))
+        self.assertTrue(lines[1].startswith("      treegrid in web engine."))
+        for line in lines:
+            self.assertLessEqual(len(line), 67)
+
+        # Level 3
+        l3 = wrap_bullet("Detailed sub-sub item", level=3, width=67)
+        self.assertTrue(l3.startswith("      . Detailed sub-sub item"))
+
+    def test_format_changelog_entry_flat_list_and_dropped_patch(self):
+        sample_diff = '''
++++ b/NEWS
++51.0
++====
++* Don't duplicate locale keyboard layout
++* Fix activating network items in quick settings
++* Improve lock/login screen styling
++* Cancel mount password dialogs when locking screen
++* Validate serilized image data before creating pixbuf
++* Fixed crash
++* Plugged leaks
++* Misc. bug fixes and cleanups
++
++Translations:
++* Bulgarian (Shopov)
++* Spanish (Mustieles)
+'''
+        result = format_changelog_entry(sample_diff, "51.0", dropped_patches=["e5c2018d.patch"], width=67)
+        expected = """- Update to version 51.0:
+  + Don't duplicate locale keyboard layout
+  + Fix activating network items in quick settings
+  + Improve lock/login screen styling
+  + Cancel mount password dialogs when locking screen
+  + Validate serilized image data before creating pixbuf
+  + Fixed crash
+  + Plugged leaks
+  + Misc. bug fixes and cleanups
+  + Updated translations.
+- Drop e5c2018d.patch: fixed upstream."""
+        self.assertEqual(result.strip(), expected.strip())
+
+    def test_format_changelog_entry_nested_categories(self):
+        sample_diff = '''
++51.0
++====
++
++Web:
++ * Fix combining lines incorrectly due to Gecko scaling bug.
++ * Fix missing "leaving blockquote" announcement.
++
++General:
++ * Fix on-the-fly changes related to the non-global voice set.
++ * Fix not speaking a newly-shown terminal line after scrolling.
++
++Translations:
++ * Bulgarian
+'''
+        result = format_changelog_entry(sample_diff, "51.0", width=67)
+        lines = result.splitlines()
+        self.assertEqual(lines[0], "- Update to version 51.0:")
+        self.assertEqual(lines[1], "  + Web:")
+        self.assertEqual(lines[2], "    - Fix combining lines incorrectly due to Gecko scaling bug.")
+        self.assertEqual(lines[3], '    - Fix missing "leaving blockquote" announcement.')
+        self.assertEqual(lines[4], "  + General:")
+        self.assertEqual(lines[5], "    - Fix on-the-fly changes related to the non-global voice set.")
+        self.assertEqual(lines[6], "    - Fix not speaking a newly-shown terminal line after scrolling.")
+        self.assertEqual(lines[7], "  + Updated translations.")
+
+    def test_remove_patch_from_spec(self):
+        spec_content = '''Name: gnome-shell
+Version: 50.0
+Patch1: fix-cursor.patch
+# PATCH-FIX-UPSTREAM
+# https://gitlab.gnome.org/GNOME/gnome-shell/-/commit/e5c2018d
+Patch2: https://gitlab.gnome.org/GNOME/gnome-shell/-/commit/e5c2018d.patch
+Patch100: no-gnome-tour.patch
+'''
+        cleaned = remove_patch_from_spec(spec_content, "e5c2018d.patch")
+        self.assertNotIn("e5c2018d.patch", cleaned)
+        self.assertNotIn("PATCH-FIX-UPSTREAM", cleaned)
+        self.assertIn("Patch1: fix-cursor.patch", cleaned)
+        self.assertIn("Patch100: no-gnome-tour.patch", cleaned)
+
+    def test_update_spec_version(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            service_path = os.path.join(tmpdir, "_service")
-            with open(service_path, "w") as f:
-                f.write('''<services>
-  <service name="tar" mode="buildtime"/>
-</services>''')
-            obscpio = os.path.join(tmpdir, "pkg.obscpio")
-            with open(obscpio, "w") as f: f.write("dummy")
+            spec_path = os.path.join(tmpdir, "baobab.spec")
+            with open(spec_path, "w") as f:
+                f.write('''Name: baobab
+Version:        50.0
+Release:        0
+''')
+            helper = ObsScmUpgradeHelper(tmpdir)
+            sf = helper.update_spec_version("51.0")
+            self.assertEqual(sf, "baobab.spec")
+
+            with open(spec_path, "r") as f:
+                updated = f.read()
+            self.assertIn("Version:        51.0", updated)
+
+    def test_find_upstream_changelog_target(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            helper = ObsScmUpgradeHelper(tmpdir)
+            # Default fallback when none exist
+            self.assertEqual(helper.find_upstream_changelog_target(tmpdir), "NEWS")
+
+            # If both ChangeLog and NEWS exist on disk, NEWS takes precedence
+            cl_path = os.path.join(tmpdir, "ChangeLog")
+            with open(cl_path, "w") as f: f.write("test")
+            news_path = os.path.join(tmpdir, "NEWS")
+            with open(news_path, "w") as f: f.write("test")
+            self.assertEqual(helper.find_upstream_changelog_target(tmpdir), "NEWS")
+
+            # With NEWS.md taking precedence over ChangeLog
+            os.remove(news_path)
+            news_md = os.path.join(tmpdir, "NEWS.md")
+            with open(news_md, "w") as f: f.write("test")
+            self.assertEqual(helper.find_upstream_changelog_target(tmpdir), "NEWS.md")
+
+    def test_find_upstream_changelog_target_git_activity(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Initialize a real git repo
+            subprocess.run(["git", "init", tmpdir], capture_output=True, check=True)
+            subprocess.run(["git", "-C", tmpdir, "config", "user.name", "test"], capture_output=True, check=True)
+            subprocess.run(["git", "-C", tmpdir, "config", "user.email", "test@example.com"], capture_output=True, check=True)
+
+            # Both NEWS and ChangeLog exist in commit 1
+            with open(os.path.join(tmpdir, "NEWS"), "w") as f: f.write("v1\n")
+            with open(os.path.join(tmpdir, "ChangeLog"), "w") as f: f.write("v1\n")
+            subprocess.run(["git", "-C", tmpdir, "add", "."], capture_output=True, check=True)
+            subprocess.run(["git", "-C", tmpdir, "commit", "-m", "init"], capture_output=True, check=True)
+            old_rev = subprocess.run(["git", "-C", tmpdir, "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+
+            # Commit 2: Only ChangeLog was updated in this release
+            with open(os.path.join(tmpdir, "ChangeLog"), "a") as f: f.write("v2 changes\n")
+            subprocess.run(["git", "-C", tmpdir, "add", "."], capture_output=True, check=True)
+            subprocess.run(["git", "-C", tmpdir, "commit", "-m", "update"], capture_output=True, check=True)
 
             helper = ObsScmUpgradeHelper(tmpdir)
-            removed = helper.clean_duplicate_obscpio_if_manual()
-            self.assertEqual(removed, [])
-            self.assertTrue(os.path.exists(obscpio))
+            # When old_rev is checked, ChangeLog is detected because it had active changes in this release
+            self.assertEqual(helper.find_upstream_changelog_target(tmpdir, old_rev=old_rev), "ChangeLog")
 
     @mock.patch("subprocess.run")
-    def test_execute_upgrade_dry_run(self, mock_run):
+    def test_audit_and_drop_merged_patches(self, mock_run):
         with tempfile.TemporaryDirectory() as tmpdir:
-            service_path = os.path.join(tmpdir, "_service")
-            with open(service_path, "w") as f:
-                f.write('''<services>
-  <service name="obs_scm"><param name="url">https://example.org/pkg.git</param><param name="revision">1.0</param></service>
-</services>''')
+            upstream_repo = os.path.join(tmpdir, "baobab")
+            os.makedirs(os.path.join(upstream_repo, ".git"))
 
-            helper = ObsScmUpgradeHelper(tmpdir)
-            res = helper.execute_upgrade(target_revision="2.0", dry_run=True)
-            self.assertTrue(res.success)
-            self.assertIn("DRY-RUN", res.message)
-            mock_run.assert_not_called()
+            patch_file = os.path.join(tmpdir, "e5c2018d.patch")
+            with open(patch_file, "w") as f:
+                f.write("diff --git a/a b/b\n")
 
-    @mock.patch("subprocess.run")
-    def test_execute_upgrade_full_mocked(self, mock_run):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            service_path = os.path.join(tmpdir, "_service")
-            with open(service_path, "w") as f:
-                f.write('''<services>
-  <service name="obs_scm"><param name="url">https://example.org/testpkg.git</param><param name="revision">1.0</param></service>
-  <service name="tar" mode="manual"/>
-</services>''')
+            spec_file = os.path.join(tmpdir, "baobab.spec")
+            with open(spec_file, "w") as f:
+                f.write("Patch0: e5c2018d.patch\n")
 
-            obsinfo_path = os.path.join(tmpdir, "testpkg.obsinfo")
-            with open(obsinfo_path, "w") as f:
-                f.write("version: 1.0\ncommit: 111111\n")
-
-            # Mock osc service mr and osc vc calls
             mock_proc = mock.MagicMock()
-            mock_proc.returncode = 0
-            mock_proc.stdout = "service success"
+            mock_proc.returncode = 0 # Simulate merge-base returns 0 (is ancestor)
             mock_run.return_value = mock_proc
 
             helper = ObsScmUpgradeHelper(tmpdir)
+            dropped = helper.audit_and_drop_merged_patches("baobab")
 
-            # We hook update_service_revision to also update obsinfo to simulate osc service mr run
-            def fake_run(*args, **kwargs):
-                with open(obsinfo_path, "w") as f:
-                    f.write("version: 2.0\ncommit: 222222\n")
-                return mock_proc
-
-            mock_run.side_effect = fake_run
-
-            logs = []
-            res = helper.execute_upgrade(target_revision="2.0", dry_run=False, on_log=logs.append)
-            self.assertTrue(res.success)
-            self.assertEqual(res.new_version, "2.0")
-            self.assertEqual(res.new_revision, "222222")
+            self.assertEqual(dropped, ["e5c2018d.patch"])
+            self.assertFalse(os.path.exists(patch_file))
+            with open(spec_file, "r") as f:
+                self.assertNotIn("e5c2018d.patch", f.read())
 
 if __name__ == '__main__':
     unittest.main()

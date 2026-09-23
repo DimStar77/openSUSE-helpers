@@ -2,6 +2,8 @@
 """
 OBS Source Service Upgrade Helper (obs_scm / _service).
 Python reimplementation and modernization of obs_scm-update.sh.
+Features automated changelog formatting at 67 chars, spec version bumping,
+and automated merged patch detection and dropping.
 """
 
 import glob
@@ -12,6 +14,12 @@ import subprocess
 from typing import Optional, Callable, Dict, Tuple, List
 
 from .base import BaseUpgradeHelper, UpgradeResult
+from .changelog import (
+    CHANGELOG_WRAP_WIDTH,
+    wrap_bullet,
+    format_changelog_entry,
+    remove_patch_from_spec
+)
 
 class ObsScmUpgradeHelper(BaseUpgradeHelper):
     """
@@ -31,6 +39,27 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         service_file = os.path.join(package_dir, "_service")
         if not os.path.isfile(service_file):
             return None
+
+        # XML parsing first
+        import xml.etree.ElementTree as ET
+        try:
+            tree = ET.parse(service_file)
+            root = tree.getroot()
+            for service in root.findall("service"):
+                if service.get("name") in ("obs_scm", "tar_scm"):
+                    versionformat = None
+                    for param in service.findall("param"):
+                        if param.get("name") == "versionformat":
+                            versionformat = param.text
+                    if versionformat is not None and versionformat.strip() == "0.gitmodule":
+                        continue
+                    for param in service.findall("param"):
+                        if param.get("name") == "revision":
+                            return param.text.strip() if param.text else None
+        except Exception:
+            pass
+
+        # Regex fallback
         try:
             with open(service_file, "r", encoding="utf-8", errors="replace") as f:
                 content = f.read()
@@ -57,7 +86,6 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
             except Exception:
                 pass
 
-        # Fallback: check for *.obsinfo files
         try:
             for f in os.listdir(self.package_dir):
                 if f.endswith(".obsinfo"):
@@ -65,7 +93,6 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         except Exception:
             pass
 
-        # Fallback: check for *.spec files
         try:
             for f in os.listdir(self.package_dir):
                 if f.endswith(".spec"):
@@ -142,7 +169,6 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         with open(service_file, "r", encoding="utf-8", errors="replace") as f:
             content = f.read()
 
-        # Matches mode="manual" on tar service
         if re.search(r'["\']tar["\'].*["\']manual["\']', content) or re.search(r'name=["\']tar["\']\s+mode=["\']manual["\']', content):
             removed = []
             for fpath in glob.glob(os.path.join(self.package_dir, "*.obscpio")):
@@ -156,20 +182,60 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
             return removed
         return []
 
+    def find_upstream_changelog_target(self, upstream_repo: str, old_rev: Optional[str] = None) -> str:
+        """
+        Discovers the upstream release notes file.
+        Prioritizes condensed, release-targeted files (NEWS*) over commit-dump logs (ChangeLog*).
+        If multiple exist and old_rev is provided, prioritizes the highest-precedence file
+        that was actually modified in this release.
+        """
+        candidates = [
+            "NEWS", "NEWS.md", "NEWS.rst", "NEWS.txt",
+            "RELEASES.md", "releasenotes.txt",
+            "CHANGELOG.md", "CHANGELOG.rst", "ChangeLog"
+        ]
+
+        # 1. If old_rev is available, check which candidates actually changed in git
+        if old_rev:
+            try:
+                res = subprocess.run(
+                    ["git", "-C", upstream_repo, "diff", "--no-ext-diff", "--name-only", f"{old_rev}..HEAD", "--"] + candidates,
+                    capture_output=True,
+                    text=True,
+                    check=False
+                )
+                if res.returncode == 0:
+                    changed_files = set(res.stdout.splitlines())
+                    for c in candidates:
+                        if c in changed_files:
+                            return c
+            except Exception:
+                pass
+
+        # 2. Fallback to existence priority
+        for c in candidates:
+            if os.path.isfile(os.path.join(upstream_repo, c)):
+                return c
+
+        return "NEWS"
+
     def extract_git_diffs(
         self,
         pkg_name: str,
         old_rev: str,
         on_log: Optional[Callable[[str], None]] = None
     ) -> Dict[str, str]:
-        """Extracts upstream git diffs between old_rev and HEAD for NEWS and meson build files."""
+        """Extracts upstream git diffs between old_rev and HEAD for NEWS/ChangeLog and meson build files."""
         diff_files = {}
         upstream_repo = os.path.join(self.package_dir, pkg_name)
         if not (os.path.isdir(upstream_repo) and os.path.exists(os.path.join(upstream_repo, ".git"))):
             return diff_files
 
+        # Auto-detect upstream changelog filename (evaluating diff activity against old_rev)
+        changelog_target = self.find_upstream_changelog_target(upstream_repo, old_rev=old_rev)
+
         targets = [
-            ("NEWS", "osc-collab.NEWS"),
+            (changelog_target, "osc-collab.NEWS"),
             ("meson.build", "osc-collab.meson"),
             ("meson_options.txt", "osc-collab.meson_options")
         ]
@@ -177,7 +243,7 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         for git_target, out_filename in targets:
             try:
                 res = subprocess.run(
-                    ["git", "-C", upstream_repo, "diff", f"{old_rev}..HEAD", "--", git_target],
+                    ["git", "-C", upstream_repo, "diff", "--no-ext-diff", f"{old_rev}..HEAD", "--", git_target],
                     capture_output=True,
                     text=True,
                     check=False
@@ -196,28 +262,145 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
 
         return diff_files
 
-    def update_changelog_via_osc(
+    def audit_and_drop_merged_patches(
+        self,
+        pkg_name: str,
+        on_log: Optional[Callable[[str], None]] = None
+    ) -> List[str]:
+        """
+        Scans package directory for *.patch files.
+        Checks if each patch is merged into upstream HEAD (by commit SHA or reverse apply).
+        If merged, deletes patch file, cleans spec file, and returns dropped patch list.
+        """
+        dropped_patches = []
+        upstream_repo = os.path.join(self.package_dir, pkg_name)
+        if not (os.path.isdir(upstream_repo) and os.path.exists(os.path.join(upstream_repo, ".git"))):
+            return dropped_patches
+
+        patch_files = glob.glob(os.path.join(self.package_dir, "*.patch"))
+        if not patch_files:
+            return dropped_patches
+
+        for patch_path in sorted(patch_files):
+            patch_name = os.path.basename(patch_path)
+            is_merged = False
+
+            # Check 1: Commit SHA in patch filename (e.g. e5c2018d.patch or 0001-...)
+            sha_match = re.match(r'^([a-f0-9]{7,40})\.patch$', patch_name, re.IGNORECASE)
+            if sha_match:
+                sha = sha_match.group(1)
+                try:
+                    res = subprocess.run(
+                        ["git", "-C", upstream_repo, "merge-base", "--is-ancestor", sha, "HEAD"],
+                        capture_output=True,
+                        check=False
+                    )
+                    if res.returncode == 0:
+                        is_merged = True
+                except Exception:
+                    pass
+
+            # Check 2: Test if patch applies cleanly in reverse to upstream HEAD
+            if not is_merged:
+                for p_num in ["-p1", "-p0"]:
+                    try:
+                        res = subprocess.run(
+                            ["git", "-C", upstream_repo, "apply", "--check", "--reverse", p_num, patch_path],
+                            capture_output=True,
+                            check=False
+                        )
+                        if res.returncode == 0:
+                            is_merged = True
+                            break
+                    except Exception:
+                        pass
+
+            if is_merged:
+                dropped_patches.append(patch_name)
+                if on_log:
+                    on_log(f"Detected merged patch: {patch_name} (carried upstream)")
+
+                # Delete patch file (from git if tracked, otherwise unlink)
+                try:
+                    subprocess.run(
+                        ["git", "-C", self.package_dir, "rm", "-f", patch_name],
+                        capture_output=True,
+                        check=False
+                    )
+                except Exception:
+                    pass
+                if os.path.exists(patch_path):
+                    try:
+                        os.remove(patch_path)
+                    except OSError:
+                        pass
+
+                # Clean spec file reference
+                for sf in os.listdir(self.package_dir):
+                    if sf.endswith(".spec"):
+                        spec_file = os.path.join(self.package_dir, sf)
+                        try:
+                            with open(spec_file, "r", encoding="utf-8") as f:
+                                orig_spec = f.read()
+                            clean_spec = remove_patch_from_spec(orig_spec, patch_name)
+                            if clean_spec != orig_spec:
+                                with open(spec_file, "w", encoding="utf-8") as f:
+                                    f.write(clean_spec)
+                                if on_log:
+                                    on_log(f"Removed '{patch_name}' declaration from {sf}")
+                        except Exception:
+                            pass
+
+        return dropped_patches
+
+    def update_spec_version(
         self,
         new_version: str,
         on_log: Optional[Callable[[str], None]] = None
-    ) -> bool:
-        """Extracts added NEWS lines and records changelog entry via osc vc."""
-        news_diff_file = os.path.join(self.package_dir, "osc-collab.NEWS")
-        news_lines = []
-        if os.path.isfile(news_diff_file):
-            with open(news_diff_file, "r", encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    if line.startswith("+") and not line.startswith("+++"):
-                        news_lines.append(line[1:])
+    ) -> Optional[str]:
+        """Updates Version: tag in *.spec to new_version."""
+        for sf in os.listdir(self.package_dir):
+            if sf.endswith(".spec"):
+                spec_file = os.path.join(self.package_dir, sf)
+                try:
+                    with open(spec_file, "r", encoding="utf-8") as f:
+                        content = f.read()
+                    new_content = re.sub(
+                        r'^(Version:\s*)\S+',
+                        rf'\g<1>{new_version}',
+                        content,
+                        flags=re.MULTILINE,
+                        count=1
+                    )
+                    if new_content != content:
+                        with open(spec_file, "w", encoding="utf-8") as f:
+                            f.write(new_content)
+                        if on_log:
+                            on_log(f"Updated 'Version:' in {sf} to {new_version}")
+                        return sf
+                except Exception:
+                    pass
+        return None
 
-        news_content = f"- Update to version {new_version}:\n"
-        if news_lines:
-            news_content += "".join(news_lines)
+    def update_changelog_via_osc(
+        self,
+        new_version: str,
+        diff_text: str = "",
+        dropped_patches: Optional[List[str]] = None,
+        on_log: Optional[Callable[[str], None]] = None
+    ) -> bool:
+        """Formats 67-column changelog entry and records it via non-interactive 'osc vc -F'."""
+        changelog_content = format_changelog_entry(
+            diff_text,
+            new_version,
+            dropped_patches=dropped_patches,
+            width=CHANGELOG_WRAP_WIDTH
+        )
 
         tmp_news = os.path.join(self.package_dir, ".NEWS")
         try:
             with open(tmp_news, "w", encoding="utf-8") as f:
-                f.write(news_content)
+                f.write(changelog_content + "\n")
 
             res = subprocess.run(
                 ["osc", "vc", "-F", ".NEWS"],
@@ -228,7 +411,7 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
             )
             if res.returncode == 0:
                 if on_log:
-                    on_log(f"Added changelog entry for version {new_version} via 'osc vc'")
+                    on_log(f"Recorded formatted changelog for version {new_version} via 'osc vc'")
                 return True
             else:
                 err = (res.stderr or res.stdout).strip()
@@ -313,7 +496,7 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         new_ver, new_rev = self.get_obsinfo_metadata(pkg_name)
         log(f"New package state: version={new_ver or 'unknown'}, commit={new_rev[:8] if new_rev else 'unknown'}")
 
-        # 5. Extract upstream diffs (NEWS, meson.build, meson_options.txt)
+        # 5. Extract upstream diffs (NEWS/ChangeLog, meson.build, meson_options.txt)
         diff_files = {}
         if old_rev:
             diff_files = self.extract_git_diffs(pkg_name, old_rev, on_log=log)
@@ -321,11 +504,22 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         # 6. Source duplication hygiene
         self.clean_duplicate_obscpio_if_manual(on_log=log)
 
-        # 7. Update changelog if commit changed
-        if old_rev and new_rev and old_rev != new_rev and new_ver:
-            self.update_changelog_via_osc(new_ver, on_log=log)
-        elif not old_rev and new_ver:
-            self.update_changelog_via_osc(new_ver, on_log=log)
+        # 7. Audit and drop merged patches
+        dropped_patches = self.audit_and_drop_merged_patches(pkg_name, on_log=log)
+
+        # 8. Update Version: in *.spec
+        if new_ver:
+            self.update_spec_version(new_ver, on_log=log)
+
+        # 9. Update changelog via non-interactive osc vc
+        news_diff = diff_files.get("osc-collab.NEWS", "")
+        if new_ver and (old_rev != new_rev or not old_rev):
+            self.update_changelog_via_osc(
+                new_ver,
+                diff_text=news_diff,
+                dropped_patches=dropped_patches,
+                on_log=log
+            )
 
         log(f"Successfully upgraded {pkg_name} to {new_ver or rev}!")
         return UpgradeResult(

@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
 """
 Geckopit Package Upgrade Helpers Package.
-Provides registry, strategy dispatch, and helpers for packaging pipelines.
+Provides registry, strategy dispatch, and changelog formatting for packaging pipelines.
 """
 
 from typing import Optional, List, Type
 from .base import BaseUpgradeHelper, UpgradeResult
 from .obs_scm import ObsScmUpgradeHelper
+from .changelog import (
+    CHANGELOG_WRAP_WIDTH,
+    wrap_bullet,
+    format_changelog_entry,
+    build_changelog_from_items,
+    remove_patch_from_spec
+)
 
 # Registry of upgrade helpers in order of evaluation
 _REGISTERED_HELPERS: List[Type[BaseUpgradeHelper]] = [
@@ -41,4 +48,9 @@ __all__ = [
     "register_upgrade_helper",
     "list_upgrade_helpers",
     "get_upgrade_helper",
+    "CHANGELOG_WRAP_WIDTH",
+    "wrap_bullet",
+    "format_changelog_entry",
+    "build_changelog_from_items",
+    "remove_patch_from_spec",
 ]
