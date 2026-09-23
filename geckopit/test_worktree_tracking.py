@@ -165,9 +165,9 @@ class TestWorktreeTracking(unittest.TestCase):
             with open(os.path.join(tmpdir, 'pkg.spec'), 'w') as f: f.write('Version: 1.19.0\n')
             self.assertEqual(sb.get_local_package_version(tmpdir), '1.19.0')
 
-            # .obsinfo takes precedence
-            with open(os.path.join(tmpdir, 'pkg.obsinfo'), 'w') as f: f.write('version: 1.19.1\n')
-            self.assertEqual(sb.get_local_package_version(tmpdir), '1.19.1')
+            # .spec is authoritative even if .obsinfo has different submodule version
+            with open(os.path.join(tmpdir, 'pkg.obsinfo'), 'w') as f: f.write('version: 0.gitmodule\n')
+            self.assertEqual(sb.get_local_package_version(tmpdir), '1.19.0')
 
     def test_load_geckopit_profile_config(self):
         conf = sb.load_geckopit_profile_config()

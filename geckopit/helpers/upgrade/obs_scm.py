@@ -86,17 +86,13 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
             except Exception:
                 pass
 
+        base = os.path.basename(self.package_dir)
         try:
-            for f in os.listdir(self.package_dir):
-                if f.endswith(".obsinfo"):
-                    return f[:-8]
-        except Exception:
-            pass
-
-        try:
-            for f in os.listdir(self.package_dir):
-                if f.endswith(".spec"):
-                    return f[:-5]
+            if os.path.isfile(os.path.join(self.package_dir, f"{base}.spec")):
+                return base
+            specs = [f[:-5] for f in os.listdir(self.package_dir) if f.endswith(".spec")]
+            if specs:
+                return specs[0]
         except Exception:
             pass
 

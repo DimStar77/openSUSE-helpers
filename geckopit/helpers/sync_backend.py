@@ -1001,6 +1001,7 @@ def is_package_dir(path="."):
 def get_package_name_from_dir(path="."):
     """Extracts package name from spec file, _service, obsinfo, or directory name."""
     path = os.path.abspath(path)
+    base = os.path.basename(path)
     try:
         for f in os.listdir(path):
             if f.endswith(".spec"):
@@ -1022,12 +1023,16 @@ def get_package_name_from_dir(path="."):
         except Exception:
             pass
     try:
-        for f in os.listdir(path):
-            if f.endswith(".obsinfo"):
-                return f[:-8]
+        if os.path.isfile(os.path.join(path, f"{base}.spec")):
+            return base
+        specs = [f[:-5] for f in os.listdir(path) if f.endswith(".spec")]
+        if specs:
+            return specs[0]
     except OSError:
         pass
-    return os.path.basename(path)
+    if os.path.isfile(os.path.join(path, f"{base}.obsinfo")):
+        return base
+    return base
 
 
 def load_geckopit_profile_config():
@@ -1062,32 +1067,42 @@ def load_geckopit_profile_config():
 
 def get_local_package_version(repo_path):
     """
-    Extracts the current version from the local on-disk package working tree.
-    Checks *.obsinfo first (most accurate for SCM packages), then *.spec.
+    Extracts the current version from the local on-disk package .spec file.
+    The .spec file is the single authoritative source of truth for packaging version state.
     """
     if not repo_path or not os.path.isdir(repo_path):
         return None
-    try:
-        for f in os.listdir(repo_path):
-            if f.endswith(".obsinfo"):
-                with open(os.path.join(repo_path, f), "r", encoding="utf-8", errors="replace") as fh:
-                    for line in fh:
-                        if line.strip().startswith("version:"):
-                            val = line.strip().split(":", 1)[1].strip()
-                            if val:
-                                return clean_version(val)
-    except OSError:
-        pass
+
+    pkg_name = get_package_name_from_dir(repo_path)
+
+    # 1. Check <pkg_name>.spec directly
+    primary_spec = os.path.join(repo_path, f"{pkg_name}.spec")
+    if os.path.isfile(primary_spec):
+        try:
+            with open(primary_spec, "r", encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    m = re.match(r"^Version:\s*(\S+)", line, re.IGNORECASE)
+                    if m:
+                        return clean_version(m.group(1))
+        except OSError:
+            pass
+
+    # 2. Fallback: check any .spec file in the package directory
     try:
         for f in os.listdir(repo_path):
             if f.endswith(".spec"):
-                with open(os.path.join(repo_path, f), "r", encoding="utf-8", errors="replace") as fh:
-                    for line in fh:
-                        m = re.match(r"^Version:\s*(\S+)", line, re.IGNORECASE)
-                        if m:
-                            return clean_version(m.group(1))
+                spec_path = os.path.join(repo_path, f)
+                try:
+                    with open(spec_path, "r", encoding="utf-8", errors="replace") as fh:
+                        for line in fh:
+                            m = re.match(r"^Version:\s*(\S+)", line, re.IGNORECASE)
+                            if m:
+                                return clean_version(m.group(1))
+                except OSError:
+                    pass
     except OSError:
         pass
+
     return None
 
 
