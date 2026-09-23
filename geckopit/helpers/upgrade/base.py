@@ -20,7 +20,8 @@ class UpgradeResult:
         new_version: Optional[str] = None,
         old_revision: Optional[str] = None,
         new_revision: Optional[str] = None,
-        diff_files: Optional[Dict[str, str]] = None
+        diff_files: Optional[Dict[str, str]] = None,
+        has_retrospective_news: bool = False
     ):
         self.success = success
         self.message = message
@@ -30,6 +31,7 @@ class UpgradeResult:
         self.old_revision = old_revision
         self.new_revision = new_revision
         self.diff_files = diff_files or {}
+        self.has_retrospective_news = has_retrospective_news
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -40,7 +42,8 @@ class UpgradeResult:
             "new_version": self.new_version,
             "old_revision": self.old_revision,
             "new_revision": self.new_revision,
-            "diff_files": self.diff_files
+            "diff_files": self.diff_files,
+            "has_retrospective_news": self.has_retrospective_news
         }
 
 class BaseUpgradeHelper(abc.ABC):

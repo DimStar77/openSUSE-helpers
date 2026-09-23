@@ -38,6 +38,7 @@ except ValueError:
 # Make sure we can import sync_backend from helpers/ by resolving symlinks
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), 'helpers'))
 import sync_backend as sb
+from upgrade import get_upgrade_helper
 
 import shlex
 import xml.etree.ElementTree as ET
@@ -3197,8 +3198,14 @@ class SyncWindow(Adw.ApplicationWindow):
             upstream_latest = ver_data.get("upstream_latest", "")
             if upstream_latest and upstream_latest != "—":
                 pkg_dir = self.get_mapped_worktree_path(self.current_selected_package, "next")
-                current_revision = get_service_revision(pkg_dir)
-                guessed_revision, confidence_err = guess_update_revision(current_revision, upstream_latest)
+                helper = get_upgrade_helper(pkg_dir)
+                if helper and helper.name == "tarball":
+                    guessed_revision = upstream_latest
+                    confidence_err = None
+                    current_revision = helper.get_current_revision(pkg_dir)
+                else:
+                    current_revision = get_service_revision(pkg_dir)
+                    guessed_revision, confidence_err = guess_update_revision(current_revision, upstream_latest)
 
                 if guessed_revision and not confidence_err:
                     base_cmd = f"geckopit-upgrade {shlex.quote(guessed_revision)}"
@@ -3233,8 +3240,14 @@ class SyncWindow(Adw.ApplicationWindow):
             upstream_stable = ver_data.get("upstream_stable", "")
             if upstream_stable and upstream_stable != "N/A":
                 pkg_dir = self.get_mapped_worktree_path(self.current_selected_package, "factory")
-                current_revision = get_service_revision(pkg_dir)
-                guessed_revision, confidence_err = guess_update_revision(current_revision, upstream_stable)
+                helper = get_upgrade_helper(pkg_dir)
+                if helper and helper.name == "tarball":
+                    guessed_revision = upstream_stable
+                    confidence_err = None
+                    current_revision = helper.get_current_revision(pkg_dir)
+                else:
+                    current_revision = get_service_revision(pkg_dir)
+                    guessed_revision, confidence_err = guess_update_revision(current_revision, upstream_stable)
 
                 if guessed_revision and not confidence_err:
                     base_cmd = f"geckopit-upgrade {shlex.quote(guessed_revision)}"

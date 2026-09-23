@@ -245,10 +245,16 @@ def run_package_upgrade(pkg_dir=".", revision=None, dry_run=False):
         return 1
 
     pkg_name = sb.get_package_name_from_dir(pkg_dir)
-    rev_display = revision if revision else "@PARENT_TAG@ (default)"
+    if helper.name == "tarball":
+        target_label = "Target Version:"
+        rev_display = revision if (revision and revision != "@PARENT_TAG@") else "latest upstream release"
+    else:
+        target_label = "Target Revision:"
+        rev_display = revision if revision else "@PARENT_TAG@ (default)"
+
     print(f"\033[1;34m=>\033[0m \033[1mGeckopit Package Upgrade\033[0m: \033[1;37m{pkg_name}\033[0m")
     print(f"\033[1;34m=>\033[0m Engine: \033[1;32m{helper.name}\033[0m ({helper.description})")
-    print(f"\033[1;34m=>\033[0m Target Revision: \033[1;33m{rev_display}\033[0m")
+    print(f"\033[1;34m=>\033[0m {target_label} \033[1;33m{rev_display}\033[0m")
     if dry_run:
         print("\033[1;33m=> Mode: DRY-RUN (no files will be modified)\033[0m")
 
@@ -265,6 +271,8 @@ def run_package_upgrade(pkg_dir=".", revision=None, dry_run=False):
             print("   \033[1mReview files generated:\033[0m")
             for df in result.diff_files.keys():
                 print(f"     • {df}")
+        if result.has_retrospective_news:
+            print("   \033[1;33m⚠️  Notice:\033[0m Upstream NEWS diff contains additions to older release sections. Please inspect 'osc-collab.NEWS' if past .changes entries should be annotated.")
         return 0
     else:
         print(f"\033[1;31m=> Upgrade Failed:\033[0m {result.message}", file=sys.stderr)
@@ -642,10 +650,22 @@ def main():
         print_help()
         sys.exit(0)
 
-    # Detect if a target argument was provided (e.g. 'geckopit-cli baobab')
+    # Parse upgrade options first to separate version parameters from target directories
+    show_upgrade = False
+    upgrade_rev = None
+    for idx, arg in enumerate(sys.argv):
+        if arg in ("--upgrade", "-u"):
+            show_upgrade = True
+            if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("-"):
+                upgrade_rev = sys.argv[idx + 1]
+        elif arg.startswith("--upgrade="):
+            show_upgrade = True
+            upgrade_rev = arg.split("=", 1)[1]
+
+    # Detect if a target package argument was provided (e.g. 'geckopit-cli baobab')
     target_arg = None
     for arg in sys.argv[1:]:
-        if not arg.startswith("-") and arg not in ("factory", "next"):
+        if not arg.startswith("-") and arg != upgrade_rev and arg not in ("factory", "next", "stable", "unstable"):
             target_arg = arg
             break
 
@@ -659,18 +679,6 @@ def main():
     # Parse commit options
     show_commit = "--commit" in sys.argv or "-c" in sys.argv
     no_edit = "--no-edit" in sys.argv
-
-    # Parse upgrade options
-    show_upgrade = False
-    upgrade_rev = None
-    for idx, arg in enumerate(sys.argv):
-        if arg in ("--upgrade", "-u"):
-            show_upgrade = True
-            if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("-") and sys.argv[idx + 1] != target_arg:
-                upgrade_rev = sys.argv[idx + 1]
-        elif arg.startswith("--upgrade="):
-            show_upgrade = True
-            upgrade_rev = arg.split("=", 1)[1]
 
     dry_run = "--dry-run" in sys.argv or "-n" in sys.argv
 

@@ -513,6 +513,12 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
 
         # 9. Update changelog via non-interactive osc vc
         news_diff = diff_files.get("osc-collab.NEWS", "")
+        has_retro = False
+        if news_diff:
+            has_retro = check_retrospective_news_changes(news_diff)
+            if has_retro:
+                log("⚠️  Notice: Upstream NEWS diff contains additions to older release sections (e.g. historical CVE/GHSA annotations). Inspect 'osc-collab.NEWS' if past .changes entries should be updated.")
+
         if new_ver and (old_rev != new_rev or not old_rev):
             self.update_changelog_via_osc(
                 new_ver,
@@ -530,5 +536,6 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
             new_version=new_ver,
             old_revision=old_rev,
             new_revision=new_rev,
-            diff_files=diff_files
+            diff_files=diff_files,
+            has_retrospective_news=has_retro
         )

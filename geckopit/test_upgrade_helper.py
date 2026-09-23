@@ -333,5 +333,55 @@ Release:        0
             with open(spec_file, "r") as f:
                 self.assertNotIn("e5c2018d.patch", f.read())
 
+    def test_check_retrospective_news_changes(self):
+        from upgrade.changelog import check_retrospective_news_changes
+        diff_no_retro = '--- NEWS.old\n+++ NEWS.new\n@@ -1,5 +1,10 @@\n+Changes in 1.1\n+==============\n+* Feature A\n+\n Changes in 1.0\n'
+        self.assertFalse(check_retrospective_news_changes(diff_no_retro))
+
+        diff_with_retro = '--- NEWS.old\n+++ NEWS.new\n@@ -1,15 +1,20 @@\n+Changes in 1.1\n+==============\n+* Feature A\n+\n Changes in 1.0\n ==============\n * Bug fix\n+* (CVE-2026-1234)\n'
+        self.assertTrue(check_retrospective_news_changes(diff_with_retro))
+
+    def test_tarball_helper_can_handle(self):
+        from upgrade.tarball import TarballUpgradeHelper
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # No spec -> False
+            self.assertFalse(TarballUpgradeHelper.can_handle(tmpdir))
+
+            # Spec exists -> True
+            spec_path = os.path.join(tmpdir, 'pkg.spec')
+            with open(spec_path, 'w') as f: f.write('Version: 1.0\n')
+            self.assertTrue(TarballUpgradeHelper.can_handle(tmpdir))
+
+            # If _service has obs_scm -> False
+            srv_path = os.path.join(tmpdir, '_service')
+            with open(srv_path, 'w') as f: f.write('<service name="obs_scm"/>\n')
+            self.assertFalse(TarballUpgradeHelper.can_handle(tmpdir))
+
+    def test_tarball_extract_member_content(self):
+        from upgrade.tarball import TarballUpgradeHelper
+        import tarfile, io
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tar_path = os.path.join(tmpdir, 'pkg-1.0.tar.xz')
+            with tarfile.open(tar_path, 'w:xz') as tf:
+                data = b'Changes in 1.0\n'
+                ti = tarfile.TarInfo(name='pkg-1.0/NEWS')
+                ti.size = len(data)
+                tf.addfile(ti, io.BytesIO(data))
+
+            txt = TarballUpgradeHelper.extract_member_content(tar_path, 'NEWS', package_dir=tmpdir)
+            self.assertEqual(txt, 'Changes in 1.0\n')
+
+    def test_tarball_execute_upgrade_dry_run(self):
+        from upgrade.tarball import TarballUpgradeHelper
+        with tempfile.TemporaryDirectory() as tmpdir:
+            spec_path = os.path.join(tmpdir, 'pkg.spec')
+            with open(spec_path, 'w') as f: f.write('Name: pkg\nVersion: 1.0\n')
+            helper = TarballUpgradeHelper(tmpdir)
+            res = helper.execute_upgrade(target_revision='1.1', dry_run=True)
+            self.assertTrue(res.success)
+            self.assertIn('[DRY-RUN]', res.message)
+            self.assertEqual(res.old_version, '1.0')
+            self.assertEqual(res.new_version, '1.1')
+
 if __name__ == '__main__':
     unittest.main()

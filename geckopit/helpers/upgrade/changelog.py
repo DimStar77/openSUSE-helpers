@@ -42,6 +42,29 @@ def wrap_bullet(text: str, level: int = 1, width: int = CHANGELOG_WRAP_WIDTH) ->
     return wrapper.fill(text)
 
 
+def check_retrospective_news_changes(diff_text: str) -> bool:
+    """
+    Returns True if the upstream NEWS diff contains additions to older release sections
+    beyond the primary/first release section.
+    """
+    re_release_header = re.compile(r'^(changes|overview\s+of\s+changes|release)\s+in\s+.*', re.IGNORECASE)
+    re_ver_header = re.compile(r'^(version\s+)?v?\d+[\d._rcbetalpha+-]*(\s*[-–(].*)?$', re.IGNORECASE)
+
+    seen_first = False
+    past_first = False
+    for line in diff_text.splitlines():
+        if line.startswith("+++") or line.startswith("---") or line.startswith("@@"):
+            continue
+        s = line[1:].strip() if len(line) > 1 else ""
+        if (line.startswith(" ") or line.startswith("+")) and (re_release_header.match(s) or re_ver_header.match(s)):
+            if seen_first:
+                past_first = True
+            else:
+                seen_first = True
+        if past_first and line.startswith("+") and s:
+            return True
+    return False
+
 def clean_trailing_issue_ref(text: str) -> str:
     """
     Strips parenthesized issue tracker references like (#6705, #6678) or (#6710) (#6715),
@@ -92,18 +115,24 @@ def format_changelog_entry(
     Parses an upstream NEWS/ChangeLog diff and produces openSUSE-compliant
     changelog formatting wrapped strictly at width characters with multi-level hierarchy.
     """
-    raw_lines = []
-    for line in diff_text.splitlines():
-        if line.startswith("+++") or line.startswith("---") or line.startswith("@@"):
-            continue
-        if line.startswith("+"):
-            raw_lines.append(line[1:])
-
     re_release_header = re.compile(r'^(changes|overview\s+of\s+changes|release)\s+in\s+.*', re.IGNORECASE)
     re_ver_header = re.compile(r'^(version\s+)?v?\d+[\d._rcbetalpha+-]*(\s*[-–(].*)?$', re.IGNORECASE)
     re_date_header = re.compile(r'^(released|date):\s*.*', re.IGNORECASE)
     re_underline = re.compile(r'^[=\-~_]{2,}$')
     re_bullet = re.compile(r'^(\s*)([*•\-+])\s+(.*)')
+
+    raw_lines = []
+    seen_header = False
+    for line in diff_text.splitlines():
+        if line.startswith("+++") or line.startswith("---") or line.startswith("@@"):
+            continue
+        s = line[1:].strip() if len(line) > 1 else ""
+        if (line.startswith(" ") or line.startswith("+")) and (re_release_header.match(s) or re_ver_header.match(s)):
+            if seen_header:
+                break
+            seen_header = True
+        if line.startswith("+"):
+            raw_lines.append(line[1:])
 
     filtered_lines = []
     in_translations = False

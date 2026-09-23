@@ -7,17 +7,20 @@ Provides registry, strategy dispatch, and changelog formatting for packaging pip
 from typing import Optional, List, Type
 from .base import BaseUpgradeHelper, UpgradeResult
 from .obs_scm import ObsScmUpgradeHelper
+from .tarball import TarballUpgradeHelper
 from .changelog import (
     CHANGELOG_WRAP_WIDTH,
     wrap_bullet,
     format_changelog_entry,
     build_changelog_from_items,
-    remove_patch_from_spec
+    remove_patch_from_spec,
+    check_retrospective_news_changes
 )
 
 # Registry of upgrade helpers in order of evaluation
 _REGISTERED_HELPERS: List[Type[BaseUpgradeHelper]] = [
     ObsScmUpgradeHelper,
+    TarballUpgradeHelper,
 ]
 
 def register_upgrade_helper(helper_cls: Type[BaseUpgradeHelper]):
@@ -45,6 +48,7 @@ __all__ = [
     "BaseUpgradeHelper",
     "UpgradeResult",
     "ObsScmUpgradeHelper",
+    "TarballUpgradeHelper",
     "register_upgrade_helper",
     "list_upgrade_helpers",
     "get_upgrade_helper",
@@ -53,4 +57,5 @@ __all__ = [
     "format_changelog_entry",
     "build_changelog_from_items",
     "remove_patch_from_spec",
+    "check_retrospective_news_changes",
 ]
