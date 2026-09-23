@@ -1,4 +1,10 @@
 #!/bin/bash
+
+# Defer to geckopit-cli if available in PATH
+if command -v geckopit-cli >/dev/null 2>&1; then
+    [ -d "GNOME:Next" ] && cd "GNOME:Next"
+    exec geckopit-cli --todo "$@"
+fi
 # gnome-catchup.sh (Lives in the parent directory)
 
 FACTORY_DIR="GNOME"
@@ -25,11 +31,11 @@ export FACTORY_PATH
 BEHIND_MODULES=$(git submodule foreach --quiet '
     NEXT_HASH=$(git rev-parse HEAD 2>/dev/null)
     FACTORY_HASH=$(git -C "$FACTORY_PATH" ls-tree factory "$sm_path" | awk "{print \$3}")
-    
+
     if [ -n "$FACTORY_HASH" ] && [ "$NEXT_HASH" != "$FACTORY_HASH" ]; then
         BEHIND_VAL=$(git rev-list --count "$NEXT_HASH..$FACTORY_HASH" 2>/dev/null)
         BEHIND_COUNT=${BEHIND_VAL:-0}
-        
+
         if [ "$BEHIND_COUNT" -gt 0 ]; then
             echo "$sm_path|$FACTORY_HASH|$BEHIND_COUNT"
         fi
@@ -44,24 +50,24 @@ fi
 # Iterate over the findings
 for entry in $BEHIND_MODULES; do
     IFS='|' read -r sm_path factory_hash count <<< "$entry"
-    
+
     echo ""
     echo "📂 Submodule: $sm_path"
     echo "⚠️  Behind Factory by $count commit(s)."
     echo "-------------------------------------------------------------------"
-    
+
     # Show the log of what is in Factory but not in Next
     # We use -C to run the log inside the specific submodule
     git --no-pager -C "$sm_path" log --oneline --color HEAD.."$factory_hash"
-    
+
     echo "-------------------------------------------------------------------"
     read -p "Merge these changes into 'next' and push? [y/N]: " confirm
-    
+
     if [[ "$confirm" =~ ^[Yy]$ ]]; then
         echo "🚀 Merging..."
         # 1. Ensure we are on 'next' branch
         git -C "$sm_path" checkout next --quiet
-        
+
         # 2. Merge the specific factory hash
         if git -C "$sm_path" merge "$factory_hash" -m "Merge factory updates into next"; then
             echo "📤 Pushing to origin/next..."

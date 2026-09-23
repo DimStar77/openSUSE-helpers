@@ -1,4 +1,10 @@
 #!/bin/bash
+
+# Defer to geckopit-cli if available in PATH
+if command -v geckopit-cli >/dev/null 2>&1; then
+    [ -d "GNOME:Next" ] && cd "GNOME:Next"
+    exec geckopit-cli --forward --pr "$@"
+fi
 # gnome-audit.sh
 
 FACTORY_DIR="GNOME"
@@ -39,7 +45,7 @@ RAW_OUTPUT=$(git submodule foreach --quiet "
     esac
     NEXT_HASH=\$(git rev-parse HEAD 2>/dev/null)
     FACTORY_HASH=\$(git -C \"$FACTORY_PATH\" ls-tree factory \"\$sm_path\" | awk '{print \$3}')
-    
+
     STATUS_STR=\"\"
     D=\"--\"
     PR_INFO=\"--\"
@@ -52,11 +58,11 @@ RAW_OUTPUT=$(git submodule foreach --quiet "
         AHEAD=\$(git rev-list --count \"\$FACTORY_HASH..\$NEXT_HASH\" 2>/dev/null || echo 0)
         BEHIND=\$(git rev-list --count \"\$NEXT_HASH..\$FACTORY_HASH\" 2>/dev/null || echo 0)
 
-        if [ \"\$AHEAD\" -gt 0 ] && [ \"\$BEHIND\" -gt 0 ]; then 
+        if [ \"\$AHEAD\" -gt 0 ] && [ \"\$BEHIND\" -gt 0 ]; then
             STATUS_STR=\"OUT OF SYNC\"; D=\"+\$AHEAD/-\$BEHIND\"
-        elif [ \"\$AHEAD\" -gt 0 ]; then 
+        elif [ \"\$AHEAD\" -gt 0 ]; then
             STATUS_STR=\"PENDING PUSH\"; D=\"\$AHEAD ahead\"
-        elif [ \"\$BEHIND\" -gt 0 ]; then 
+        elif [ \"\$BEHIND\" -gt 0 ]; then
             STATUS_STR=\"BEHIND\"; D=\"\$BEHIND behind\"
         else
             STATUS_STR=\"DIVERGED\"; D=\"Manual Check\"
@@ -67,12 +73,12 @@ RAW_OUTPUT=$(git submodule foreach --quiet "
     if [ -n \"\$STATUS_STR\" ] && [ \"$CHECK_PRS_VAL\" = \"true\" ]; then
         RID=\$(git remote get-url origin 2>/dev/null | sed -E 's/.*[:\/]([^\/]+\/[^\/]+)(\.git)?$/\1/')
         PR_DATA=\$(git obs pr list --state open \"\$RID\" 2>/dev/null)
-        
+
         if [ -n \"\$PR_DATA\" ] && echo \"\$PR_DATA\" | grep -q \"ID  \"; then
             PR_INFO=\$(echo \"\$PR_DATA\" | awk '
                 /^ID/ { match(\$0, /#[0-9]+/); id=substr(\$0, RSTART, RLENGTH); }
-                /^Target/ { 
-                    split(\$0, a, \"branch: \"); split(a[2], b, \",\"); 
+                /^Target/ {
+                    split(\$0, a, \"branch: \"); split(a[2], b, \",\");
                     if (id!=\"\") { printf \"%s(%s) \", id, b[1]; id=\"\"; }
                 }
             ' | sed 's/ $//; s/ /, /g')

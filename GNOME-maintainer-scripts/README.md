@@ -1,54 +1,52 @@
-Outlining some workflow to survive a metaproject with 500+ submodules
-and multiple branches, where the branches drift apart with what
-submodules they contain (making git checkout <branch> a real pain)
+# openSUSE GNOME Maintainer Workflows & Automation Suite
 
-# gnome-clone.sh
-gnome-clone.sh does as the name suggest, clone the entire set of packages
-of the GNOME organisation onto the disk. The starting point is _ObsPrj (the
-OBS Project definition, refering all the submodules aka packages for the
-factory branch
+Outlining workflows to maintain a metaproject with 500+ submodules and multiple branches (factory and next), where branches drift apart with which submodules they contain (making traditional git checkouts impractical).
 
-As GNOME lives from multiple branches for GNOME:Factory and GNOME:Next, the
-script then intializes a 2nd worktree (GNOME:Next) next to the initial GNOME
-checkout, targeting the "next" branch.
-The script sets this up using 'worktree' as to not pull the entire thing
-twice, saving a good bunch of disk space
+---
 
-# gnome-sync.sh
-Checks the GNOME and GNOME:Next directories to see if the submodules
-on src.o.o have moved forward and then syncs the modules in need.
+## 🚀 Active Superproject Infrastructure Scripts
 
-This is very similar to 'git pull' in either of the directories, plus 
-git submodule update - but it copes perfectly with sbmodules appearing
-and disappearing without the need to remember all the parameters
+### `gnome-clone.sh`
+Clones the entire set of packages of the GNOME organization onto disk. The starting point is `_ObsPrj` (the OBS Project definition, referencing all submodules/packages for the factory branch).
 
-# gnome-audit.sh
-Verifies, based on your current state on disk, how far the #factory
-and #next branch have drifted. Creates a table of what needs to be updated
-in what direction
-* BEHIND: #next is <n> commits behind #factory - use gnome-catchup.sh
-  to sync the change from #factory into #next
-* PENDING PUSH: #next branch contains changes which are not in #factory.
-  gnome-promote.sh can create mass-submissions, or you can create a PR
-  from #next to #factory
-* DIVERGED: commits were added to #next and #factory; before you can merge
-  #next into #factory again, you need to pull/rebase #factory into #next
+Because openSUSE GNOME maintains multiple branches for `GNOME:Factory` and `GNOME:Next`, the script initializes a linked git worktree (`GNOME:Next`) directly adjacent to the initial `GNOME` checkout, targeting the `next` branch. This shares the underlying `.git` object store, saving gigabytes of disk space and bandwidth.
 
-# gnome-catchup.sh
-Tries to merge changes from #factory into #next branch
+### `gnome-sync.sh`
+Checks the `GNOME` and `GNOME:Next` superproject checkouts to see if submodules on `src.opensuse.org` have moved forward and synchronizes modules in need.
 
-# gnome-promote.sh
-Promotes changes from #next branch to #factory branch
+Operates as a high-performance bulk maintenance sync (`git submodule sync`, `git submodule update --remote --merge --jobs 10`, and `git clean -dff`), coping cleanly with submodules appearing and disappearing.
 
-# gnome-pool-audit.sh
-Shows an overview of what packages in GNOME/ have a diff on their
- factory branch vs the package in pool (i.e what needs to be submitted
- to Factory
-
-# pr_manage.py
-Manages Pull Requests (PRs) in the GNOME/_ObsPrj repository. Allows grouping
-multiple package PRs into a single group PR, unselecting packages, and
-signaling approval for staging.
+### `pr_manage.py`
+Manages Pull Requests (PRs) in the `GNOME/_ObsPrj` repository. Allows grouping multiple package PRs into a single group PR, unselecting packages, and signaling approval for staging.
 See [PR_MANAGE_MANUAL.md](PR_MANAGE_MANUAL.md) for detailed usage.
 
+---
 
+## ⚡ Modern Packaging Cockpit & CLI (`geckopit` / `geckopit-cli`)
+
+Daily package release engineering, downstream synchronization, upstream version monitoring, and commit workflows are powered by the **Geckopit Suite** (`geckopit/` in this repository):
+
+* **Interactive GUI Cockpit (`geckopit`)**: Complete visual dashboard with real-time multi-branch tracking, embedded terminal tabs, 1-click pull/push/merge actions, and automated Gitea PR prefilling from `.changes` diffs.
+* **CLI Tool (`geckopit-cli`)**:
+  * **Single Package Mode** (when inside a package directory or targeting a package):
+    * `geckopit-cli`: Detailed single-package dashboard with worktree alignment, downstream sync, upstream release comparisons, and actionable recommendations.
+    * `geckopit-cli --upgrade [REV]` (`-u`): Headless upgrade engine (`_service` bumping, `osc service mr`, strict 67-column changelog generation, patch dropping, and spec bumping).
+    * `geckopit-cli --commit` (`-c`): Modernized commit helper with automated whitespace sanitization, gitignore-respecting staging, and `$EDITOR` pre-filling.
+  * **Multi-Package Batch Mode** (in workspace root):
+    * `geckopit-cli`: Parallel downstream sync audit (pool drift & catch-up merges across 50 threads).
+    * `geckopit-cli --version` (`-v`): Parallel upstream release monitor querying release-monitoring.org.
+    * `geckopit-cli --forward` (`-f`): Forwarding audit identifying branches ready to be merged to stable.
+
+---
+
+## 📦 Deprecated Legacy Scripts
+
+The following standalone scripts are superseded by the Geckopit suite. For backwards compatibility and muscle memory, they contain transparent delegation shims that automatically defer to `geckopit-cli` when installed in `$PATH`, falling back to their legacy implementations otherwise:
+
+| Legacy Script | Modern Equivalent | Description |
+| :--- | :--- | :--- |
+| `gnome-audit.sh` | `geckopit-cli --forward --pr` | Audits drift between `factory` and `next`, displaying commit deltas and active Gitea PR status. |
+| `gnome-catchup.sh` | `geckopit-cli` (default/`--todo`) or GUI Track 3 (*Needs Merge*) | Identifies packages on `next` that have fallen behind `factory` and need catch-up merges. |
+| `gnome-promote.sh` | `geckopit-cli --forward` or GUI Track 4 (*Forwardable*) | Lists packages on `next` ready to be forwarded to `factory` and surfaces open PRs. |
+| `gnome-pool-audit.sh` | `geckopit-cli` (default) or GUI Track 1/2 (*Gitea Pool*) | Audits local `factory` packages against the central openSUSE source pool. |
+| `gc.sh` | `geckopit-cli --commit` | Defensively stages modified packaging files, strips trailing whitespace, extracts `.changes`, and launches `$EDITOR`. |

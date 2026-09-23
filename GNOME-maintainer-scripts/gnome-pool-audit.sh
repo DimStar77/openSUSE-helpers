@@ -1,4 +1,14 @@
 #!/bin/bash
+
+# Defer to geckopit-cli if available in PATH
+if command -v geckopit-cli >/dev/null 2>&1; then
+    if [ -d "GNOME:Next" ]; then
+        cd "GNOME:Next"
+    elif [ -d "GNOME" ]; then
+        cd "GNOME"
+    fi
+    exec geckopit-cli "$@"
+fi
 # gnome-pool-audit.sh
 
 # Configuration
@@ -23,8 +33,8 @@ cd "$FACTORY_PATH" || exit
 RAW_OUTPUT=$(git submodule foreach --quiet '
     # 1. Get current local Factory hash
     LOCAL_FACTORY_HASH=$(git rev-parse HEAD 2>/dev/null)
-    
-    # 2. Determine Pool URL 
+
+    # 2. Determine Pool URL
     # Logic: Replace "GNOME" with "pool" in the origin URL
     ORIGIN_URL=$(git remote get-url origin 2>/dev/null)
     POOL_URL=$(echo "$ORIGIN_URL" | sed "s/\/GNOME\//\/pool\//")

@@ -112,7 +112,7 @@ Signals approval for a PR to be merged into staging.
 
 ## Workflow Overview
 
-1. **Submit Packages**: Use other scripts (like `gnome-promote.sh`) to submit individual packages, creating multiple open PRs.
+1. **Submit Packages**: Use Geckopit (GUI / `geckopit-cli --forward`) or legacy scripts (like `gnome-promote.sh`) to submit individual packages, creating multiple open PRs.
 2. **Group Related Changes**: Use `pr_manage.py select` to pick one PR as the "anchor" and pull other related package PRs into it. This keeps the PR list clean and ensures they are tested together.
 3. **Refine Group**: Use `unselect`, `combine`, or `disintegrate` if the grouping needs to change.
 4. **Approve**: Once the group is ready and verified, use `pr_manage.py accept` to trigger the final merge.

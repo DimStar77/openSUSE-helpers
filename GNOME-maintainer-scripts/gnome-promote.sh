@@ -1,4 +1,10 @@
 #!/bin/bash
+
+# Defer to geckopit-cli if available in PATH
+if command -v geckopit-cli >/dev/null 2>&1; then
+    [ -d "GNOME:Next" ] && cd "GNOME:Next"
+    exec geckopit-cli --forward "$@"
+fi
 # gnome-promote.sh
 
 FACTORY_DIR="GNOME"
@@ -23,17 +29,17 @@ echo "-------------------------------------------------------------------"
 PROMOTABLE=$(git submodule foreach --quiet "
     NEXT_HASH=\$(git rev-parse HEAD 2>/dev/null)
     FACTORY_HASH=\$(git -C \"$FACTORY_PATH\" ls-tree factory \"\$sm_path\" | awk '{print \$3}')
-    
+
     if [ -n \"\$FACTORY_HASH\" ] && [ \"\$NEXT_HASH\" != \"\$FACTORY_HASH\" ]; then
         AHEAD=\$(git rev-list --count \"\$FACTORY_HASH..\$NEXT_HASH\" 2>/dev/null || echo 0)
         BEHIND=\$(git rev-list --count \"\$NEXT_HASH..\$FACTORY_HASH\" 2>/dev/null || echo 0)
-        
+
         # Only promote if we are strictly ahead
         if [ \"\$AHEAD\" -gt 0 ] && [ \"\$BEHIND\" -eq 0 ]; then
              RID=\$(git remote get-url origin 2>/dev/null | sed -E 's/.*[:\/]([^\/]+\/[^\/]+)(\.git)?$/\1/')
              # Double-check for existing PRs
              PR_CHECK=\$(git obs pr list --state open \"\$RID\" 2>/dev/null | grep 'ID  ')
-             
+
              if [ -z \"\$PR_CHECK\" ]; then
                  echo \"\$sm_path|\$AHEAD|\$FACTORY_HASH\"
              fi
@@ -48,16 +54,16 @@ fi
 
 for entry in $PROMOTABLE; do
     IFS='|' read -r sm_path count f_hash <<< "$entry"
-    
+
     echo ""
     echo "📦 Submodule: $sm_path ($count new commits)"
     echo "-------------------------------------------------------------------"
     # --no-pager prevents the script from hanging on a 'less' screen
     git --no-pager -C "$sm_path" log --oneline --reverse --color "$f_hash..HEAD"
     echo "-------------------------------------------------------------------"
-    
+
     read -p "Create PR for $sm_path to Factory? [y/N/q]: " confirm
-    
+
     if [[ "$confirm" =~ ^[Qq]$ ]]; then
         exit 0
     elif [[ "$confirm" =~ ^[Yy]$ ]]; then
