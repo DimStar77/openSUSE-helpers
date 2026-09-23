@@ -93,9 +93,11 @@ def render_single_package_dashboard(data):
     elif next_behind > 0:
         fwd_str = f"{sb.YELLOW}⚠️ Behind factory by {next_behind} commits (Catch-up merge needed){sb.RESET}"
     elif next_ahead > 0:
-        fwd_str = f"{sb.GREEN}🔀 Ahead of factory by {next_ahead} commits (Ready to forward){sb.RESET}"
+        fwd_str = f"{sb.GREEN}🔀 Ahead of factory by {next_ahead} commits (Ready for PR){sb.RESET}"
+    elif ahead > 0:
+        fwd_str = f"{sb.GREEN}✅ In Sync on remote{sb.RESET} {sb.CYAN}(local branch carries {ahead} unpushed commit{'s' if ahead > 1 else ''}){sb.RESET}"
     else:
-        fwd_str = f"{sb.GREEN}✅ In Sync (no unforwarded next commits){sb.RESET}"
+        fwd_str = f"{sb.GREEN}✅ In Sync (no unforwarded commits){sb.RESET}"
     print(f"  Branch Sync:   {fwd_str}")
 
     if pr.get('has_pr', False):
@@ -130,17 +132,20 @@ def render_single_package_dashboard(data):
     actions = []
     if behind > 0:
         actions.append(f"📥 Pull remote commits: {sb.BOLD}git pull --ff-only{sb.RESET}")
+    if ahead > 0:
+        actions.append(f"📤 Push local commits to remote: {sb.BOLD}git push origin {branch}{sb.RESET}")
+    if dirty:
+        actions.append(f"💾 Commit package changes: {sb.BOLD}geckopit-cli --commit{sb.RESET}")
     if pool_behind > 0:
         actions.append(f"📥 Pull upstream changes from Pool: {sb.BOLD}git fetch https://src.opensuse.org/pool/{repo}.git factory && git merge FETCH_HEAD{sb.RESET}")
     if next_behind > 0:
         actions.append(f"🔀 Catch-up merge from factory: {sb.BOLD}git merge origin/factory{sb.RESET}")
-    if next_ahead > 0 and not pr.get('has_pr'):
+    # Only recommend PR if commits are actually on remote (ahead == 0) and not in active PR
+    if ahead == 0 and next_ahead > 0 and not pr.get('has_pr'):
         actions.append(f"📤 Create Gitea Pull Request from {branch} to factory")
     if ver.get('needs_update'):
         target_v = u_latest if branch == 'next' and u_latest != '—' else u_stable
         actions.append(f"⚙️  Run package upgrade: {sb.BOLD}geckopit-cli --upgrade {target_v}{sb.RESET}")
-    if dirty or ahead > 0:
-        actions.append(f"💾 Commit package changes: {sb.BOLD}geckopit-cli --commit{sb.RESET}")
 
     print(f"── {sb.BOLD}💡 Recommended Actions{sb.RESET} {'─'*46}")
     if actions:

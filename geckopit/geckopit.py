@@ -2855,6 +2855,18 @@ class SyncWindow(Adw.ApplicationWindow):
         ver = pkg_data.get("version") or {}
         pr = pkg_data.get("pr") or {}
 
+        # Resolve actual local on-disk versions for detail display
+        stable_repo_p = self.get_mapped_worktree_path(package_name, "factory")
+        unstable_repo_p = self.get_mapped_worktree_path(package_name, "next") if self.unstable_b else None
+
+        local_stable_ver = sb.get_local_package_version(stable_repo_p)
+        local_unstable_ver = sb.get_local_package_version(unstable_repo_p) if unstable_repo_p else None
+
+        if local_stable_ver:
+            ver["factory_ver"] = local_stable_ver
+        if local_unstable_ver:
+            ver["next_ver"] = local_unstable_ver
+
         # -------------------------------------------------------------
         # 1. POPULATE STABLE CARD
         # -------------------------------------------------------------

@@ -855,7 +855,9 @@ def check_worktree_status(repo_path, expected_branch=None):
                     elif p.startswith('-'):
                         behind = int(p[1:])
             elif line.startswith('? '):
-                untracked = True
+                entry_name = line[2:].strip()
+                if not entry_name.endswith("/") and not os.path.isdir(os.path.join(repo_path, entry_name)):
+                    untracked = True
             elif line.startswith('1 ') or line.startswith('2 ') or line.startswith('u '):
                 dirty = True
 
@@ -1058,10 +1060,41 @@ def load_geckopit_profile_config():
     return config
 
 
+def get_local_package_version(repo_path):
+    """
+    Extracts the current version from the local on-disk package working tree.
+    Checks *.obsinfo first (most accurate for SCM packages), then *.spec.
+    """
+    if not repo_path or not os.path.isdir(repo_path):
+        return None
+    try:
+        for f in os.listdir(repo_path):
+            if f.endswith(".obsinfo"):
+                with open(os.path.join(repo_path, f), "r", encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        if line.strip().startswith("version:"):
+                            val = line.strip().split(":", 1)[1].strip()
+                            if val:
+                                return clean_version(val)
+    except OSError:
+        pass
+    try:
+        for f in os.listdir(repo_path):
+            if f.endswith(".spec"):
+                with open(os.path.join(repo_path, f), "r", encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        m = re.match(r"^Version:\s*(\S+)", line, re.IGNORECASE)
+                        if m:
+                            return clean_version(m.group(1))
+    except OSError:
+        pass
+    return None
+
+
 def check_single_package_full(pkg_dir=".", stable_branch=None, unstable_branch=None):
     """
     Gathers all synchronization, version, PR, and local worktree data for a single package directory.
-    Queries backend services concurrently.
+    Queries backend services concurrently and resolves local on-disk package state.
     """
     pkg_dir = os.path.abspath(pkg_dir)
     parent_dir = os.path.dirname(pkg_dir)
@@ -1084,6 +1117,32 @@ def check_single_package_full(pkg_dir=".", stable_branch=None, unstable_branch=N
         ver = f_ver.result()[1]
         pr = f_pr.result()[1]
 
+    # Resolve local on-disk version and re-evaluate needs_update against upstream
+    local_ver = get_local_package_version(pkg_dir)
+    if local_ver and active_branch == unst_branch:
+        ver["next_ver"] = local_ver
+        u_latest = ver.get("upstream_latest", "—")
+        if u_latest and u_latest != "—":
+            ver["needs_update"] = is_version_newer(u_latest, local_ver, repo_name)
+    elif local_ver and active_branch == st_branch:
+        ver["factory_ver"] = local_ver
+        u_stable = ver.get("upstream_stable", "N/A")
+        if u_stable and u_stable != "N/A":
+            ver["needs_update"] = is_version_newer(u_stable, local_ver, repo_name)
+
+    # Check local commits ahead of factory if checked out on unstable branch
+    if active_branch == unst_branch:
+        try:
+            rl = run_tracked(
+                ["git", "-C", pkg_dir, "rev-list", "--left-right", "--count", f"origin/{st_branch}...HEAD"],
+                capture_output=True, text=True, check=True
+            ).stdout.strip().split()
+            if len(rl) == 2:
+                sync["local_next_behind"] = int(rl[0])
+                sync["local_next_ahead"] = int(rl[1])
+        except Exception:
+            pass
+
     return {
         "repo_name": repo_name,
         "pkg_dir": pkg_dir,
@@ -1093,5 +1152,6 @@ def check_single_package_full(pkg_dir=".", stable_branch=None, unstable_branch=N
         "worktree": wt,
         "sync": sync,
         "version": ver,
-        "pr": pr
+        "pr": pr,
+        "local_version": local_ver
     }

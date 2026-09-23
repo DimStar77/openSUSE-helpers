@@ -155,6 +155,20 @@ class TestWorktreeTracking(unittest.TestCase):
             os.remove(os.path.join(tmpdir, 'mypkg.spec'))
             self.assertEqual(sb.get_package_name_from_dir(tmpdir), os.path.basename(tmpdir))
 
+    def test_get_local_package_version(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # None when empty
+            self.assertIsNone(sb.get_local_package_version(tmpdir))
+
+            # From .spec
+            with open(os.path.join(tmpdir, 'pkg.spec'), 'w') as f: f.write('Version: 1.19.0\n')
+            self.assertEqual(sb.get_local_package_version(tmpdir), '1.19.0')
+
+            # .obsinfo takes precedence
+            with open(os.path.join(tmpdir, 'pkg.obsinfo'), 'w') as f: f.write('version: 1.19.1\n')
+            self.assertEqual(sb.get_local_package_version(tmpdir), '1.19.1')
+
     def test_load_geckopit_profile_config(self):
         conf = sb.load_geckopit_profile_config()
         self.assertIn('stable_branch', conf)
