@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
 """
 openSUSE Workspace Downstream Checker CLI
-CLI Frontend relying on sync_backend.py for core logic.
-Supports both Project-wide multi-package batch scans and single-package focused dashboards.
+CLI Frontend relying on sync_backend.py, upgrade helpers, and commit_helper.
+Supports both Project meta-checkouts and single-package directories with
+sync checking, upstream upgrades, and defensive commits.
 """
 
 import os
 import sys
 import concurrent.futures
 
-# Make sure we can import sync_backend from helpers/ by resolving symlinks
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), 'helpers'))
+# Make sure we can import helpers by resolving symlinks
+HELPERS_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'helpers')
+if HELPERS_DIR not in sys.path:
+    sys.path.insert(0, HELPERS_DIR)
+
 import sync_backend as sb
+import commit_helper as ch
+from upgrade import get_upgrade_helper, list_upgrade_helpers
+
 
 def render_single_package_dashboard(data):
     repo = data['repo_name']
@@ -131,7 +138,9 @@ def render_single_package_dashboard(data):
         actions.append(f"📤 Create Gitea Pull Request from {branch} to factory")
     if ver.get('needs_update'):
         target_v = u_latest if branch == 'next' and u_latest != '—' else u_stable
-        actions.append(f"⚙️  Run upgrade helper: {sb.BOLD}geckopit-upgrade {target_v}{sb.RESET}")
+        actions.append(f"⚙️  Run package upgrade: {sb.BOLD}geckopit-cli --upgrade {target_v}{sb.RESET}")
+    if dirty or ahead > 0:
+        actions.append(f"💾 Commit package changes: {sb.BOLD}geckopit-cli --commit{sb.RESET}")
 
     print(f"── {sb.BOLD}💡 Recommended Actions{sb.RESET} {'─'*46}")
     if actions:
@@ -218,6 +227,62 @@ def run_single_package_forward(pkg_dir=".", show_pr=False, only_no_pr=False):
     print(f"{sb.BOLD}{'='*60}{sb.RESET}")
 
 
+def run_package_upgrade(pkg_dir=".", revision=None, dry_run=False):
+    pkg_dir = os.path.abspath(pkg_dir)
+    helper = get_upgrade_helper(pkg_dir)
+    if not helper:
+        print(f"\033[1;31m[Error]\033[0m No compatible upgrade helper detected for directory: {pkg_dir}", file=sys.stderr)
+        print("Available engines:")
+        for h in list_upgrade_helpers():
+            print(f"  • {h.name} - {h.description}")
+        return 1
+
+    pkg_name = sb.get_package_name_from_dir(pkg_dir)
+    rev_display = revision if revision else "@PARENT_TAG@ (default)"
+    print(f"\033[1;34m=>\033[0m \033[1mGeckopit Package Upgrade\033[0m: \033[1;37m{pkg_name}\033[0m")
+    print(f"\033[1;34m=>\033[0m Engine: \033[1;32m{helper.name}\033[0m ({helper.description})")
+    print(f"\033[1;34m=>\033[0m Target Revision: \033[1;33m{rev_display}\033[0m")
+    if dry_run:
+        print("\033[1;33m=> Mode: DRY-RUN (no files will be modified)\033[0m")
+
+    result = helper.execute_upgrade(
+        target_revision=revision,
+        dry_run=dry_run,
+        on_log=lambda m: print(f"   \033[0;37m{m}\033[0m")
+    )
+
+    print()
+    if result.success:
+        print(f"\033[1;32m=> Upgrade Succeeded:\033[0m {result.message}")
+        if result.diff_files:
+            print("   \033[1mReview files generated:\033[0m")
+            for df in result.diff_files.keys():
+                print(f"     • {df}")
+        return 0
+    else:
+        print(f"\033[1;31m=> Upgrade Failed:\033[0m {result.message}", file=sys.stderr)
+        return 1
+
+
+def run_package_commit(pkg_dir=".", interactive=True):
+    pkg_dir = os.path.abspath(pkg_dir)
+    pkg_name = sb.get_package_name_from_dir(pkg_dir)
+    print(f"\033[1;34m=>\033[0m \033[1mGeckopit Package Commit\033[0m: \033[1;37m{pkg_name}\033[0m")
+
+    ok, msg = ch.execute_package_commit(
+        package_dir=pkg_dir,
+        interactive=interactive,
+        on_log=lambda m: print(f"   \033[0;37m{m}\033[0m")
+    )
+
+    if ok:
+        print(f"\033[1;32m=> {msg}\033[0m")
+        return 0
+    else:
+        print(f"\033[1;31m=> Commit Error:\033[0m {msg}", file=sys.stderr)
+        return 1
+
+
 def run_sync_check(repos):
     total = len(repos)
     print(f"Checking {total} packages in parallel (50 threads)...", file=sys.stderr)
@@ -242,7 +307,6 @@ def run_sync_check(repos):
         if data["status"] != "success":
             continue
         if data["needs_action"]:
-            # Stage 1 format
             if data["pool_behind"] > 0 and data["pool_ahead"] > 0:
                 stage1_str = f"{sb.RED}❌ Diverged (Behind {data['pool_behind']}, Ahead {data['pool_ahead']}){sb.RESET}"
             elif data["pool_behind"] > 0:
@@ -254,7 +318,6 @@ def run_sync_check(repos):
             else:
                 stage1_str = f"{sb.GREEN}✅ In Sync{sb.RESET}"
 
-            # Stage 2 format
             if data["next_status"] == "No next branch":
                 stage2_str = "—"
             elif data["next_behind"] > 0 and data["next_ahead"] > 0:
@@ -266,7 +329,6 @@ def run_sync_check(repos):
             else:
                 stage2_str = f"{sb.GREEN}✅ In Sync{sb.RESET}"
 
-            # Recommended Actions
             actions = []
             if data["pool_behind"] > 0:
                 actions.append("📥 Pull Pool")
@@ -546,23 +608,25 @@ def run_forward_check(repos, show_pr=False, only_no_pr=False):
 
 
 def print_help():
-    print(f"{sb.BOLD}openSUSE Workspace Downstream Checker{sb.RESET}")
-    print("\nAn optimized parallel dashboard for openSUSE package maintainers.")
+    print(f"{sb.BOLD}openSUSE Workspace Downstream Checker & Packaging Tool{sb.RESET}")
+    print("\nAn optimized parallel dashboard and packaging tool for openSUSE maintainers.")
     print("Supports both Project meta-checkouts and single-package directories.")
     print("\nUsage:")
     print("  geckopit-cli [package] [options]")
-    print("\nModes (choose exactly one):")
+    print("\nModes:")
     print(f"  {sb.BOLD}(default){sb.RESET}          Checks sync status (or displays comprehensive single-package dashboard).")
-    print(f"  {sb.BOLD}--todo{sb.RESET}             Alias for the default sync checking mode.")
-    print(f"  {sb.BOLD}--version, -v [branch]{sb.RESET}")
-    print("                     Compares package versions against release-monitoring.org.")
-    print("                     Optional branch: 'factory' or 'next' to filter output.")
-    print(f"  {sb.BOLD}--forward, -f{sb.RESET}      Identifies forwardable next branches.")
+    print(f"  {sb.BOLD}-u, --upgrade [REV]{sb.RESET}")
+    print("                     Upgrades the package to specified revision (default: @PARENT_TAG@).")
+    print(f"  {sb.BOLD}-c, --commit{sb.RESET}       Stages packaging files, cleans whitespaces, and commits via $EDITOR.")
+    print(f"  {sb.BOLD}-v, --version [b]{sb.RESET}  Compares package versions against release-monitoring.org.")
+    print(f"  {sb.BOLD}-f, --forward{sb.RESET}      Identifies forwardable next branches.")
+    print(f"  {sb.BOLD}--todo{sb.RESET}             Alias for default sync checking mode.")
     print("\nOptions:")
+    print(f"  {sb.BOLD}--no-edit{sb.RESET}          Used with --commit to commit without opening an interactive editor.")
+    print(f"  {sb.BOLD}-n, --dry-run{sb.RESET}      Used with --upgrade to simulate steps without modifying files.")
     print(f"  {sb.BOLD}-p, --pr{sb.RESET}           Include Gitea pull request pending status in forwarding mode.")
     print(f"  {sb.BOLD}--no-pr{sb.RESET}            In forwarding mode, only show packages without a pending pull request.")
-    print(f"  {sb.BOLD}-b, --branch <branch>{sb.RESET}")
-    print("                     Limit version checks to a specific branch ('factory' or 'next').")
+    print(f"  {sb.BOLD}-b, --branch <b>{sb.RESET}   Limit version checks to a specific branch ('factory' or 'next').")
     print(f"  {sb.BOLD}-h, --help{sb.RESET}         Show this help message and exit.")
 
 
@@ -584,6 +648,38 @@ def main():
         target_pkg_dir = "."
     elif target_arg and sb.is_package_dir(target_arg):
         target_pkg_dir = target_arg
+
+    # Parse commit options
+    show_commit = "--commit" in sys.argv or "-c" in sys.argv
+    no_edit = "--no-edit" in sys.argv
+
+    # Parse upgrade options
+    show_upgrade = False
+    upgrade_rev = None
+    for idx, arg in enumerate(sys.argv):
+        if arg in ("--upgrade", "-u"):
+            show_upgrade = True
+            if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("-") and sys.argv[idx + 1] != target_arg:
+                upgrade_rev = sys.argv[idx + 1]
+        elif arg.startswith("--upgrade="):
+            show_upgrade = True
+            upgrade_rev = arg.split("=", 1)[1]
+
+    dry_run = "--dry-run" in sys.argv or "-n" in sys.argv
+
+    # Execute commit mode
+    if show_commit:
+        if not target_pkg_dir:
+            print(f"{sb.RED}[Error]{sb.RESET} --commit must be run inside a package directory (or target a package).", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(run_package_commit(target_pkg_dir, interactive=not no_edit))
+
+    # Execute upgrade mode
+    if show_upgrade:
+        if not target_pkg_dir:
+            print(f"{sb.RED}[Error]{sb.RESET} --upgrade must be run inside a package directory (or target a package).", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(run_package_upgrade(target_pkg_dir, revision=upgrade_rev, dry_run=dry_run))
 
     show_versions = False
     version_branch = None
