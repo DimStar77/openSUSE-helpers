@@ -2028,12 +2028,6 @@ class SyncWindow(Adw.ApplicationWindow):
         sb_title.set_markup("<span weight='bold' size='medium'>Packages</span>")
         sidebar_header.append(sb_title)
 
-        # Legend Popover Button
-        self.legend_btn = Gtk.Button.new_from_icon_name("help-about-symbolic")
-        self.legend_btn.set_tooltip_text("Show Sync Workflow Legend")
-        self.legend_btn.connect("clicked", self.on_legend_btn_clicked)
-        sidebar_header.append(self.legend_btn)
-
         # Refresh All Button
         refresh_btn = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
         refresh_btn.set_tooltip_text("Refresh All Package Scans")
@@ -2856,50 +2850,6 @@ class SyncWindow(Adw.ApplicationWindow):
             return self.navigate_package_list(-1)
 
         return False
-
-    def on_legend_btn_clicked(self, btn):
-        """Pops up a modern, elegant, and interactive workflow legend panel on demand."""
-        popover = Gtk.Popover()
-        popover.set_parent(btn)
-
-        legend_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        legend_box.set_margin_start(16)
-        legend_box.set_margin_end(16)
-        legend_box.set_margin_top(16)
-        legend_box.set_margin_bottom(16)
-        legend_box.set_size_request(450, -1)
-
-        legend_title = Gtk.Label(halign=Gtk.Align.START)
-        legend_title.set_markup(f"<span weight='bold' size='medium'>ℹ️ Geckopit SCM Workflow Legend ({self.config.active_workspace})</span>")
-        legend_box.append(legend_title)
-
-        stable_b = self.stable_b
-        unstable_b = self.unstable_b or "unstable"
-
-        # Build dynamic text based on whether unstable branch exists (Dual vs Single pipeline)
-        if self.unstable_b:
-            pipeline_text = (
-                f"<span weight='bold'>Unstable Pipeline Sync ({unstable_b} ➔ {stable_b}):</span> Monitors alignment between unstable development and stable branch.\n"
-                f"   • <span foreground='orange' weight='bold'>Behind {stable_b}</span>: Unstable branch is missing stable commits—merge {stable_b} ➔ {unstable_b}.\n"
-                f"   • <span foreground='green' weight='bold'>Ahead of {stable_b}</span>: Unstable branch carries new commits (ready for PR).\n\n"
-            )
-        else:
-            pipeline_text = ""
-
-        legend_desc = Gtk.Label(halign=Gtk.Align.START)
-        legend_desc.set_justify(Gtk.Justification.LEFT)
-        legend_desc.set_wrap(True)
-        legend_desc.set_markup(
-            f"<span weight='bold'>Gitea Pool Sync (local ➔ pool):</span> Monitors alignment between local SCM checkouts and the central package pool.\n"
-            f"   • <span foreground='orange' weight='bold'>Behind Pool</span>: Upstream changes exist in pool—pull them to catch up.\n"
-            f"   • <span foreground='cyan' weight='bold'>Ahead of Pool</span>: Local {stable_b} branch carries commits not yet submitted to the central pool.\n\n"
-            f"{pipeline_text}"
-            "<span foreground='gray' size='small'>Double-click any sidebar package row to review its code differences.</span>"
-        )
-        legend_box.append(legend_desc)
-
-        popover.set_child(legend_box)
-        popover.popup()
 
     def on_package_row_selected(self, list_box, row):
         if not row:
