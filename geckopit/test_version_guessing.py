@@ -387,10 +387,11 @@ class TestSyncWindow(unittest.TestCase):
         mock_win.sidebar_search = mock.Mock()
         mock_win.sidebar_search.get_text.return_value = "gcr"
 
-        # Return / Enter hands off to package list
+        # Return / Enter activates search and selects first match
+        mock_win.on_search_activate = mock.Mock(return_value=True)
         res = SyncWindow.on_search_key_pressed(mock_win, None, Gdk.KEY_Return, 0, 0)
         self.assertTrue(res)
-        mock_win.navigate_package_list.assert_called_with(1)
+        mock_win.on_search_activate.assert_called_once()
 
         # Down arrow hands off to package list
         mock_win.navigate_package_list.reset_mock()

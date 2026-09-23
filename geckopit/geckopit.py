@@ -1948,6 +1948,36 @@ class SyncWindow(Adw.ApplicationWindow):
         self.master_list_box.invalidate_filter()
         return False # Run once and terminate
 
+    def on_filter_toggled(self, btn):
+        self.master_list_box.invalidate_filter()
+        GLib.idle_add(self.scroll_selected_row_to_view)
+
+    def scroll_selected_row_to_view(self):
+        """Ensures the currently selected package row remains visible on screen after toggling track filters."""
+        # Defensive Guard: Never steal focus or scroll if user is editing or typing in search/terminal
+        focused = self.get_focus()
+        if focused and isinstance(focused, (Gtk.Editable, Gtk.Text, Gtk.TextView, Gtk.SearchEntry)):
+            return False
+
+        selected_row = self.master_list_box.get_selected_row()
+        visible_rows = self.get_visible_package_rows()
+
+        if not visible_rows:
+            return False
+
+        if selected_row and selected_row in visible_rows:
+            # The selected package is in the filtered list: focus it to bring it into view
+            selected_row.grab_focus()
+        else:
+            # The previously selected package is not in the new filter:
+            # Select the first visible package so the view stays anchored
+            first_row = visible_rows[0]
+            self.master_list_box.select_row(first_row)
+            first_row.grab_focus()
+            self.load_package_detail(first_row.package_name)
+
+        return False
+
     # --- THE SIDEBAR & DETAILS BUILDERS ---
 
     def build_sidebar(self):
@@ -2001,6 +2031,7 @@ class SyncWindow(Adw.ApplicationWindow):
         self.sidebar_search.set_placeholder_text("Search packages...")
         self.sidebar_search.set_tooltip_text("Search packages... (Press / or Ctrl+F to focus, Enter/Down to select)")
         self.sidebar_search.connect("search-changed", lambda entry: self.master_list_box.invalidate_filter())
+        self.sidebar_search.connect("activate", self.on_search_activate)
 
         search_key_ctrl = Gtk.EventControllerKey.new()
         search_key_ctrl.connect("key-pressed", self.on_search_key_pressed)
@@ -2023,7 +2054,7 @@ class SyncWindow(Adw.ApplicationWindow):
             "updates, unforwarded commits, or are out of sync with Gitea Pool).\n\n"
             "Toggle OFF to view all matching repositories on your active tracks regardless of action status."
         )
-        self.filter_needs_action.connect("toggled", lambda btn: self.master_list_box.invalidate_filter())
+        self.filter_needs_action.connect("toggled", self.on_filter_toggled)
         filters_box.append(self.filter_needs_action)
 
         # 2. Pool Sync toggle button
@@ -2038,7 +2069,7 @@ class SyncWindow(Adw.ApplicationWindow):
             "• Ahead of Pool: Local Factory checkouts have commits waiting to be pushed.\n"
             "• Not in Pool: Repositories not yet registered in Gitea's pool."
         )
-        self.filter_pool_sync.connect("toggled", lambda btn: self.master_list_box.invalidate_filter())
+        self.filter_pool_sync.connect("toggled", self.on_filter_toggled)
         filters_box.append(self.filter_pool_sync)
 
         # 3. Stable Tracking toggle button
@@ -2052,7 +2083,7 @@ class SyncWindow(Adw.ApplicationWindow):
             "• Stable Upstream: Verifies if Factory aligns with the latest stable releases\n"
             "  on release-monitoring.org (e.g., getting 45.1 to 45.2)."
         )
-        self.filter_stable.connect("toggled", lambda btn: self.master_list_box.invalidate_filter())
+        self.filter_stable.connect("toggled", self.on_filter_toggled)
         filters_box.append(self.filter_stable)
 
         # 4. Unstable Tracking toggle button
@@ -2066,7 +2097,7 @@ class SyncWindow(Adw.ApplicationWindow):
             "• Next Branch: Verifies if your local unstable branch aligns with alpha, beta, and\n"
             "  release candidates (RC) upstream (e.g., tracking GNOME 46.beta)."
         )
-        self.filter_unstable.connect("toggled", lambda btn: self.master_list_box.invalidate_filter())
+        self.filter_unstable.connect("toggled", self.on_filter_toggled)
         filters_box.append(self.filter_unstable)
 
         # 5. Forwarding toggle button
@@ -2080,7 +2111,7 @@ class SyncWindow(Adw.ApplicationWindow):
             "• Next Ahead of Factory: Shows checkouts with unsubmitted developmental commits\n"
             "  sitting on the 'next' branch that need to be merged/cherry-picked to stable 'factory'."
         )
-        self.filter_forwarding.connect("toggled", lambda btn: self.master_list_box.invalidate_filter())
+        self.filter_forwarding.connect("toggled", self.on_filter_toggled)
         filters_box.append(self.filter_forwarding)
 
         control_bar.append(filters_box)
@@ -2093,6 +2124,7 @@ class SyncWindow(Adw.ApplicationWindow):
         scroll = Gtk.ScrolledWindow()
         scroll.set_hexpand(True)
         scroll.set_vexpand(True)
+        self.sidebar_scrolled_window = scroll
 
         self.master_list_box = Gtk.ListBox()
         self.master_list_box.set_filter_func(self.sidebar_filter_func)
@@ -2711,8 +2743,22 @@ class SyncWindow(Adw.ApplicationWindow):
 
         return True
 
+    def on_search_activate(self, entry=None):
+        """When pressing Enter in search entry, select, focus, and load the first matching package row."""
+        visible_rows = self.get_visible_package_rows()
+        if not visible_rows:
+            return True
+
+        target_row = visible_rows[0]
+        self.master_list_box.select_row(target_row)
+        target_row.grab_focus()
+        self.load_package_detail(target_row.package_name)
+        return True
+
     def on_search_key_pressed(self, controller, keyval, keycode, state):
-        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter, Gdk.KEY_Down):
+        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+            return self.on_search_activate()
+        elif keyval in (Gdk.KEY_Down, Gdk.KEY_KP_Down):
             return self.navigate_package_list(1)
         elif keyval == Gdk.KEY_Escape:
             if self.sidebar_search.get_text():
