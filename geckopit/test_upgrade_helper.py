@@ -132,6 +132,14 @@ class TestUpgradeHelperArchitecture(unittest.TestCase):
             self.assertEqual(removed, ["pkg.obscpio"])
             self.assertFalse(os.path.exists(obscpio))
 
+    def test_clean_trailing_issue_ref(self):
+        from upgrade.changelog import clean_trailing_issue_ref
+        self.assertEqual(clean_trailing_issue_ref('Fix bug (#6705, #6678, #6677)'), 'Fix bug')
+        self.assertEqual(clean_trailing_issue_ref('Fix bug (#6710) (#6715)'), 'Fix bug')
+        self.assertEqual(clean_trailing_issue_ref('Fix bug (bgo#123456)'), 'Fix bug')
+        # Preserve CVE identifiers
+        self.assertEqual(clean_trailing_issue_ref('bubblewrap 0.12.0 (CVE-2026-87766)'), 'bubblewrap 0.12.0 (CVE-2026-87766)')
+
     def test_build_changelog_from_items(self):
         items = [
             (1, "Add support for GNOME 47"),

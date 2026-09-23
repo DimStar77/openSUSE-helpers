@@ -43,8 +43,14 @@ def wrap_bullet(text: str, level: int = 1, width: int = CHANGELOG_WRAP_WIDTH) ->
 
 
 def clean_trailing_issue_ref(text: str) -> str:
-    """Strips trailing issue tracker numbers like (#6818) or (glgo#123)."""
-    return re.sub(r'\s*\([#!]\d+\)$', '', text).strip()
+    """
+    Strips parenthesized issue tracker references like (#6705, #6678) or (#6710) (#6715),
+    while preserving CVE identifiers like (CVE-2026-87766).
+    """
+    pattern = r'\s*\((?:(?:[#!]|gh#|glgo#|bgo#)?\s*\d+[\s,]*)+\)'
+    cleaned = re.sub(pattern, '', text)
+    cleaned = re.sub(pattern, '', cleaned)
+    return cleaned.strip()
 
 
 def build_changelog_from_items(
@@ -117,11 +123,6 @@ def format_changelog_entry(
             in_translations = True
             continue
 
-        # Standalone bullet mentioning translations (e.g. '- Various translation updates' or '* Updated translations')
-        if re_bullet.match(line) and (re.search(r'translation\s+updates?', s, re.IGNORECASE) or re.search(r'updated?\s+.*translations?', s, re.IGNORECASE)):
-            has_translations = True
-            continue
-
         if in_translations:
             if (s.endswith(":") and not re_bullet.match(line)) or re_ver_header.match(s) or re_release_header.match(s):
                 in_translations = False
@@ -188,6 +189,11 @@ def format_changelog_entry(
                     break
                 bullet_text += " " + next_s
                 i += 1
+
+            # Check if this entire bullet was a translation update (including its multi-line continuations)
+            if re.match(r'^(translation\s+updates?|translations?):?', bullet_text, re.IGNORECASE) or re.search(r'updated?\s+.*translations?', bullet_text, re.IGNORECASE):
+                has_translations = True
+                continue
 
             bullet_text = clean_trailing_issue_ref(bullet_text)
 
