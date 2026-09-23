@@ -1178,6 +1178,7 @@ class SyncWindow(Adw.ApplicationWindow):
         self.horizontal_paned.set_start_child(self.sidebar_box)
         self.horizontal_paned.set_end_child(self.detail_pane)
         self.horizontal_paned.set_shrink_start_child(False)
+        self.horizontal_paned.set_shrink_end_child(True)
         self.horizontal_paned.set_resize_start_child(False)
         self.horizontal_paned.set_resize_end_child(True)
 
@@ -2534,7 +2535,13 @@ class SyncWindow(Adw.ApplicationWindow):
         self.diff_panel = self.build_detail_diff_panel()
         detail_box.append(self.diff_panel)
 
-        self.detail_stack.add_named(detail_box, "detail")
+        detail_scroll = Gtk.ScrolledWindow()
+        detail_scroll.set_hexpand(True)
+        detail_scroll.set_vexpand(True)
+        detail_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        detail_scroll.set_child(detail_box)
+
+        self.detail_stack.add_named(detail_scroll, "detail")
         return self.detail_stack
 
     def on_diff_selector_changed(self, dropdown, pspec):
