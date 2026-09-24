@@ -193,6 +193,10 @@ def execute_package_commit(
     log = on_log or (lambda msg: None)
     package_dir = os.path.abspath(package_dir)
 
+    # Pre-check: Detect osc checkout
+    if os.path.isdir(os.path.join(package_dir, ".osc")) and not os.path.exists(os.path.join(package_dir, ".git")):
+        return False, "Package is managed by osc, not git. Use 'osc ci' to commit."
+
     # 1. Whitespace sanitization on modified files
     sanitize_trailing_whitespaces(package_dir, on_log=log)
 

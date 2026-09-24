@@ -316,7 +316,7 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
                 if on_log:
                     on_log(f"Detected merged patch: {patch_name} (carried upstream)")
 
-                # Delete patch file (from git if tracked, otherwise unlink)
+                # Delete patch file (from git or osc if tracked, otherwise unlink)
                 try:
                     subprocess.run(
                         ["git", "-C", self.package_dir, "rm", "-f", patch_name],
@@ -325,6 +325,16 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
                     )
                 except Exception:
                     pass
+                if os.path.isdir(os.path.join(self.package_dir, ".osc")):
+                    try:
+                        subprocess.run(
+                            ["osc", "rm", "-f", patch_name],
+                            cwd=self.package_dir,
+                            capture_output=True,
+                            check=False
+                        )
+                    except Exception:
+                        pass
                 if os.path.exists(patch_path):
                     try:
                         os.remove(patch_path)

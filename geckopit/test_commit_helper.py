@@ -115,5 +115,12 @@ Wed Sep 23 16:00:00 UTC 2026 - User <user@example.com>
             self.assertTrue(ok)
             self.assertIn("Update to version 2.0", msg)
 
+    def test_execute_package_commit_osc_rejection(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, ".osc"))
+            ok, msg = ch.execute_package_commit(tmpdir)
+            self.assertFalse(ok)
+            self.assertIn("managed by osc", msg)
+
 if __name__ == '__main__':
     unittest.main()

@@ -984,9 +984,11 @@ def pad_left(text, width):
 
 
 def is_package_dir(path="."):
-    """Checks if path is an individual openSUSE package directory (contains .git and spec/service/changes)."""
-    if not os.path.exists(os.path.join(path, ".git")):
-        return False
+    """
+    Checks if path is an individual openSUSE package directory
+    (contains packaging files such as .spec, _service, .changes, or .obsinfo).
+    Supports Git repositories, legacy OSC checkouts, and standalone package checkouts.
+    """
     try:
         entries = os.listdir(path)
         has_spec = any(f.endswith(".spec") for f in entries)

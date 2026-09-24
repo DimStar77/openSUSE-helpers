@@ -32,82 +32,91 @@ def render_single_package_dashboard(data):
     print(f"📦 {sb.BOLD}GECKOPIT PACKAGE DASHBOARD: {sb.CYAN}{repo}{sb.RESET}")
     print(f"{sb.BOLD}{'='*72}{sb.RESET}")
     print(f"  Directory:     {data['pkg_dir']}")
-    upstream_ref = wt.get('upstream') or f"origin/{branch}"
-    print(f"  Checked Out:   {sb.BOLD}{branch}{sb.RESET} (tracking {upstream_ref})")
+    is_osc = os.path.isdir(os.path.join(data['pkg_dir'], ".osc")) and not os.path.exists(os.path.join(data['pkg_dir'], ".git"))
+    if is_osc:
+        print(f"  VCS:           {sb.CYAN}OSC Checkout (.osc){sb.RESET}")
+    else:
+        upstream_ref = wt.get('upstream') or f"origin/{branch}"
+        print(f"  Checked Out:   {sb.BOLD}{branch}{sb.RESET} (tracking {upstream_ref})")
     project = ver.get('project', repo)
     print(f"  Upstream URL:  https://release-monitoring.org/project/{project}/")
     print()
 
     # Section 1: Local Worktree Status
     print(f"── {sb.BOLD}💻 Local Worktree Status{sb.RESET} {'─'*45}")
-    ahead = wt.get('ahead', 0)
-    behind = wt.get('behind', 0)
-    dirty = wt.get('dirty', False)
-    untracked = wt.get('untracked', False)
-
-    if behind > 0 and ahead > 0:
-        align_str = f"{sb.RED}❌ Diverged from {upstream_ref} (Behind {behind}, Ahead {ahead}){sb.RESET}"
-    elif behind > 0:
-        align_str = f"{sb.YELLOW}⚠️ Behind {upstream_ref} by {behind} commit{'s' if behind > 1 else ''} (Pull needed){sb.RESET}"
-    elif ahead > 0:
-        align_str = f"{sb.CYAN}📤 Ahead of {upstream_ref} by {ahead} commit{'s' if ahead > 1 else ''} (Unpushed){sb.RESET}"
+    if is_osc:
+        print(f"  Working Tree:  {sb.CYAN}OSC checkout (use 'osc status' for local changes){sb.RESET}")
+        print()
     else:
-        align_str = f"{sb.GREEN}✅ Up-to-date with {upstream_ref}{sb.RESET}"
-    print(f"  Alignment:     {align_str}")
+        ahead = wt.get('ahead', 0)
+        behind = wt.get('behind', 0)
+        dirty = wt.get('dirty', False)
+        untracked = wt.get('untracked', False)
 
-    if dirty and untracked:
-        tree_str = f"{sb.YELLOW}⚠️ Dirty (uncommitted modifications + untracked files){sb.RESET}"
-    elif dirty:
-        tree_str = f"{sb.YELLOW}⚠️ Dirty (uncommitted modifications){sb.RESET}"
-    elif untracked:
-        tree_str = f"{sb.YELLOW}⚠️ Untracked files present{sb.RESET}"
-    else:
-        tree_str = f"{sb.GREEN}✅ Clean working directory{sb.RESET}"
-    print(f"  Working Tree:  {tree_str}")
-    print()
+        if behind > 0 and ahead > 0:
+            align_str = f"{sb.RED}❌ Diverged from {upstream_ref} (Behind {behind}, Ahead {ahead}){sb.RESET}"
+        elif behind > 0:
+            align_str = f"{sb.YELLOW}⚠️ Behind {upstream_ref} by {behind} commit{'s' if behind > 1 else ''} (Pull needed){sb.RESET}"
+        elif ahead > 0:
+            align_str = f"{sb.CYAN}📤 Ahead of {upstream_ref} by {ahead} commit{'s' if ahead > 1 else ''} (Unpushed){sb.RESET}"
+        else:
+            align_str = f"{sb.GREEN}✅ Up-to-date with {upstream_ref}{sb.RESET}"
+        print(f"  Alignment:     {align_str}")
+
+        if dirty and untracked:
+            tree_str = f"{sb.YELLOW}⚠️ Dirty (uncommitted modifications + untracked files){sb.RESET}"
+        elif dirty:
+            tree_str = f"{sb.YELLOW}⚠️ Dirty (uncommitted modifications){sb.RESET}"
+        elif untracked:
+            tree_str = f"{sb.YELLOW}⚠️ Untracked files present{sb.RESET}"
+        else:
+            tree_str = f"{sb.GREEN}✅ Clean working directory{sb.RESET}"
+        print(f"  Working Tree:  {tree_str}")
+        print()
 
     # Section 2: Downstream SCM Sync (Gitea & Pool)
-    print(f"── {sb.BOLD}🔄 Downstream SCM Sync (Gitea & Pool){sb.RESET} {'─'*32}")
-    pool_behind = sync.get('pool_behind', 0)
-    pool_ahead = sync.get('pool_ahead', 0)
-    pool_status = sync.get('pool_status', 'unknown')
-    if pool_behind > 0 and pool_ahead > 0:
-        pool_str = f"{sb.RED}❌ Diverged (Behind {pool_behind}, Ahead {pool_ahead}){sb.RESET}"
-    elif pool_behind > 0:
-        pool_str = f"{sb.YELLOW}📥 Behind central pool by {pool_behind} commits (Pull needed){sb.RESET}"
-    elif pool_ahead > 0:
-        pool_str = f"{sb.CYAN}📤 Ahead of central pool by {pool_ahead} commits (Submit needed){sb.RESET}"
-    elif pool_status == 'Not in Pool':
-        pool_str = f"{sb.YELLOW}❓ Not in Pool{sb.RESET}"
-    else:
-        pool_str = f"{sb.GREEN}✅ In Sync with pool{sb.RESET}"
-    print(f"  Gitea Pool:    {pool_str}")
+    if not is_osc:
+        print(f"── {sb.BOLD}🔄 Downstream SCM Sync (Gitea & Pool){sb.RESET} {'─'*32}")
+        pool_behind = sync.get('pool_behind', 0)
+        pool_ahead = sync.get('pool_ahead', 0)
+        pool_status = sync.get('pool_status', 'unknown')
+        if pool_behind > 0 and pool_ahead > 0:
+            pool_str = f"{sb.RED}❌ Diverged (Behind {pool_behind}, Ahead {pool_ahead}){sb.RESET}"
+        elif pool_behind > 0:
+            pool_str = f"{sb.YELLOW}📥 Behind central pool by {pool_behind} commits (Pull needed){sb.RESET}"
+        elif pool_ahead > 0:
+            pool_str = f"{sb.CYAN}📤 Ahead of central pool by {pool_ahead} commits (Submit needed){sb.RESET}"
+        elif pool_status == 'Not in Pool':
+            pool_str = f"{sb.YELLOW}❓ Not in Pool{sb.RESET}"
+        else:
+            pool_str = f"{sb.GREEN}✅ In Sync with pool{sb.RESET}"
+        print(f"  Gitea Pool:    {pool_str}")
 
-    next_ahead = sync.get('next_ahead', 0)
-    next_behind = sync.get('next_behind', 0)
-    next_status = sync.get('next_status', 'unknown')
-    st_branch = data.get('stable_branch', 'factory')
-    unst_branch = data.get('unstable_branch', 'next')
-    if next_status == 'No next branch':
-        fwd_str = '— (No unstable branch configured)'
-    elif next_behind > 0 and next_ahead > 0:
-        fwd_str = f"{sb.RED}❌ Diverged (Behind {next_behind}, Ahead {next_ahead}){sb.RESET}"
-    elif next_behind > 0:
-        fwd_str = f"{sb.YELLOW}⚠️ Behind {st_branch} by {next_behind} commits (Catch-up merge needed){sb.RESET}"
-    elif next_ahead > 0:
-        fwd_str = f"{sb.GREEN}🔀 Ahead of {st_branch} by {next_ahead} commits (Ready for PR){sb.RESET}"
-    elif ahead > 0:
-        fwd_str = f"{sb.GREEN}✅ In Sync on remote{sb.RESET} {sb.CYAN}(local branch carries {ahead} unpushed commit{'s' if ahead > 1 else ''}){sb.RESET}"
-    else:
-        fwd_str = f"{sb.GREEN}✅ In Sync (no unforwarded commits){sb.RESET}"
-    print(f"  Branch Sync:   {fwd_str}")
+        next_ahead = sync.get('next_ahead', 0)
+        next_behind = sync.get('next_behind', 0)
+        next_status = sync.get('next_status', 'unknown')
+        st_branch = data.get('stable_branch', 'factory')
+        unst_branch = data.get('unstable_branch', 'next')
+        if next_status == 'No next branch':
+            fwd_str = '— (No unstable branch configured)'
+        elif next_behind > 0 and next_ahead > 0:
+            fwd_str = f"{sb.RED}❌ Diverged (Behind {next_behind}, Ahead {next_ahead}){sb.RESET}"
+        elif next_behind > 0:
+            fwd_str = f"{sb.YELLOW}⚠️ Behind {st_branch} by {next_behind} commits (Catch-up merge needed){sb.RESET}"
+        elif next_ahead > 0:
+            fwd_str = f"{sb.GREEN}🔀 Ahead of {st_branch} by {next_ahead} commits (Ready for PR){sb.RESET}"
+        elif ahead > 0:
+            fwd_str = f"{sb.GREEN}✅ In Sync on remote{sb.RESET} {sb.CYAN}(local branch carries {ahead} unpushed commit{'s' if ahead > 1 else ''}){sb.RESET}"
+        else:
+            fwd_str = f"{sb.GREEN}✅ In Sync (no unforwarded commits){sb.RESET}"
+        print(f"  Branch Sync:   {fwd_str}")
 
-    if pr.get('has_pr', False):
-        pr_str = f"{sb.GREEN}🟢 PR #{pr.get('number')}: {pr.get('url')}{sb.RESET}"
-    else:
-        pr_str = "None (no active PR)"
-    print(f"  Active PR:     {pr_str}")
-    print()
+        if pr.get('has_pr', False):
+            pr_str = f"{sb.GREEN}🟢 PR #{pr.get('number')}: {pr.get('url')}{sb.RESET}"
+        else:
+            pr_str = "None (no active PR)"
+        print(f"  Active PR:     {pr_str}")
+        print()
 
     # Section 3: Upstream Release Versions
     print(f"── {sb.BOLD}📦 Upstream Release Versions{sb.RESET} {'─'*41}")
@@ -132,22 +141,29 @@ def render_single_package_dashboard(data):
 
     # Section 4: Recommended Actions
     actions = []
-    if behind > 0:
-        actions.append(f"📥 Pull remote commits: {sb.BOLD}git pull --ff-only{sb.RESET}")
-    if ahead > 0:
-        actions.append(f"📤 Push local commits to remote: {sb.BOLD}git push origin {branch}{sb.RESET}")
-    if dirty:
-        actions.append(f"💾 Commit package changes: {sb.BOLD}geckopit-cli --commit{sb.RESET}")
-    if pool_behind > 0:
-        actions.append(f"📥 Pull upstream changes from Pool: {sb.BOLD}git fetch https://src.opensuse.org/pool/{repo}.git factory && git merge FETCH_HEAD{sb.RESET}")
-    if next_behind > 0:
-        actions.append(f"🔀 Catch-up merge from {st_branch}: {sb.BOLD}git merge origin/{st_branch}{sb.RESET}")
-    # Only recommend PR if commits are actually on remote (ahead == 0) and not in active PR
-    if ahead == 0 and next_ahead > 0 and not pr.get('has_pr'):
-        actions.append(f"📤 Create Gitea Pull Request from {branch} to {st_branch}")
-    if ver.get('needs_update'):
-        target_v = u_latest if branch == 'next' and u_latest != '—' else u_stable
-        actions.append(f"⚙️  Run package upgrade: {sb.BOLD}geckopit-cli --upgrade {target_v}{sb.RESET}")
+    if is_osc:
+        if ver.get('needs_update'):
+            target_v = u_stable
+            actions.append(f"⚙️  Run package upgrade: {sb.BOLD}geckopit-cli --upgrade {target_v}{sb.RESET}")
+        actions.append(f"📦 Check OSC status: {sb.BOLD}osc status{sb.RESET}")
+        actions.append(f"💾 Submit changes: {sb.BOLD}osc ci{sb.RESET}")
+    else:
+        if behind > 0:
+            actions.append(f"📥 Pull remote commits: {sb.BOLD}git pull --ff-only{sb.RESET}")
+        if ahead > 0:
+            actions.append(f"📤 Push local commits to remote: {sb.BOLD}git push origin {branch}{sb.RESET}")
+        if dirty:
+            actions.append(f"💾 Commit package changes: {sb.BOLD}geckopit-cli --commit{sb.RESET}")
+        if pool_behind > 0:
+            actions.append(f"📥 Pull upstream changes from Pool: {sb.BOLD}git fetch https://src.opensuse.org/pool/{repo}.git factory && git merge FETCH_HEAD{sb.RESET}")
+        if next_behind > 0:
+            actions.append(f"🔀 Catch-up merge from {st_branch}: {sb.BOLD}git merge origin/{st_branch}{sb.RESET}")
+        # Only recommend PR if commits are actually on remote (ahead == 0) and not in active PR
+        if ahead == 0 and next_ahead > 0 and not pr.get('has_pr'):
+            actions.append(f"📤 Create Gitea Pull Request from {branch} to {st_branch}")
+        if ver.get('needs_update'):
+            target_v = u_latest if branch == 'next' and u_latest != '—' else u_stable
+            actions.append(f"⚙️  Run package upgrade: {sb.BOLD}geckopit-cli --upgrade {target_v}{sb.RESET}")
 
     print(f"── {sb.BOLD}💡 Recommended Actions{sb.RESET} {'─'*46}")
     if actions:

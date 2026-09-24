@@ -133,7 +133,7 @@ class TestWorktreeTracking(unittest.TestCase):
     def test_is_package_dir_detection(self):
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Empty folder without .git is not a package dir
+            # Empty folder without packaging files is not a package dir
             self.assertFalse(sb.is_package_dir(tmpdir))
 
             # Folder with .git but no packaging files is not a package dir
@@ -142,6 +142,11 @@ class TestWorktreeTracking(unittest.TestCase):
 
             # Adding a .spec file makes it a package dir
             with open(os.path.join(tmpdir, 'pkg.spec'), 'w') as f: f.write('Name: pkg\n')
+            self.assertTrue(sb.is_package_dir(tmpdir))
+
+            # Legacy OSC checkout without .git is also a package dir
+            os.rmdir(os.path.join(tmpdir, '.git'))
+            os.makedirs(os.path.join(tmpdir, '.osc'))
             self.assertTrue(sb.is_package_dir(tmpdir))
 
     def test_get_package_name_from_dir(self):
