@@ -281,6 +281,59 @@ def format_changelog_entry(
     )
 
 
+def extract_appstream_notes(xml_path: str, version: Optional[str] = None) -> Optional[str]:
+    """
+    Parses an AppStream metainfo/appdata XML file and extracts release notes
+    for the specified version (or the newest release entry if version is omitted).
+    Returns formatted text suitable for changelog generation, or None if no description found.
+    """
+    import xml.etree.ElementTree as ET
+
+    try:
+        tree = ET.parse(xml_path)
+        root = tree.getroot()
+    except Exception:
+        return None
+
+    v_clean = re.sub(r"^v", "", version) if version else ""
+    target_rels = [version, v_clean, f"v{v_clean}"] if version else []
+
+    matched_rel = None
+    releases = root.findall(".//release")
+    for rel in releases:
+        rel_ver = rel.get("version", "").strip()
+        if target_rels and rel_ver in target_rels:
+            matched_rel = rel
+            break
+
+    if matched_rel is None and releases:
+        matched_rel = releases[0]
+
+    if matched_rel is None:
+        return None
+
+    desc = matched_rel.find("description")
+    if desc is None:
+        return None
+
+    rel_name = matched_rel.get("version") or version or ""
+    lines = [f"Version {rel_name}\n"]
+    for child in desc:
+        if child.tag == "p":
+            txt = "".join(child.itertext()).strip()
+            if txt:
+                txt = txt.rstrip(":") + ":"
+                lines.append(f"\n{txt}")
+        elif child.tag == "ul":
+            for li in child.findall("li"):
+                li_txt = "".join(li.itertext()).strip()
+                if li_txt:
+                    lines.append(f"* {li_txt}")
+
+    res = "\n".join(lines).strip()
+    return res if len(lines) > 1 else None
+
+
 def remove_patch_from_spec(spec_content: str, patch_name: str) -> str:
     """Removes a dropped patch declaration and its preceding comments from spec file content."""
     lines = spec_content.splitlines(keepends=True)

@@ -21,7 +21,8 @@ from upgrade.changelog import (
     format_changelog_entry,
     build_changelog_from_items,
     remove_patch_from_spec,
-    CHANGELOG_WRAP_WIDTH
+    CHANGELOG_WRAP_WIDTH,
+    extract_appstream_notes
 )
 
 class TestUpgradeHelperArchitecture(unittest.TestCase):
@@ -412,6 +413,37 @@ Release:        0
     def test_format_changelog_entry_empty_diff(self):
         res = format_changelog_entry("", "2.1.8")
         self.assertEqual(res.strip(), "- Update to version 2.1.8.")
+
+    def test_extract_appstream_notes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            xml_path = os.path.join(tmpdir, "test.metainfo.xml")
+            with open(xml_path, "w") as f:
+                f.write("""<?xml version="1.0" encoding="UTF-8"?>
+<component>
+  <releases>
+    <release version="2.0">
+      <description>
+        <p>New features:</p>
+        <ul>
+          <li>First cool feature</li>
+          <li>Second cool feature</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+</component>""")
+            notes = extract_appstream_notes(xml_path, version="2.0")
+            self.assertIsNotNone(notes)
+            self.assertIn("New features:", notes)
+            self.assertIn("* First cool feature", notes)
+
+            # Test formatting
+            diff_lines = ["--- a/test.xml", "+++ b/test.xml", "@@ -0,0 +1,5 @@"]
+            diff_lines += ["+" + l for l in notes.splitlines()]
+            formatted = format_changelog_entry("\n".join(diff_lines), "2.0")
+            self.assertIn("- Update to version 2.0:", formatted)
+            self.assertIn("+ New features:", formatted)
+            self.assertIn("- First cool feature", formatted)
 
 if __name__ == '__main__':
     unittest.main()

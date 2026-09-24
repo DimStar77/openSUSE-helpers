@@ -18,7 +18,9 @@ from .changelog import (
     CHANGELOG_WRAP_WIDTH,
     wrap_bullet,
     format_changelog_entry,
-    remove_patch_from_spec
+    remove_patch_from_spec,
+    check_retrospective_news_changes,
+    extract_appstream_notes
 )
 
 class ObsScmUpgradeHelper(BaseUpgradeHelper):
@@ -183,7 +185,7 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         Discovers the upstream release notes file.
         Prioritizes condensed, release-targeted files (NEWS*) over commit-dump logs (ChangeLog*).
         If multiple exist and old_rev is provided, prioritizes the highest-precedence file
-        that was actually modified in this release.
+        that was actually modified in this release. Also checks for AppStream metainfo/appdata XML.
         """
         candidates = [
             "NEWS", "NEWS.md", "NEWS.rst", "NEWS.txt",
@@ -208,10 +210,31 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
             except Exception:
                 pass
 
+            # 1b. Check if an AppStream metainfo/appdata XML file was modified
+            try:
+                res_all = subprocess.run(
+                    ["git", "-C", upstream_repo, "diff", "--no-ext-diff", "--name-only", f"{old_rev}..HEAD"],
+                    capture_output=True,
+                    text=True,
+                    check=False
+                )
+                if res_all.returncode == 0:
+                    for f in res_all.stdout.splitlines():
+                        if re.search(r'(metainfo|appdata)\.xml(\.in)?$', f, re.IGNORECASE):
+                            return f
+            except Exception:
+                pass
+
         # 2. Fallback to existence priority
         for c in candidates:
             if os.path.isfile(os.path.join(upstream_repo, c)):
                 return c
+
+        # 2b. Check for AppStream XML file on disk
+        for root, _, files in os.walk(upstream_repo):
+            for f in files:
+                if re.search(r'(metainfo|appdata)\.xml(\.in)?$', f, re.IGNORECASE):
+                    return os.path.relpath(os.path.join(root, f), upstream_repo)
 
         return "NEWS"
 
@@ -219,6 +242,7 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         self,
         pkg_name: str,
         old_rev: str,
+        new_ver: Optional[str] = None,
         on_log: Optional[Callable[[str], None]] = None
     ) -> Dict[str, str]:
         """Extracts upstream git diffs between old_rev and HEAD for NEWS/ChangeLog and meson build files."""
@@ -230,11 +254,34 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         # Auto-detect upstream changelog filename (evaluating diff activity against old_rev)
         changelog_target = self.find_upstream_changelog_target(upstream_repo, old_rev=old_rev)
 
-        targets = [
-            (changelog_target, "osc-collab.NEWS"),
+        is_appstream = bool(re.search(r'(metainfo|appdata)\.xml(\.in)?$', changelog_target, re.IGNORECASE))
+        if is_appstream:
+            xml_path = os.path.join(upstream_repo, changelog_target)
+            notes = extract_appstream_notes(xml_path, version=new_ver)
+            if notes:
+                raw_lines = notes.splitlines()
+                diff_lines = [
+                    f"--- a/{changelog_target}",
+                    f"+++ b/{changelog_target}",
+                    f"@@ -0,0 +1,{len(raw_lines)} @@"
+                ]
+                for l in raw_lines:
+                    diff_lines.append("+" + l)
+                diff_text = "\n".join(diff_lines) + "\n"
+                out_path = os.path.join(self.package_dir, "osc-collab.NEWS")
+                with open(out_path, "w", encoding="utf-8") as f:
+                    f.write(diff_text)
+                diff_files["osc-collab.NEWS"] = diff_text
+                if on_log:
+                    on_log(f"Extracted AppStream release notes from {changelog_target} for {new_ver or 'HEAD'}")
+
+        targets = []
+        if not is_appstream:
+            targets.append((changelog_target, "osc-collab.NEWS"))
+        targets.extend([
             ("meson.build", "osc-collab.meson"),
             ("meson_options.txt", "osc-collab.meson_options")
-        ]
+        ])
 
         for git_target, out_filename in targets:
             try:
@@ -244,7 +291,7 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
                     text=True,
                     check=False
                 )
-                if res.returncode == 0:
+                if res.returncode == 0 and res.stdout.strip():
                     out_path = os.path.join(self.package_dir, out_filename)
                     with open(out_path, "w", encoding="utf-8") as f:
                         f.write(res.stdout)
@@ -505,7 +552,7 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         # 5. Extract upstream diffs (NEWS/ChangeLog, meson.build, meson_options.txt)
         diff_files = {}
         if old_rev:
-            diff_files = self.extract_git_diffs(pkg_name, old_rev, on_log=log)
+            diff_files = self.extract_git_diffs(pkg_name, old_rev, new_ver=new_ver, on_log=log)
 
         # 6. Source duplication hygiene
         self.clean_duplicate_obscpio_if_manual(on_log=log)
