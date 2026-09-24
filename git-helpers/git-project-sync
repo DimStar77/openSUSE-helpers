@@ -1,0 +1,198 @@
+#!/bin/bash
+# git-project-sync - High Performance Meta-Project & Submodule Synchronizer
+#
+# Synchronizes Git meta-projects (superprojects with many package submodules)
+# or individual package checkouts safely and reliably.
+
+JOBS=16
+FORCE_SYNC=false
+TARGET_DIRS=()
+
+show_help() {
+    cat <<EOF
+Usage: git-project-sync [options] [directory ...]
+
+Synchronizes Git meta-projects or individual package checkouts quickly and reliably.
+- Meta-projects (containing .gitmodules): performs targeted differential submodule
+  syncing or full audits with SSH connection multiplexing.
+- Package checkouts (individual repos): performs safe fast-forward synchronization
+  without destructive resets.
+
+Options:
+  -f, --force      Force deep audit of all submodules in meta-projects
+  -j, --jobs N     Number of parallel jobs for submodule operations (default: 16)
+  -h, --help       Show this help message
+
+If no directory is specified, the current working directory is synchronized.
+EOF
+}
+
+# Parse command line options
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -f|--force)
+            FORCE_SYNC=true
+            shift
+            ;;
+        -j|--jobs)
+            if [[ -n "$2" && "$2" =~ ^[0-9]+$ ]]; then
+                JOBS="$2"
+                shift 2
+            else
+                echo "Error: -j/--jobs requires a positive integer." >&2
+                exit 1
+            fi
+            ;;
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        --)
+            shift
+            while [[ $# -gt 0 ]]; do
+                TARGET_DIRS+=("$1")
+                shift
+            done
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            echo "Use -h or --help for usage." >&2
+            exit 1
+            ;;
+        *)
+            TARGET_DIRS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+if [[ ${#TARGET_DIRS[@]} -eq 0 ]]; then
+    TARGET_DIRS=(".")
+fi
+
+# Setup persistent OpenSSH connection multiplexing if not already active
+if [[ -z "$GIT_SSH_COMMAND" || "$GIT_SSH_COMMAND" != *"ControlPath"* ]]; then
+    SSH_MUX_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ssh-mux-XXXXXX")
+    export GIT_SSH_COMMAND="ssh -o ControlMaster=auto -o ControlPath=${SSH_MUX_DIR}/%C -o ControlPersist=5m"
+    cleanup_ssh() {
+        rm -rf "${SSH_MUX_DIR}"
+    }
+    trap cleanup_ssh EXIT INT TERM
+fi
+
+sync_project() {
+    local dir=$1
+
+    (
+        cd "$dir" || exit 1
+
+        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        if [[ "$CURRENT_BRANCH" == "HEAD" || -z "$CURRENT_BRANCH" ]]; then
+            echo "--- Synchronizing $dir ---"
+            echo "⚠️  HEAD is detached in $dir. Please checkout a branch before syncing." >&2
+            exit 1
+        fi
+
+        # 1. Fetch remote metadata quietly
+        git fetch origin --prune --quiet
+
+        REMOTE_HASH=$(git rev-parse "origin/$CURRENT_BRANCH" 2>/dev/null)
+        LOCAL_HASH=$(git rev-parse HEAD 2>/dev/null)
+
+        if [[ -z "$REMOTE_HASH" ]]; then
+            echo "--- Synchronizing $dir ---"
+            echo "⚠️  Remote branch origin/$CURRENT_BRANCH not found, skipping." >&2
+            exit 1
+        fi
+
+        # Check if this repository is a meta-project managing submodules, or an individual package checkout
+        if [[ -f .gitmodules ]]; then
+            echo "--- Synchronizing $dir ---"
+
+            # Logic: Only sync if hashes differ OR if user forced it
+            if [[ "$REMOTE_HASH" == "$LOCAL_HASH" && "$FORCE_SYNC" == false ]]; then
+                echo "✅ No changes detected on $CURRENT_BRANCH. (Use -f to force audit)"
+            else
+                if [[ "$FORCE_SYNC" == true ]]; then
+                    echo "🔄 Force audit requested. Deep-scanning submodules with SSH multiplexing..."
+                    git reset --hard "origin/$CURRENT_BRANCH"
+                    git submodule sync --recursive --quiet
+                    git submodule update --init --recursive --jobs "$JOBS"
+
+                    echo "🌿 Re-attaching submodules to branch: $CURRENT_BRANCH"
+                    git submodule foreach --quiet --recursive "
+                        git -C \"\$toplevel\" config submodule.\$name.branch $CURRENT_BRANCH
+                        git checkout -q $CURRENT_BRANCH 2>/dev/null || true
+                    "
+
+                    echo "🚀 Pulling latest changes for submodules (Parallel)..."
+                    git submodule update --remote --merge --jobs "$JOBS"
+                    git clean -dff
+                else
+                    # Targeted differential sync: identify submodules actually updated by the bot!
+                    CHANGED_SUBMODULES=$(git diff --raw "$LOCAL_HASH" "$REMOTE_HASH" | awk '$1 ~ /^:160000/ || $2 == "160000" { print $NF }')
+                    COUNT=$(echo "$CHANGED_SUBMODULES" | grep -v '^[[:space:]]*$' | wc -l)
+
+                    if [[ "$COUNT" -gt 0 ]]; then
+                        echo "🚀 Bot update detected ($COUNT package(s) changed: $(echo $CHANGED_SUBMODULES | tr '\n' ' ')). Fast-syncing..."
+                        git reset --hard "origin/$CURRENT_BRANCH"
+                        git submodule sync --quiet -- $CHANGED_SUBMODULES
+                        git submodule update --init --merge --jobs "$JOBS" -- $CHANGED_SUBMODULES
+
+                        for sm in $CHANGED_SUBMODULES; do
+                            if [[ -d "$sm" ]]; then
+                                (
+                                    cd "$sm" || exit
+                                    git fetch origin "$CURRENT_BRANCH" --quiet 2>/dev/null || true
+                                    git checkout -q "$CURRENT_BRANCH" 2>/dev/null || git checkout -q -b "$CURRENT_BRANCH" "origin/$CURRENT_BRANCH" 2>/dev/null || true
+                                    git merge --ff-only "origin/$CURRENT_BRANCH" 2>/dev/null || true
+                                ) &
+                            fi
+                        done
+                        wait
+                    else
+                        echo "🚀 Superproject metadata updated ($LOCAL_HASH -> $REMOTE_HASH). Fast-syncing..."
+                        git reset --hard "origin/$CURRENT_BRANCH"
+                        git submodule sync --quiet
+                    fi
+                fi
+            fi
+        else
+            # Individual package repository (submodule or standalone package checkout)
+            SUPERPROJECT=$(git rev-parse --show-superproject-working-tree 2>/dev/null)
+            PKG_NAME=$(basename "$(pwd)")
+            if [[ -n "$SUPERPROJECT" ]]; then
+                PARENT_NAME=$(basename "$SUPERPROJECT")
+                echo "--- Synchronizing $PKG_NAME (package in $PARENT_NAME) ---"
+            else
+                echo "--- Synchronizing $PKG_NAME (package checkout) ---"
+            fi
+
+            if [[ "$REMOTE_HASH" == "$LOCAL_HASH" ]]; then
+                echo "✅ No changes detected on $CURRENT_BRANCH."
+            else
+                echo "🚀 Fast-forwarding $PKG_NAME on $CURRENT_BRANCH..."
+                if git merge --ff-only "origin/$CURRENT_BRANCH"; then
+                    echo "✅ Successfully synchronized $PKG_NAME on $CURRENT_BRANCH."
+                else
+                    echo "⚠️  Fast-forward failed. You may have local commits or uncommitted changes." >&2
+                    exit 1
+                fi
+            fi
+        fi
+    )
+}
+
+for target in "${TARGET_DIRS[@]}"; do
+    if [[ ! -d "$target" ]]; then
+        echo "Directory '$target' not found, skipping." >&2
+        continue
+    fi
+
+    if ! git -C "$target" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "Directory '$target' is not a git repository, skipping." >&2
+        continue
+    fi
+
+    sync_project "$target"
+done
