@@ -409,5 +409,9 @@ Release:        0
             self.assertEqual(res.old_version, '1.0')
             self.assertEqual(res.new_version, '1.1')
 
+    def test_format_changelog_entry_empty_diff(self):
+        res = format_changelog_entry("", "2.1.8")
+        self.assertEqual(res.strip(), "- Update to version 2.1.8.")
+
 if __name__ == '__main__':
     unittest.main()

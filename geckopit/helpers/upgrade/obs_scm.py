@@ -524,6 +524,8 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
             has_retro = check_retrospective_news_changes(news_diff)
             if has_retro:
                 log("⚠️  Notice: Upstream NEWS diff contains additions to older release sections (e.g. historical CVE/GHSA annotations). Inspect 'osc-collab.NEWS' if past .changes entries should be updated.")
+        else:
+            log("⚠️  Notice: No upstream NEWS/changelog diff found. Please review upstream release notes.")
 
         if new_ver and (old_rev != new_rev or not old_rev):
             self.update_changelog_via_osc(

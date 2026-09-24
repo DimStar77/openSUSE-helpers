@@ -89,7 +89,9 @@ def build_changelog_from_items(
     """
     entries = []
     # Level 0 Header
-    entries.append(wrap_bullet(f"Update to version {target_version}:", level=0, width=width))
+    has_details = bool(items) or has_translations or bool(dropped_patches)
+    colon = ":" if has_details else "."
+    entries.append(wrap_bullet(f"Update to version {target_version}{colon}", level=0, width=width))
 
     for level, text in items:
         if text.strip():
@@ -269,9 +271,6 @@ def format_changelog_entry(
                 if lvl != 3 and b_txt:
                     b_txt = b_txt[0].upper() + b_txt[1:]
                 structured_items.append((lvl, b_txt))
-
-    if not structured_items and not has_translations:
-        structured_items.append((1, "Misc. bug fixes and cleanups."))
 
     return build_changelog_from_items(
         structured_items,
