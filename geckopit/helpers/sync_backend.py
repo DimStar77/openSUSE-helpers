@@ -338,7 +338,7 @@ def check_repo_sync(repo_name, stable_branch="factory", unstable_branch="next", 
         next_status = "No next branch"
 
     # Determine sync actions for daily run (e.g. pool update, submission update, or stable -> unstable merge)
-    needs_action = (pool_behind > 0) or (pool_ahead > 0) or (next_behind > 0)
+    needs_action = (pool_behind > 0) or (pool_ahead > 0) or (next_behind > 0) or (pool_status in ('Fetch failed', 'Error')) or (next_status in ('Comparison failed', 'Error'))
 
     return repo_name, {
         "status": "success",

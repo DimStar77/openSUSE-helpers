@@ -248,6 +248,9 @@ class PackageRow(Gtk.ListBoxRow):
             elif pool_status == "Not in Pool":
                 subtitle_parts.append("Not in Gitea")
                 self.badges_box.append(self.create_badge("No Pool", "yellow"))
+            elif pool_status in ("Fetch failed", "Error"):
+                subtitle_parts.append(f"Pool: {pool_status}")
+                self.badges_box.append(self.create_badge("Pool Error", "red"))
 
             if next_ahead > 0:
                 subtitle_parts.append(f"Next: +{next_ahead}")
@@ -2178,7 +2181,7 @@ class SyncWindow(Adw.ApplicationWindow):
         pool_ahead = sync.get("pool_ahead", 0)
         pool_status = sync.get("pool_status", "unknown")
         is_pool_track = (pool_status != "unknown")
-        pool_needs_action = (pool_behind > 0) or (pool_ahead > 0) or (pool_status == "Not in Pool")
+        pool_needs_action = (pool_behind > 0) or (pool_ahead > 0) or (pool_status in ("Not in Pool", "Fetch failed", "Error"))
 
         # B. Stable Tracking state
         factory_ver = ver.get("factory_ver", "N/A")
@@ -2943,8 +2946,14 @@ class SyncWindow(Adw.ApplicationWindow):
             elif pool_status == "Not in Pool":
                 p1_text = "<span foreground='yellow' weight='bold'>Not in Gitea Pool</span>"
                 self.pull_pool_btn.set_sensitive(False)
-            else:
+            elif pool_status in ("Fetch failed", "Error", "unknown"):
+                p1_text = f"<span foreground='red' weight='bold'>Pool Check Failed ({pool_status})</span>"
+                self.pull_pool_btn.set_sensitive(False)
+            elif pool_status == "In Sync":
                 p1_text = "<span foreground='green'>Fully In Sync with Gitea Pool</span>"
+                self.pull_pool_btn.set_sensitive(False)
+            else:
+                p1_text = f"<span foreground='yellow'>{pool_status}</span>"
                 self.pull_pool_btn.set_sensitive(False)
             self.stable_pool_lbl.set_markup(p1_text)
 
@@ -3014,8 +3023,12 @@ class SyncWindow(Adw.ApplicationWindow):
                 self.create_pr_btn.set_label("Create PR")
                 if next_status == "No next branch":
                     branch_text = "<span foreground='gray'>No Next branch present</span>"
-                else:
+                elif next_status in ("Comparison failed", "Error", "unknown"):
+                    branch_text = f"<span foreground='red' weight='bold'>Branch comparison failed ({next_status})</span>"
+                elif next_status in ("In Sync", "Ahead (ok)"):
                     branch_text = "<span foreground='green'>Next and Factory branches are fully in sync</span>"
+                else:
+                    branch_text = f"<span foreground='yellow'>{next_status}</span>"
 
             if next_behind > 0 and next_ahead_val > 0:
                 branch_text = f"<span weight='bold' foreground='red'>Diverged</span> (Behind: {next_behind} / Ahead: {next_ahead_val} commits)"

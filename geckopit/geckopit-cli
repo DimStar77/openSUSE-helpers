@@ -88,8 +88,12 @@ def render_single_package_dashboard(data):
             pool_str = f"{sb.CYAN}📤 Ahead of central pool by {pool_ahead} commits (Submit needed){sb.RESET}"
         elif pool_status == 'Not in Pool':
             pool_str = f"{sb.YELLOW}❓ Not in Pool{sb.RESET}"
-        else:
+        elif pool_status in ('Fetch failed', 'Error', 'unknown'):
+            pool_str = f"{sb.RED}⚠️ Failed to fetch pool ({pool_status}){sb.RESET}"
+        elif pool_status == 'In Sync':
             pool_str = f"{sb.GREEN}✅ In Sync with pool{sb.RESET}"
+        else:
+            pool_str = f"{sb.YELLOW}❓ {pool_status}{sb.RESET}"
         print(f"  Gitea Pool:    {pool_str}")
 
         next_ahead = sync.get('next_ahead', 0)
@@ -99,6 +103,8 @@ def render_single_package_dashboard(data):
         unst_branch = data.get('unstable_branch', 'next')
         if next_status == 'No next branch':
             fwd_str = '— (No unstable branch configured)'
+        elif next_status in ('Comparison failed', 'Error', 'unknown'):
+            fwd_str = f"{sb.RED}⚠️ Branch comparison failed ({next_status}){sb.RESET}"
         elif next_behind > 0 and next_ahead > 0:
             fwd_str = f"{sb.RED}❌ Diverged (Behind {next_behind}, Ahead {next_ahead}){sb.RESET}"
         elif next_behind > 0:
@@ -107,8 +113,10 @@ def render_single_package_dashboard(data):
             fwd_str = f"{sb.GREEN}🔀 Ahead of {st_branch} by {next_ahead} commits (Ready for PR){sb.RESET}"
         elif ahead > 0:
             fwd_str = f"{sb.GREEN}✅ In Sync on remote{sb.RESET} {sb.CYAN}(local branch carries {ahead} unpushed commit{'s' if ahead > 1 else ''}){sb.RESET}"
-        else:
+        elif next_status in ('In Sync', 'Ahead (ok)'):
             fwd_str = f"{sb.GREEN}✅ In Sync (no unforwarded commits){sb.RESET}"
+        else:
+            fwd_str = f"{sb.YELLOW}❓ {next_status}{sb.RESET}"
         print(f"  Branch Sync:   {fwd_str}")
 
         if pr.get('has_pr', False):
@@ -346,19 +354,27 @@ def run_sync_check(repos):
                 stage1_str = f"{sb.CYAN}📤 **Ahead by {data['pool_ahead']}** (needs submit){sb.RESET}"
             elif data["pool_status"] == "Not in Pool":
                 stage1_str = f"{sb.YELLOW}❓ Not in Pool{sb.RESET}"
-            else:
+            elif data["pool_status"] in ("Fetch failed", "Error", "unknown"):
+                stage1_str = f"{sb.RED}⚠️ {data['pool_status']}{sb.RESET}"
+            elif data["pool_status"] == "In Sync":
                 stage1_str = f"{sb.GREEN}✅ In Sync{sb.RESET}"
+            else:
+                stage1_str = f"{sb.YELLOW}❓ {data['pool_status']}{sb.RESET}"
 
             if data["next_status"] == "No next branch":
                 stage2_str = "—"
+            elif data["next_status"] in ("Comparison failed", "Error", "unknown"):
+                stage2_str = f"{sb.RED}⚠️ {data['next_status']}{sb.RESET}"
             elif data["next_behind"] > 0 and data["next_ahead"] > 0:
                 stage2_str = f"{sb.RED}❌ Diverged (Behind {data['next_behind']}, Ahead {data['next_ahead']}){sb.RESET}"
             elif data["next_behind"] > 0:
                 stage2_str = f"{sb.RED}📥 **Behind by {data['next_behind']}** (needs merge){sb.RESET}"
             elif data["next_ahead"] > 0:
                 stage2_str = f"{sb.GREEN}✅ In Sync (+{data['next_ahead']} next commits){sb.RESET}"
-            else:
+            elif data["next_status"] in ("In Sync", "Ahead (ok)"):
                 stage2_str = f"{sb.GREEN}✅ In Sync{sb.RESET}"
+            else:
+                stage2_str = f"{sb.YELLOW}❓ {data['next_status']}{sb.RESET}"
 
             actions = []
             if data["pool_behind"] > 0:
