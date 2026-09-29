@@ -1340,6 +1340,8 @@ class SyncWindow(Adw.ApplicationWindow):
         self.term_zoom_timeout_id = 0
         self.is_sync_running = False
         self.sync_timeout_id = 0
+        self.diff_search_settings = None
+        self.diff_search_context = None
         self.last_diff_package = None
         self.current_selected_package = None
         self.refreshed_packages = set()
@@ -2427,8 +2429,8 @@ class SyncWindow(Adw.ApplicationWindow):
         control_bar.set_margin_bottom(12)
 
         self.sidebar_search = Gtk.SearchEntry()
-        self.sidebar_search.set_placeholder_text("Search packages...")
-        self.sidebar_search.set_tooltip_text("Search packages... (Press / or Ctrl+F to focus, Enter/Down to select)")
+        self.sidebar_search.set_placeholder_text("Search packages... (Ctrl+P)")
+        self.sidebar_search.set_tooltip_text("Quick-open package search (Press Ctrl+P or / to focus, Enter/Down to select)")
         self.sidebar_search.connect("search-changed", lambda entry: self.master_list_box.invalidate_filter())
         self.sidebar_search.connect("activate", self.on_search_activate)
 
@@ -2825,6 +2827,12 @@ class SyncWindow(Adw.ApplicationWindow):
         spacer.set_hexpand(True)
         diff_header.append(spacer)
 
+        # Find in Diff Button
+        self.diff_find_btn = Gtk.Button.new_from_icon_name("edit-find-symbolic")
+        self.diff_find_btn.set_tooltip_text("Find in Diff (Ctrl+F)")
+        self.diff_find_btn.connect("clicked", self.on_toggle_diff_search_clicked)
+        diff_header.append(self.diff_find_btn)
+
         # Refresh Diff Button
         self.refresh_diff_btn = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
         self.refresh_diff_btn.set_tooltip_text("Refresh Diff")
@@ -2838,6 +2846,66 @@ class SyncWindow(Adw.ApplicationWindow):
         diff_header.append(self.copy_diff_btn)
 
         box.append(diff_header)
+
+        # Inline Diff Search Bar
+        self.diff_search_bar = Gtk.SearchBar()
+        search_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        search_box.set_margin_start(12)
+        search_box.set_margin_end(12)
+        search_box.set_margin_top(4)
+        search_box.set_margin_bottom(4)
+
+        self.diff_search_entry = Gtk.SearchEntry()
+        self.diff_search_entry.set_hexpand(True)
+        self.diff_search_entry.set_placeholder_text("Find in diff (Enter = next, Shift+Enter = prev, Esc = close)...")
+        self.diff_search_entry.connect("search-changed", self.on_diff_search_text_changed)
+        search_box.append(self.diff_search_entry)
+
+        # Keyboard controller for SearchEntry: Enter, Shift+Enter, Escape, Ctrl+P
+        search_key_ctrl = Gtk.EventControllerKey()
+        def on_search_key(ctrl, keyval, keycode, state):
+            if keyval == Gdk.KEY_Escape:
+                self.close_diff_search()
+                return True
+            ctrl_pressed = (state & Gdk.ModifierType.CONTROL_MASK) != 0
+            if ctrl_pressed and keyval in (Gdk.KEY_p, Gdk.KEY_P):
+                self.close_diff_search()
+                self.sidebar_search.grab_focus()
+                return True
+            if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+                shift = (state & Gdk.ModifierType.SHIFT_MASK) != 0
+                if shift:
+                    self.on_diff_search_prev_clicked(None)
+                else:
+                    self.on_diff_search_next_clicked(None)
+                return True
+            return False
+        search_key_ctrl.connect("key-pressed", on_search_key)
+        self.diff_search_entry.add_controller(search_key_ctrl)
+
+        self.diff_search_count_lbl = Gtk.Label()
+        self.diff_search_count_lbl.add_css_class("dim-label")
+        self.diff_search_count_lbl.set_margin_end(4)
+        search_box.append(self.diff_search_count_lbl)
+
+        diff_prev_btn = Gtk.Button.new_from_icon_name("go-up-symbolic")
+        diff_prev_btn.set_tooltip_text("Previous match (Shift+Enter)")
+        diff_prev_btn.connect("clicked", self.on_diff_search_prev_clicked)
+        search_box.append(diff_prev_btn)
+
+        diff_next_btn = Gtk.Button.new_from_icon_name("go-down-symbolic")
+        diff_next_btn.set_tooltip_text("Next match (Enter)")
+        diff_next_btn.connect("clicked", self.on_diff_search_next_clicked)
+        search_box.append(diff_next_btn)
+
+        diff_close_btn = Gtk.Button.new_from_icon_name("window-close-symbolic")
+        diff_close_btn.set_tooltip_text("Close Search (Escape)")
+        diff_close_btn.connect("clicked", lambda b: self.close_diff_search())
+        search_box.append(diff_close_btn)
+
+        self.diff_search_bar.set_child(search_box)
+        self.diff_search_bar.connect_entry(self.diff_search_entry)
+        box.append(self.diff_search_bar)
 
         # Scrolled View
         diff_scroll = Gtk.ScrolledWindow()
@@ -2855,10 +2923,33 @@ class SyncWindow(Adw.ApplicationWindow):
             self.diff_view.set_show_line_numbers(True)
             self.diff_view.set_highlight_current_line(True)
             self.diff_view.set_editable(False)
+
+            self.diff_search_settings = GtkSource.SearchSettings()
+            self.diff_search_settings.set_case_sensitive(False)
+            self.diff_search_settings.set_wrap_around(True)
+
+            self.diff_search_context = GtkSource.SearchContext.new(self.diff_buffer, self.diff_search_settings)
+            self.diff_search_context.set_highlight(False)
+            self.diff_search_context.connect("notify::occurrences-count", self.on_diff_search_occurrences_updated)
         else:
             self.diff_buffer = Gtk.TextBuffer()
             self.diff_view = Gtk.TextView(buffer=self.diff_buffer)
             self.diff_view.set_editable(False)
+
+        # Key controller on diff_view: Ctrl+F for diff search, Ctrl+P for global package search
+        diff_view_key_ctrl = Gtk.EventControllerKey()
+        def on_diff_view_key(ctrl, keyval, keycode, state):
+            ctrl_pressed = (state & Gdk.ModifierType.CONTROL_MASK) != 0
+            if ctrl_pressed:
+                if keyval in (Gdk.KEY_f, Gdk.KEY_F):
+                    self.open_diff_search()
+                    return True
+                elif keyval in (Gdk.KEY_p, Gdk.KEY_P):
+                    self.sidebar_search.grab_focus()
+                    return True
+            return False
+        diff_view_key_ctrl.connect("key-pressed", on_diff_view_key)
+        self.diff_view.add_controller(diff_view_key_ctrl)
 
         self.diff_view.set_monospace(True)
         diff_scroll.set_child(self.diff_view)
@@ -2871,6 +2962,84 @@ class SyncWindow(Adw.ApplicationWindow):
 
         self.diff_revealer.set_child(box)
         return self.diff_revealer
+
+    def on_toggle_diff_search_clicked(self, btn):
+        if not self.diff_search_bar.get_search_mode():
+            self.open_diff_search()
+        else:
+            self.close_diff_search()
+
+    def open_diff_search(self):
+        self.diff_search_bar.set_search_mode(True)
+        self.diff_search_entry.grab_focus()
+        if self.diff_search_context:
+            self.diff_search_context.set_highlight(True)
+
+    def close_diff_search(self):
+        self.diff_search_bar.set_search_mode(False)
+        self.diff_search_entry.set_text("")
+        if self.diff_search_settings:
+            self.diff_search_settings.set_search_text("")
+        if self.diff_search_context:
+            self.diff_search_context.set_highlight(False)
+        self.diff_search_count_lbl.set_text("")
+        self.diff_view.grab_focus()
+
+    def on_diff_search_text_changed(self, entry):
+        text = entry.get_text()
+        if self.diff_search_settings:
+            self.diff_search_settings.set_search_text(text)
+        if self.diff_search_context:
+            self.diff_search_context.set_highlight(bool(text))
+        if text:
+            self.on_diff_search_next_clicked(None)
+        else:
+            self.diff_search_count_lbl.set_text("")
+
+    def on_diff_search_occurrences_updated(self, context, pspec):
+        count = context.get_occurrences_count()
+        if not self.diff_search_entry.get_text():
+            self.diff_search_count_lbl.set_text("")
+        elif count == -1:
+            self.diff_search_count_lbl.set_text("Searching...")
+        elif count == 0:
+            self.diff_search_count_lbl.set_text("No matches")
+        else:
+            self.diff_search_count_lbl.set_text(f"{count} match{'es' if count != 1 else ''}")
+
+    def on_diff_search_next_clicked(self, btn):
+        if not self.diff_search_context or not self.diff_buffer:
+            return
+        text = self.diff_search_entry.get_text()
+        if not text:
+            return
+
+        sel = self.diff_buffer.get_selection_bounds()
+        start_iter = sel[1] if sel else self.diff_buffer.get_start_iter()
+
+        found, match_start, match_end, has_wrapped = self.diff_search_context.forward(start_iter)
+        if found:
+            self.diff_buffer.select_range(match_start, match_end)
+            mark = self.diff_buffer.create_mark("search_match", match_start, False)
+            self.diff_view.scroll_to_mark(mark, 0.2, False, 0.0, 0.0)
+            self.diff_buffer.delete_mark(mark)
+
+    def on_diff_search_prev_clicked(self, btn):
+        if not self.diff_search_context or not self.diff_buffer:
+            return
+        text = self.diff_search_entry.get_text()
+        if not text:
+            return
+
+        sel = self.diff_buffer.get_selection_bounds()
+        start_iter = sel[0] if sel else self.diff_buffer.get_end_iter()
+
+        found, match_start, match_end, has_wrapped = self.diff_search_context.backward(start_iter)
+        if found:
+            self.diff_buffer.select_range(match_start, match_end)
+            mark = self.diff_buffer.create_mark("search_match", match_start, False)
+            self.diff_view.scroll_to_mark(mark, 0.2, False, 0.0, 0.0)
+            self.diff_buffer.delete_mark(mark)
 
     def build_detail_pane(self):
         self.detail_stack = Adw.ViewStack()
@@ -3201,7 +3370,14 @@ class SyncWindow(Adw.ApplicationWindow):
             elif keyval in (Gdk.KEY_5, Gdk.KEY_KP_5):
                 self.filter_forwarding.set_active(not self.filter_forwarding.get_active())
                 return True
-            elif keyval == Gdk.KEY_f:
+            elif keyval in (Gdk.KEY_p, Gdk.KEY_P):
+                self.sidebar_search.grab_focus()
+                return True
+            elif keyval in (Gdk.KEY_f, Gdk.KEY_F):
+                focused = self.get_focus()
+                if focused and (focused == self.diff_view or focused == self.diff_search_entry):
+                    self.open_diff_search()
+                    return True
                 self.sidebar_search.grab_focus()
                 return True
 
