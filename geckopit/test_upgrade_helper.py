@@ -933,5 +933,21 @@ AppStream description
             self.assertTrue(any("Would remove obsolete file: AppStream-1.2.0.tar.xz" in l for l in logs))
             self.assertTrue(any("Would remove obsolete file: AppStream-1.2.0.tar.xz.asc" in l for l in logs))
 
+    def test_bash_completion_syntax_and_flag(self):
+        comp_path = os.path.join(os.path.dirname(__file__), "completion", "geckopit.bash")
+        self.assertTrue(os.path.isfile(comp_path))
+
+        # 1. Test bash syntax validation via bash -n
+        res_syntax = subprocess.run(["bash", "-n", comp_path], capture_output=True, text=True)
+        self.assertEqual(res_syntax.returncode, 0, f"Bash completion syntax error: {res_syntax.stderr}")
+
+        # 2. Test geckopit-cli --bash-completion flag
+        cli_path = os.path.join(os.path.dirname(__file__), "geckopit-cli")
+        res_cli = subprocess.run([sys.executable, cli_path, "--bash-completion"], capture_output=True, text=True)
+        self.assertEqual(res_cli.returncode, 0)
+        self.assertIn("complete -F _geckopit_completion geckopit-cli", res_cli.stdout)
+        self.assertIn("_geckopit_get_packages", res_cli.stdout)
+        self.assertIn("_geckopit_get_upgrade_targets", res_cli.stdout)
+
 if __name__ == '__main__':
     unittest.main()

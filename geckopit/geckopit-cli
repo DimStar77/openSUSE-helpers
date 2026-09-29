@@ -782,6 +782,15 @@ def print_help():
 
 
 def main():
+    if "--bash-completion" in sys.argv:
+        comp_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "completion", "geckopit.bash")
+        if os.path.isfile(comp_file):
+            with open(comp_file, "r", encoding="utf-8") as f:
+                sys.stdout.write(f.read())
+            sys.exit(0)
+        else:
+            print(f"Error: Completion script not found at {comp_file}", file=sys.stderr)
+            sys.exit(1)
     if "-h" in sys.argv or "--help" in sys.argv:
         print_help()
         sys.exit(0)

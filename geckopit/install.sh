@@ -150,4 +150,12 @@ if command -v gtk-update-icon-cache >/dev/null 2>&1; then
     gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" >&3 2>&4 || true
 fi
 
+# 6. Bash completion integration
+info "Installing bash completion..."
+COMPLETION_DIR="$HOME/.local/share/bash-completion/completions"
+mkdir -p "$COMPLETION_DIR"
+cp "${SCRIPT_DIR}/completion/geckopit.bash" "$COMPLETION_DIR/geckopit-cli"
+ln -sf "$COMPLETION_DIR/geckopit-cli" "$COMPLETION_DIR/geckopit"
+ln -sf "$COMPLETION_DIR/geckopit-cli" "$COMPLETION_DIR/geckopit-upgrade"
+
 info "Setup completed successfully! Enjoy Geckopit SCM Cockpit."
