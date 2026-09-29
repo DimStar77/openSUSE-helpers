@@ -381,3 +381,160 @@ def format_drift_short_summary(drifts: List[Dict]) -> str:
         parts.append(f"{len(unversioned)} unversioned")
 
     return f"⚠️ Meson drift: {', '.join(parts)}"
+
+
+def fix_meson_drift(package_dir: str, on_log: Optional[any] = None) -> List[Dict]:
+    """
+    Audits and automatically updates .spec BuildRequires (and associated %define
+    macros) to match upstream Meson dependency requirements.
+    Returns the list of fixed drift items.
+    """
+    log = on_log or (lambda msg: None)
+    if not package_dir or not os.path.isdir(package_dir):
+        return []
+
+    drifts = audit_meson_drift(package_dir, bumps_only=True)
+    if not drifts:
+        return []
+
+    spec_files = [f for f in os.listdir(package_dir) if f.endswith(".spec")]
+    if not spec_files:
+        return []
+
+    spec_path = os.path.join(package_dir, spec_files[0])
+    try:
+        with open(spec_path, "r", encoding="utf-8", errors="replace") as f:
+            spec_content = f.read()
+    except Exception as e:
+        log(f"Error reading spec file: {e}")
+        return []
+
+    lines = spec_content.splitlines()
+    fixed_drifts = []
+
+    for d in drifts:
+        pkg = d["package"]
+        u_ver = d["upstream_version"]
+        op = d.get("comparator") or ">="
+
+        cands = [f"pkgconfig({pkg})", pkg]
+        devel_name = DEVEL_PACKAGE_MAP.get(pkg)
+        if devel_name:
+            cands.append(devel_name)
+
+        found = False
+        for idx, line in enumerate(lines):
+            clean = line.strip()
+            if clean.startswith("#") or not clean.lower().startswith("buildrequires:"):
+                continue
+
+            for c in cands:
+                clean_c = c.replace("pkgconfig(", "").replace(")", "")
+                pat = (
+                    r"^(buildrequires:\s+(?:pkgconfig\("
+                    + re.escape(clean_c)
+                    + r"\)|"
+                    + re.escape(c)
+                    + r")\s*)([><=]+)?\s*(\S+)?(.*)$"
+                )
+                m = re.match(pat, clean, re.IGNORECASE)
+                if m:
+                    raw_op = m.group(2) or op
+                    raw_val = m.group(3) or ""
+
+                    # Check if version is a macro e.g. %{min_gtk} or %min_gtk
+                    m_macro = re.match(r"^%\{?([a-zA-Z0-9_]+)\}?$", raw_val)
+                    if m_macro:
+                        macro_name = m_macro.group(1)
+                        for m_idx, m_line in enumerate(lines):
+                            m_def = re.match(
+                                r"^(%(?:define|global)\s+" + re.escape(macro_name) + r"\s+)(\S+)(.*)$",
+                                m_line
+                            )
+                            if m_def:
+                                lines[m_idx] = f"{m_def.group(1)}{u_ver}{m_def.group(3)}"
+                                d["fixed_declaration"] = f"%{macro_name} ➔ {u_ver}"
+                                fixed_drifts.append(d)
+                                found = True
+                                log(f"Updated macro %{macro_name}: {m_def.group(2)} ➔ {u_ver}")
+                                break
+
+                    if not found:
+                        if raw_val:
+                            # Replace old version with new version preserving spacing
+                            lines[idx] = re.sub(
+                                r"([><=]+\s*)" + re.escape(raw_val),
+                                r"\g<1>" + u_ver,
+                                line,
+                                count=1
+                            )
+                        else:
+                            # Append operator and version before any trailing comments
+                            lines[idx] = re.sub(r"(\s*(?:#.*)?)$", f" {op} {u_ver}\1", line, count=1)
+
+                        d["fixed_declaration"] = f"{d.get('spec_name') or c} {op} {u_ver}"
+                        fixed_drifts.append(d)
+                        found = True
+                        log(f"Updated {os.path.basename(spec_path)}: {d.get('spec_name') or c} {op} {u_ver}")
+                    break
+            if found:
+                break
+
+    if fixed_drifts:
+        try:
+            with open(spec_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+        except Exception as e:
+            log(f"Error writing updated spec file: {e}")
+            return []
+
+    return fixed_drifts
+
+
+def record_drift_changelog(package_dir: str, fixed_drifts: List[Dict], on_log: Optional[any] = None) -> bool:
+    """
+    Appends a standardized openSUSE changelog entry documenting synced Meson dependencies.
+    """
+    log = on_log or (lambda msg: None)
+    if not fixed_drifts or not package_dir:
+        return False
+
+    changes_files = [f for f in os.listdir(package_dir) if f.endswith(".changes")]
+    if not changes_files:
+        return False
+
+    changes_path = os.path.join(package_dir, changes_files[0])
+    # Note: osc vc -m automatically prepends '- ', so msg must not start with '- '
+    msg = "Update version dependencies according to meson.build."
+
+    try:
+        import subprocess
+        # Use osc vc if available
+        res = subprocess.run(
+            ["osc", "vc", "-m", msg],
+            cwd=package_dir,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        log(f"Recorded changelog entry in {os.path.basename(changes_path)}")
+        return True
+    except Exception:
+        # Fallback to direct prepending in .changes file
+        try:
+            import datetime
+            now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%a %b %d %H:%M:%S UTC %Y")
+            user_name = os.environ.get("USER", "maintainer")
+            user_email = os.environ.get("MAIL", f"{user_name}@opensuse.org")
+
+            entry = f"-------------------------------------------------------------------\n{now_str} - {user_email}\n\n- {msg}\n\n"
+            with open(changes_path, "r", encoding="utf-8", errors="replace") as f:
+                old_content = f.read()
+            with open(changes_path, "w", encoding="utf-8") as f:
+                f.write(entry + old_content)
+            log(f"Prepended changelog entry in {os.path.basename(changes_path)}")
+            return True
+        except Exception as e:
+            log(f"Failed to record changelog entry: {e}")
+            return False
+

@@ -529,15 +529,24 @@ class TarballUpgradeHelper(BaseUpgradeHelper):
         # 4b. Audit and Drop Merged Patches
         dropped_patches = self.audit_and_drop_merged_patches(new_archive_path, on_log=log)
 
+        # 4c. Audit and Fix Meson Dependency Drift
+        fixed_meson_drifts = []
+        try:
+            import meson_drift
+            fixed_meson_drifts = meson_drift.fix_meson_drift(self.package_dir, on_log=log)
+        except Exception:
+            pass
+
         # 5. Format and Record .changes Entry via 'osc vc -F'
         has_retro = False
+        has_meson_update = bool(fixed_meson_drifts)
         if news_diff:
             has_retro = check_retrospective_news_changes(news_diff)
             if has_retro:
                 log("⚠️  Notice: Upstream NEWS diff contains additions to older release sections (e.g. historical CVE/GHSA annotations). Inspect 'osc-collab.NEWS' if past .changes entries should be updated.")
-            formatted_entry = format_changelog_entry(news_diff, target_version, dropped_patches=dropped_patches)
+            formatted_entry = format_changelog_entry(news_diff, target_version, dropped_patches=dropped_patches, meson_deps_updated=has_meson_update)
         else:
-            formatted_entry = format_changelog_entry("", target_version, dropped_patches=dropped_patches)
+            formatted_entry = format_changelog_entry("", target_version, dropped_patches=dropped_patches, meson_deps_updated=has_meson_update)
 
         tmp_news = None
         try:
@@ -574,5 +583,6 @@ class TarballUpgradeHelper(BaseUpgradeHelper):
             new_version=target_version,
             diff_files=diff_files,
             has_retrospective_news=has_retro,
-            removed_files=removed_files
+            removed_files=removed_files,
+            fixed_meson_drifts=fixed_meson_drifts
         )

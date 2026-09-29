@@ -667,6 +667,7 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         new_version: str,
         diff_text: str = "",
         dropped_patches: Optional[List[str]] = None,
+        meson_deps_updated: bool = False,
         on_log: Optional[Callable[[str], None]] = None
     ) -> bool:
         """Formats 67-column changelog entry and records it via non-interactive 'osc vc -F'."""
@@ -674,6 +675,7 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
             diff_text,
             new_version,
             dropped_patches=dropped_patches,
+            meson_deps_updated=meson_deps_updated,
             width=CHANGELOG_WRAP_WIDTH
         )
 
@@ -803,6 +805,14 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         if new_ver:
             self.update_spec_version(new_ver, on_log=log)
 
+        # 8b. Audit and fix Meson dependency drift
+        fixed_meson_drifts = []
+        try:
+            import meson_drift
+            fixed_meson_drifts = meson_drift.fix_meson_drift(self.package_dir, on_log=log)
+        except Exception:
+            pass
+
         # 9. Update changelog via non-interactive osc vc
         news_diff = diff_files.get("osc-collab.NEWS", "")
         has_retro = False
@@ -819,6 +829,7 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
                 effective_ver,
                 diff_text=news_diff,
                 dropped_patches=dropped_patches,
+                meson_deps_updated=bool(fixed_meson_drifts),
                 on_log=log
             )
 
@@ -833,5 +844,6 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
             new_revision=new_rev,
             diff_files=diff_files,
             has_retrospective_news=has_retro,
-            has_obscpio_warning=is_obscpio_git
+            has_obscpio_warning=is_obscpio_git,
+            fixed_meson_drifts=fixed_meson_drifts
         )

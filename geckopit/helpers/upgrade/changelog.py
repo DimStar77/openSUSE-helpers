@@ -81,6 +81,7 @@ def build_changelog_from_items(
     target_version: str,
     dropped_patches: Optional[List[str]] = None,
     has_translations: bool = False,
+    meson_deps_updated: bool = False,
     width: int = CHANGELOG_WRAP_WIDTH
 ) -> str:
     """
@@ -89,7 +90,7 @@ def build_changelog_from_items(
     """
     entries = []
     # Level 0 Header
-    has_details = bool(items) or has_translations or bool(dropped_patches)
+    has_details = bool(items) or has_translations or bool(dropped_patches) or meson_deps_updated
     colon = ":" if has_details else "."
     entries.append(wrap_bullet(f"Update to version {target_version}{colon}", level=0, width=width))
 
@@ -99,6 +100,9 @@ def build_changelog_from_items(
 
     if has_translations:
         entries.append(wrap_bullet("Updated translations.", level=1, width=width))
+
+    if meson_deps_updated:
+        entries.append(wrap_bullet("Update version dependencies according to meson.build.", level=0, width=width))
 
     if dropped_patches:
         for p in dropped_patches:
@@ -111,6 +115,7 @@ def format_changelog_entry(
     diff_text: str,
     target_version: str,
     dropped_patches: Optional[List[str]] = None,
+    meson_deps_updated: bool = False,
     width: int = CHANGELOG_WRAP_WIDTH
 ) -> str:
     """
@@ -277,6 +282,7 @@ def format_changelog_entry(
         target_version=target_version,
         dropped_patches=dropped_patches,
         has_translations=has_translations,
+        meson_deps_updated=meson_deps_updated,
         width=width
     )
 

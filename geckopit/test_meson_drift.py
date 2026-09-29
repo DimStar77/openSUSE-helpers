@@ -139,5 +139,53 @@ class TestMesonDriftAuditor(unittest.TestCase):
             self.assertIn("json-glib-1.0", all_drift_types)
 
 
+    def test_fix_meson_drift_and_changelog(self):
+        meson_code = """
+        dependency('gtk4', version: '>= 4.16.0')
+        dependency('libadwaita-1', version: '>= 1.8.alpha')
+        """
+        spec_code = """Name: testpkg
+Version: 1.0.0
+Release: 0
+%define min_adw 1.6.alpha
+BuildRequires:  pkgconfig(gtk4) >= 4.14.0
+BuildRequires:  pkgconfig(libadwaita-1) >= %{min_adw}
+"""
+        with tempfile.TemporaryDirectory() as td:
+            spec_file = os.path.join(td, "testpkg.spec")
+            changes_file = os.path.join(td, "testpkg.changes")
+            with open(spec_file, "w", encoding="utf-8") as f:
+                f.write(spec_code)
+            with open(changes_file, "w", encoding="utf-8") as f:
+                f.write("-------------------------------------------------------------------\nWed Sep 23 12:00:00 UTC 2026 - test@opensuse.org\n\n- Initial packaging.\n\n")
+
+            with open(os.path.join(td, "osc-collab.meson"), "w", encoding="utf-8") as f:
+                f.write(meson_code)
+
+            # Audit before fix: 2 bumps
+            drifts = meson_drift.audit_meson_drift(td)
+            self.assertEqual(len(drifts), 2)
+
+            # Apply fixes
+            fixed = meson_drift.fix_meson_drift(td)
+            self.assertEqual(len(fixed), 2)
+
+            # Read back spec and verify
+            with open(spec_file, "r", encoding="utf-8") as f:
+                new_spec = f.read()
+            self.assertIn("BuildRequires:  pkgconfig(gtk4) >= 4.16.0", new_spec)
+            self.assertIn("%define min_adw 1.8.alpha", new_spec)
+
+            # Verify 0 drifts remaining
+            remaining = meson_drift.audit_meson_drift(td)
+            self.assertEqual(len(remaining), 0)
+
+            # Record changelog
+            ok = meson_drift.record_drift_changelog(td, fixed)
+            self.assertTrue(ok)
+            with open(changes_file, "r", encoding="utf-8") as f:
+                new_changes = f.read()
+            self.assertIn("- Update version dependencies according to meson.build.", new_changes)
+
 if __name__ == "__main__":
     unittest.main()

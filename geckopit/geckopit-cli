@@ -318,6 +318,11 @@ def run_package_upgrade(pkg_dir=".", revision=None, dry_run=False):
             print("   \033[1mCleaned obsolete files:\033[0m")
             for rf in result.removed_files:
                 print(f"     • {rf}")
+        if getattr(result, "fixed_meson_drifts", None):
+            print("   \033[1mSynced Meson dependencies:\033[0m")
+            for fd in result.fixed_meson_drifts:
+                decl = fd.get("fixed_declaration") or f"{fd['package']} >= {fd['upstream_version']}"
+                print(f"     • {decl}")
         if result.diff_files:
             print("   \033[1mReview files generated:\033[0m")
             for df in result.diff_files.keys():
@@ -341,6 +346,9 @@ def run_package_upgrade(pkg_dir=".", revision=None, dry_run=False):
         num_diffs = len(result.diff_files or {})
         if num_diffs > 0:
             summary_parts.append(f"{num_diffs} review diff{'s' if num_diffs != 1 else ''} generated")
+        num_meson_fixed = len(getattr(result, "fixed_meson_drifts", []) or [])
+        if num_meson_fixed > 0:
+            summary_parts.append(f"{num_meson_fixed} Meson dep{'s' if num_meson_fixed != 1 else ''} synced")
 
         if summary_parts:
             print(f"   \033[1;36m✨ Summary:\033[0m {', '.join(summary_parts)}")
@@ -768,6 +776,25 @@ def run_forward_check(repos, show_pr=False, only_no_pr=False):
     print(f"\n*Total packages displayed: {len(rows)}*")
 
 
+def run_fix_deps_action(pkg_dir="."):
+    import meson_drift
+    pkg_dir = os.path.abspath(pkg_dir)
+    pkg_name = sb.get_package_name_from_dir(pkg_dir)
+    print(f"{sb.BOLD}=> Auditing and fixing Meson dependencies for '{pkg_name}'...{sb.RESET}")
+    fixed = meson_drift.fix_meson_drift(pkg_dir, on_log=print)
+    if fixed:
+        print(f"\n{sb.GREEN}✨ Successfully updated {len(fixed)} dependency declaration{'s' if len(fixed) != 1 else ''} in spec file:{sb.RESET}")
+        for fd in fixed:
+            decl = fd.get("fixed_declaration") or f"{fd['package']} >= {fd['upstream_version']}"
+            print(f"   • {decl}")
+        if meson_drift.record_drift_changelog(pkg_dir, fixed, on_log=print):
+            print(f"{sb.GREEN}📝 Recorded changelog entry in .changes{sb.RESET}")
+        return 0
+    else:
+        print(f"\n{sb.GREEN}✅ All Meson dependencies are already in sync. No changes needed.{sb.RESET}")
+        return 0
+
+
 def run_audit_deps_action(pkg_dir="."):
     pkg_dir = os.path.abspath(pkg_dir)
     pkg_name = sb.get_package_name_from_dir(pkg_dir)
@@ -797,6 +824,7 @@ def print_help():
     print(f"  {sb.BOLD}-v, --version [b]{sb.RESET}  Compares package versions against release-monitoring.org.")
     print(f"  {sb.BOLD}-f, --forward{sb.RESET}      Identifies forwardable next branches.")
     print(f"  {sb.BOLD}-d, --audit-deps{sb.RESET}   Audits Meson dependencies against .spec BuildRequires.")
+    print(f"  {sb.BOLD}--fix-deps{sb.RESET}         Audits and fixes .spec BuildRequires according to meson.build, recording a changelog entry.")
     print(f"  {sb.BOLD}--todo{sb.RESET}             Alias for default sync checking mode.")
     print("\nOptions:")
     print(f"  {sb.BOLD}--no-edit{sb.RESET}          Used with --commit to commit without opening an interactive editor.")
@@ -861,6 +889,14 @@ def main():
 
     if show_sync:
         sys.exit(run_sync_action(target_pkg_dir, force=force_sync, jobs=jobs_count))
+
+    # Parse fix-deps options
+    show_fix_deps = "--fix-deps" in sys.argv
+    if show_fix_deps:
+        if not target_pkg_dir:
+            print(f"{sb.RED}[Error]{sb.RESET} --fix-deps must be run inside a package directory (or target a package).", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(run_fix_deps_action(target_pkg_dir))
 
     # Parse audit-deps options
     show_audit_deps = "--audit-deps" in sys.argv or "-d" in sys.argv

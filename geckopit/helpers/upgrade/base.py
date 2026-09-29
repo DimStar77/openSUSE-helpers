@@ -39,7 +39,8 @@ class UpgradeResult:
         diff_files: Optional[Dict[str, str]] = None,
         has_retrospective_news: bool = False,
         has_obscpio_warning: bool = False,
-        removed_files: Optional[List[str]] = None
+        removed_files: Optional[List[str]] = None,
+        fixed_meson_drifts: Optional[List[Dict]] = None
     ):
         self.success = success
         self.message = message
@@ -52,6 +53,7 @@ class UpgradeResult:
         self.has_retrospective_news = has_retrospective_news
         self.has_obscpio_warning = has_obscpio_warning
         self.removed_files = removed_files or []
+        self.fixed_meson_drifts = fixed_meson_drifts or []
 
     def to_dict(self) -> Dict[str, Any]:
         return {

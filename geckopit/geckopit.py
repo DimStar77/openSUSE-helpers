@@ -2816,22 +2816,60 @@ class SyncWindow(Adw.ApplicationWindow):
         self.stable_drift_detail_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
         self.stable_drift_detail_revealer.set_reveal_child(False)
 
+        drift_s_detail_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        drift_s_detail_box.set_margin_start(28)
+        drift_s_detail_box.set_margin_end(8)
+        drift_s_detail_box.set_margin_bottom(6)
+
         self.stable_drift_lbl = Gtk.Label(halign=Gtk.Align.START)
         self.stable_drift_lbl.set_wrap(True)
         self.stable_drift_lbl.set_xalign(0.0)
         self.stable_drift_lbl.set_selectable(True)
         self.stable_drift_lbl.add_css_class("caption")
-        self.stable_drift_lbl.set_margin_start(28)
-        self.stable_drift_lbl.set_margin_end(8)
-        self.stable_drift_lbl.set_margin_bottom(6)
-        self.stable_drift_detail_revealer.set_child(self.stable_drift_lbl)
+        drift_s_detail_box.append(self.stable_drift_lbl)
+
+        # Inline Fix Action Button inside expander
+        fix_s_btn = Gtk.Button(label="🔧 Fix in .spec")
+        fix_s_btn.add_css_class("flat")
+        fix_s_btn.add_css_class("caption")
+        fix_s_btn.set_halign(Gtk.Align.START)
+        fix_s_btn.set_tooltip_text("Launches geckopit-cli --fix-deps in terminal drawer to sync .spec BuildRequires and record .changes")
+        fix_s_btn.connect("clicked", lambda b: self.on_fix_drift_clicked("factory"))
+        drift_s_detail_box.append(fix_s_btn)
+
+        self.stable_drift_detail_revealer.set_child(drift_s_detail_box)
+
+        # Right-click context popover menu
+        self.stable_drift_popover = Gtk.Popover()
+        self.stable_drift_popover.set_parent(drift_s_hdr)
+        pop_s_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        pop_s_box.set_margin_start(4)
+        pop_s_box.set_margin_end(4)
+        pop_s_box.set_margin_top(4)
+        pop_s_box.set_margin_bottom(4)
+        pop_s_btn = Gtk.Button(label="🔧 Fix Dependencies in .spec")
+        pop_s_btn.add_css_class("flat")
+        pop_s_btn.connect("clicked", lambda b: (self.stable_drift_popover.popdown(), self.on_fix_drift_clicked("factory")))
+        pop_s_box.append(pop_s_btn)
+        self.stable_drift_popover.set_child(pop_s_box)
 
         def on_stable_drift_click(gesture, n_press, x, y):
+            btn = gesture.get_current_button()
+            if btn == 3:  # Right-click context menu: anchor popover right at cursor
+                rect = Gdk.Rectangle()
+                rect.x = int(x)
+                rect.y = int(y)
+                rect.width = 1
+                rect.height = 1
+                self.stable_drift_popover.set_pointing_to(rect)
+                self.stable_drift_popover.popup()
+                return
             is_open = self.stable_drift_detail_revealer.get_reveal_child()
             self.stable_drift_detail_revealer.set_reveal_child(not is_open)
             self.stable_drift_chevron.set_from_icon_name("pan-down-symbolic" if not is_open else "pan-end-symbolic")
 
         s_click = Gtk.GestureClick.new()
+        s_click.set_button(0)  # Capture all mouse buttons
         s_click.connect("pressed", on_stable_drift_click)
         drift_s_hdr.add_controller(s_click)
 
@@ -2953,22 +2991,60 @@ class SyncWindow(Adw.ApplicationWindow):
         self.unstable_drift_detail_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
         self.unstable_drift_detail_revealer.set_reveal_child(False)
 
+        drift_u_detail_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        drift_u_detail_box.set_margin_start(28)
+        drift_u_detail_box.set_margin_end(8)
+        drift_u_detail_box.set_margin_bottom(6)
+
         self.unstable_drift_lbl = Gtk.Label(halign=Gtk.Align.START)
         self.unstable_drift_lbl.set_wrap(True)
         self.unstable_drift_lbl.set_xalign(0.0)
         self.unstable_drift_lbl.set_selectable(True)
         self.unstable_drift_lbl.add_css_class("caption")
-        self.unstable_drift_lbl.set_margin_start(28)
-        self.unstable_drift_lbl.set_margin_end(8)
-        self.unstable_drift_lbl.set_margin_bottom(6)
-        self.unstable_drift_detail_revealer.set_child(self.unstable_drift_lbl)
+        drift_u_detail_box.append(self.unstable_drift_lbl)
+
+        # Inline Fix Action Button inside expander
+        fix_u_btn = Gtk.Button(label="🔧 Fix in .spec")
+        fix_u_btn.add_css_class("flat")
+        fix_u_btn.add_css_class("caption")
+        fix_u_btn.set_halign(Gtk.Align.START)
+        fix_u_btn.set_tooltip_text("Launches geckopit-cli --fix-deps in terminal drawer to sync .spec BuildRequires and record .changes")
+        fix_u_btn.connect("clicked", lambda b: self.on_fix_drift_clicked("next"))
+        drift_u_detail_box.append(fix_u_btn)
+
+        self.unstable_drift_detail_revealer.set_child(drift_u_detail_box)
+
+        # Right-click context popover menu
+        self.unstable_drift_popover = Gtk.Popover()
+        self.unstable_drift_popover.set_parent(drift_u_hdr)
+        pop_u_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        pop_u_box.set_margin_start(4)
+        pop_u_box.set_margin_end(4)
+        pop_u_box.set_margin_top(4)
+        pop_u_box.set_margin_bottom(4)
+        pop_u_btn = Gtk.Button(label="🔧 Fix Dependencies in .spec")
+        pop_u_btn.add_css_class("flat")
+        pop_u_btn.connect("clicked", lambda b: (self.unstable_drift_popover.popdown(), self.on_fix_drift_clicked("next")))
+        pop_u_box.append(pop_u_btn)
+        self.unstable_drift_popover.set_child(pop_u_box)
 
         def on_unstable_drift_click(gesture, n_press, x, y):
+            btn = gesture.get_current_button()
+            if btn == 3:  # Right-click context menu: anchor popover right at cursor
+                rect = Gdk.Rectangle()
+                rect.x = int(x)
+                rect.y = int(y)
+                rect.width = 1
+                rect.height = 1
+                self.unstable_drift_popover.set_pointing_to(rect)
+                self.unstable_drift_popover.popup()
+                return
             is_open = self.unstable_drift_detail_revealer.get_reveal_child()
             self.unstable_drift_detail_revealer.set_reveal_child(not is_open)
             self.unstable_drift_chevron.set_from_icon_name("pan-down-symbolic" if not is_open else "pan-end-symbolic")
 
         u_click = Gtk.GestureClick.new()
+        u_click.set_button(0)  # Capture all mouse buttons
         u_click.connect("pressed", on_unstable_drift_click)
         drift_u_hdr.add_controller(u_click)
 
@@ -3403,6 +3479,15 @@ class SyncWindow(Adw.ApplicationWindow):
                 diff_text = f"Error performing git diff (Factory vs Pool): {str(e)}"
 
         GLib.idle_add(self.update_diff_text, diff_text)
+
+    def on_fix_drift_clicked(self, target_branch):
+        """Launches geckopit-cli --fix-deps in the terminal drawer on the target branch and leaves shell open."""
+        package_name = self.current_selected_package
+        if not package_name:
+            return
+
+        self.meson_drift_cache.pop(package_name, None)
+        self.allocate_terminal(package_name, target_branch, command="geckopit-cli --fix-deps")
 
     def on_pull_pool_clicked(self, btn):
         if getattr(self, "current_selected_package", None):
