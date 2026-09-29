@@ -502,7 +502,8 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         if old_rev:
             targets.extend([
                 ("meson.build", "osc-collab.meson"),
-                ("meson_options.txt", "osc-collab.meson_options")
+                ("meson_options.txt", "osc-collab.meson_options"),
+                ("meson_options.json", "osc-collab.meson_options")
             ])
 
         rev_range = f"{old_rev}..{new_rev or 'HEAD'}" if old_rev else None

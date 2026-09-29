@@ -704,6 +704,31 @@ Source2:        myapp.keyring
             self.assertTrue(os.path.exists(os.path.join(tmpdir, "_constraints")))
             self.assertTrue(os.path.exists(os.path.join(tmpdir, ".gitignore")))
 
+    def test_tarball_diff_meson_options_json(self):
+        import tarfile, io
+        with tempfile.TemporaryDirectory() as tmpdir:
+            old_tar = os.path.join(tmpdir, "pkg-1.0.tar.gz")
+            with tarfile.open(old_tar, "w:gz") as tf:
+                data = b'{"feature": {"type": "boolean", "value": false}}'
+                ti = tarfile.TarInfo("pkg-1.0/meson_options.json")
+                ti.size = len(data)
+                tf.addfile(ti, io.BytesIO(data))
+
+            new_tar = os.path.join(tmpdir, "pkg-1.1.tar.gz")
+            with tarfile.open(new_tar, "w:gz") as tf:
+                data = b'{"feature": {"type": "boolean", "value": true}}'
+                ti = tarfile.TarInfo("pkg-1.1/meson_options.json")
+                ti.size = len(data)
+                tf.addfile(ti, io.BytesIO(data))
+
+            helper = TarballUpgradeHelper(tmpdir)
+            old_b = helper.extract_member_content(old_tar, "meson_options.json")
+            new_b = helper.extract_member_content(new_tar, "meson_options.json")
+            self.assertIsNotNone(old_b)
+            self.assertIsNotNone(new_b)
+            self.assertIn('"value": false', old_b)
+            self.assertIn('"value": true', new_b)
+
     @mock.patch("subprocess.run")
     def test_tarball_upgrade_safe_temp_news_symlink_protection(self, mock_run):
         with tempfile.TemporaryDirectory() as tmpdir:

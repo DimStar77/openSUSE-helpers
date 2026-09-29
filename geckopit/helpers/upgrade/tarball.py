@@ -41,6 +41,7 @@ NEWS_CANDIDATES = [
 BUILD_CANDIDATES = [
     "meson.build",
     "meson_options.txt",
+    "meson_options.json",
     "CMakeLists.txt",
     "configure.ac",
 ]
@@ -391,7 +392,7 @@ class TarballUpgradeHelper(BaseUpgradeHelper):
                         tofile=f"{bc}.new"
                     ))
                     # Map filename e.g. meson.build -> osc-collab.meson
-                    clean_bc = bc.replace(".build", "").replace(".txt", "")
+                    clean_bc = bc.replace(".build", "").replace(".txt", "").replace(".json", "")
                     collab_b_path = os.path.join(self.package_dir, f"osc-collab.{clean_bc}")
                     with open(collab_b_path, "w", encoding="utf-8") as fh:
                         fh.write(diff_b)
