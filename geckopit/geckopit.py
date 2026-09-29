@@ -853,7 +853,7 @@ def detect_git_branch(path):
 class WorkspaceManagerDialog(Gtk.Window):
     def __init__(self, parent_window, config, callback_on_save):
         super().__init__(transient_for=parent_window, modal=True, title="Workspace Manager Settings")
-        self.set_default_size(550, 480)
+        self.set_default_size(600, 680)
         self.config = config
         self.parent_window = parent_window
         self.callback_on_save = callback_on_save
@@ -937,9 +937,53 @@ class WorkspaceManagerDialog(Gtk.Window):
 
         main_box.append(self.grid)
 
-        spacer = Gtk.Label()
-        spacer.set_vexpand(True)
-        main_box.append(spacer)
+        # Section: Ignored Versions Preferences Sub-Panel
+        ignored_header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        ignored_header_box.set_margin_top(8)
+        ignored_header_box.set_margin_bottom(4)
+
+        self.ignored_title_lbl = Gtk.Label(halign=Gtk.Align.START)
+        self.ignored_title_lbl.set_markup("<span weight='bold'>Ignored Unstable Versions</span>")
+        ignored_header_box.append(self.ignored_title_lbl)
+
+        self.ignored_count_badge = Gtk.Label(label="0")
+        self.ignored_count_badge.add_css_class("pill")
+        ignored_header_box.append(self.ignored_count_badge)
+
+        main_box.append(ignored_header_box)
+
+        # Scrolled window containing the list of ignored versions
+        self.ignored_scroll = Gtk.ScrolledWindow()
+        self.ignored_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.ignored_scroll.set_min_content_height(140)
+        self.ignored_scroll.set_max_content_height(190)
+        self.ignored_scroll.set_vexpand(True)
+        self.ignored_scroll.add_css_class("card")
+
+        self.ignored_list_box = Gtk.ListBox()
+        self.ignored_list_box.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.ignored_list_box.add_css_class("boxed-list")
+        self.ignored_scroll.set_child(self.ignored_list_box)
+        main_box.append(self.ignored_scroll)
+
+        # Inline add bar: Package Entry, Version Entry, Add Button
+        add_ignore_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        add_ignore_box.set_margin_top(6)
+        add_ignore_box.set_margin_bottom(6)
+
+        self.add_ignore_pkg_entry = Gtk.Entry(placeholder_text="Package name (e.g. vala)")
+        self.add_ignore_pkg_entry.set_hexpand(True)
+        self.add_ignore_ver_entry = Gtk.Entry(placeholder_text="Version (e.g. 0.57.0)")
+        self.add_ignore_ver_entry.set_hexpand(True)
+
+        btn_add_ignore = Gtk.Button(label="➕ Add")
+        btn_add_ignore.set_tooltip_text("Add version to profile ignore list")
+        btn_add_ignore.connect("clicked", self.on_add_ignore_entry_clicked)
+
+        add_ignore_box.append(self.add_ignore_pkg_entry)
+        add_ignore_box.append(self.add_ignore_ver_entry)
+        add_ignore_box.append(btn_add_ignore)
+        main_box.append(add_ignore_box)
 
         footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         footer.set_halign(Gtk.Align.END)
@@ -958,6 +1002,71 @@ class WorkspaceManagerDialog(Gtk.Window):
 
         self.load_profile_to_fields(self.config.active_workspace)
 
+    def update_ignored_list_ui(self):
+        while True:
+            row = self.ignored_list_box.get_row_at_index(0)
+            if not row:
+                break
+            self.ignored_list_box.remove(row)
+
+        count = len(self.current_ignored_versions)
+        self.ignored_count_badge.set_text(str(count))
+
+        if not self.current_ignored_versions:
+            empty_row = Gtk.ListBoxRow()
+            empty_lbl = Gtk.Label(label="No versions currently ignored in this profile.", halign=Gtk.Align.CENTER)
+            empty_lbl.add_css_class("dim-label")
+            empty_lbl.set_margin_top(14)
+            empty_lbl.set_margin_bottom(14)
+            empty_row.set_child(empty_lbl)
+            self.ignored_list_box.append(empty_row)
+            return
+
+        for pkg, ver in sorted(self.current_ignored_versions.items()):
+            row = Gtk.ListBoxRow()
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            box.set_margin_start(12)
+            box.set_margin_end(8)
+            box.set_margin_top(6)
+            box.set_margin_bottom(6)
+
+            pkg_lbl = Gtk.Label(halign=Gtk.Align.START)
+            pkg_lbl.set_markup(f"<span weight='bold'>{pkg}</span>")
+            box.append(pkg_lbl)
+
+            ver_badge = Gtk.Label(label=ver)
+            ver_badge.add_css_class("pill")
+            ver_badge.set_markup(f"<span foreground='#e66100' weight='bold'>{ver}</span>")
+            box.append(ver_badge)
+
+            spacer = Gtk.Label()
+            spacer.set_hexpand(True)
+            box.append(spacer)
+
+            del_btn = Gtk.Button.new_from_icon_name("user-trash-symbolic")
+            del_btn.add_css_class("flat")
+            del_btn.add_css_class("circular")
+            del_btn.set_tooltip_text(f"Unignore version {ver} for {pkg}")
+            del_btn.connect("clicked", lambda b, p=pkg: self.on_remove_ignored_version(p))
+            box.append(del_btn)
+
+            row.set_child(box)
+            self.ignored_list_box.append(row)
+
+    def on_remove_ignored_version(self, pkg_name):
+        if pkg_name in self.current_ignored_versions:
+            del self.current_ignored_versions[pkg_name]
+            self.update_ignored_list_ui()
+
+    def on_add_ignore_entry_clicked(self, btn):
+        pkg = self.add_ignore_pkg_entry.get_text().strip()
+        ver = self.add_ignore_ver_entry.get_text().strip()
+        if pkg and ver:
+            self.current_ignored_versions[pkg] = ver
+            self.add_ignore_pkg_entry.set_text("")
+            self.add_ignore_ver_entry.set_text("")
+            self.update_ignored_list_ui()
+
     def load_profile_to_fields(self, ws_name):
         prof = self.config.workspaces.get(ws_name, {})
         self.name_entry.set_text(ws_name)
@@ -966,6 +1075,8 @@ class WorkspaceManagerDialog(Gtk.Window):
         self.unstable_path_entry.set_text(prof.get("unstable_path", "") or "")
         self.unstable_br_entry.set_text(prof.get("unstable_branch", "next") or "next")
         self.del_btn.set_sensitive(len(self.config.workspaces) > 1)
+        self.current_ignored_versions = dict(prof.get("ignored_unstable_versions", {}))
+        self.update_ignored_list_ui()
 
     def on_profile_selection_changed(self, dropdown, pspec):
         active_idx = dropdown.get_selected()
@@ -1101,7 +1212,8 @@ class WorkspaceManagerDialog(Gtk.Window):
             "stable_path": stable_p,
             "stable_branch": stable_b,
             "unstable_path": unstable_p,
-            "unstable_branch": unstable_b
+            "unstable_branch": unstable_b,
+            "ignored_unstable_versions": dict(getattr(self, "current_ignored_versions", {}))
         }
 
         # If they renamed a profile, delete the old one
