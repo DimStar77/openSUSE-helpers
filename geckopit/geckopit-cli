@@ -310,6 +310,25 @@ def run_package_upgrade(pkg_dir=".", revision=None, dry_run=False):
             print("   \033[1;33m⚠️  Notice:\033[0m Upstream NEWS diff contains additions to older release sections. Please inspect 'osc-collab.NEWS' if past .changes entries should be annotated.")
         if getattr(result, "has_obscpio_warning", False):
             print("   \033[1;33m⚠️  Notice:\033[0m Package uses buildtime obscpio in a git-managed repository. Storing .obscpio in Git LFS is discouraged; migrating away from obscpio (e.g. via migrate_service.sh to manual tar.xz) is highly recommended.")
+
+        # Summary badge
+        summary_parts = []
+        if getattr(result, "old_version", None) and getattr(result, "new_version", None):
+            summary_parts.append(f"version {result.old_version} ➔ {result.new_version}")
+        elif getattr(result, "new_version", None):
+            summary_parts.append(f"version {result.new_version}")
+
+        num_removed = len(getattr(result, "removed_files", []) or [])
+        if num_removed > 0:
+            summary_parts.append(f"{num_removed} obsolete file{'s' if num_removed != 1 else ''} cleaned")
+
+        num_diffs = len(result.diff_files or {})
+        if num_diffs > 0:
+            summary_parts.append(f"{num_diffs} review diff{'s' if num_diffs != 1 else ''} generated")
+
+        if summary_parts:
+            print(f"   \033[1;36m✨ Summary:\033[0m {', '.join(summary_parts)}")
+
         return 0
     else:
         print(f"\033[1;31m=> Upgrade Failed:\033[0m {result.message}", file=sys.stderr)
