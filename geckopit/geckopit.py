@@ -288,9 +288,13 @@ class PackageRow(Gtk.ListBoxRow):
             u_behind = unstable_wt.get("behind", 0)
             s_ahead = stable_wt.get("ahead", 0)
             u_ahead = unstable_wt.get("ahead", 0)
+            has_conflict = stable_wt.get("has_conflict", False) or unstable_wt.get("has_conflict", False)
             dirty = stable_wt.get("dirty", False) or unstable_wt.get("dirty", False)
 
-            if s_behind > 0 or u_behind > 0:
+            if has_conflict:
+                subtitle_parts.append("Merge Conflict")
+                self.badges_box.append(self.create_badge("Conflict", "red"))
+            elif s_behind > 0 or u_behind > 0:
                 max_behind = max(s_behind, u_behind)
                 subtitle_parts.append(f"Pull needed (-{max_behind})")
                 self.badges_box.append(self.create_badge(f"Local -{max_behind}", "orange"))
@@ -1161,6 +1165,8 @@ class SyncWindow(Adw.ApplicationWindow):
         # Initialize filter timeout and state registries
         self.filter_timeout_id = 0
         self.term_zoom_timeout_id = 0
+        self.is_sync_running = False
+        self.sync_timeout_id = 0
         self.last_diff_package = None
         self.current_selected_package = None
         self.refreshed_packages = set()
@@ -1201,6 +1207,18 @@ class SyncWindow(Adw.ApplicationWindow):
         settings_btn.set_tooltip_text("Workspace Profile Manager Settings")
         settings_btn.connect("clicked", self.on_settings_clicked)
         self.header_bar.pack_start(settings_btn)
+
+        # Left: Workspace SCM Sync Button (git-project-sync)
+        self.sync_btn = Gtk.Button()
+        self.sync_stack = Gtk.Stack()
+        self.sync_icon = Gtk.Image.new_from_icon_name("emblem-synchronizing-symbolic")
+        self.sync_spinner = Gtk.Spinner()
+        self.sync_stack.add_named(self.sync_icon, "icon")
+        self.sync_stack.add_named(self.sync_spinner, "spinner")
+        self.sync_btn.set_child(self.sync_stack)
+        self.sync_btn.set_tooltip_text("Synchronize Workspace via git-project-sync")
+        self.sync_btn.connect("clicked", self.on_workspace_sync_clicked)
+        self.header_bar.pack_start(self.sync_btn)
 
         # Center Title
         title_lbl = Gtk.Label()
@@ -1547,6 +1565,169 @@ class SyncWindow(Adw.ApplicationWindow):
             pass
         return False
 
+    def on_workspace_sync_clicked(self, btn):
+        if getattr(self, "is_sync_running", False):
+            # If already running, clicking toggles the drawer open/closed to view live progress!
+            is_visible = self.terminal_drawer.get_visible()
+            self.terminal_drawer.set_visible(not is_visible)
+            if not is_visible:
+                for tab in self.terminal_tabs:
+                    if tab.get("pkg_name") == "Workspace Sync":
+                        page_num = self.notebook.page_num(tab["scroll_widget"])
+                        if page_num != -1:
+                            self.notebook.set_current_page(page_num)
+                        if tab.get("terminal"):
+                            tab["terminal"].grab_focus()
+                        break
+            return
+
+        sync_bin = sb.find_git_project_sync()
+        if not sync_bin:
+            toast = Adw.Toast.new("git-project-sync executable not found in PATH or ~/bin")
+            self.toast_overlay.add_toast(toast)
+            return
+
+        active_prof = self.config.get_active_profile()
+        stable_p = active_prof.get("stable_path")
+        unstable_p = active_prof.get("unstable_path")
+
+        targets = []
+        for p in (stable_p, unstable_p):
+            if p and os.path.isdir(p) and p not in targets:
+                targets.append(os.path.abspath(p))
+
+        if not targets:
+            toast = Adw.Toast.new("No workspace paths configured in active profile")
+            self.toast_overlay.add_toast(toast)
+            return
+
+        # Start visual spinner on sync button
+        self.is_sync_running = True
+        self.sync_stack.set_visible_child_name("spinner")
+        self.sync_spinner.start()
+        self.sync_btn.set_tooltip_text("Synchronizing workspace via git-project-sync (click to view live output)...")
+
+        # Allocate workspace terminal tab (hidden by default)
+        tab_state = self.allocate_workspace_terminal("Workspace Sync", targets[0], command=None, hidden=True)
+        term_widget = tab_state.get("terminal") if tab_state else None
+        if term_widget:
+            term_widget.feed(f"==> Launching git-project-sync across {len(targets)} target(s)...\r\n\r\n".encode("utf-8"))
+
+        def on_log_stream(line):
+            if term_widget:
+                GLib.idle_add(lambda l=line: term_widget.feed(f"{l}\r\n".encode("utf-8")))
+
+        def bg_sync_worker():
+            logs = []
+            def logged(l):
+                logs.append(l)
+                on_log_stream(l)
+
+            ok, updated, failed = sb.run_workspace_sync(targets, on_log=logged)
+            GLib.idle_add(self.on_workspace_sync_completed, ok, updated, failed, logs, targets, tab_state)
+
+        threading.Thread(target=bg_sync_worker, daemon=True).start()
+
+    def on_workspace_sync_completed(self, ok, updated, failed, logs, targets, tab_state):
+        self.is_sync_running = False
+        if hasattr(self, "sync_spinner"):
+            self.sync_spinner.stop()
+            self.sync_stack.set_visible_child_name("icon")
+        self.sync_btn.set_tooltip_text("Synchronize Workspace via git-project-sync")
+
+        drawer_was_opened_by_user = self.terminal_drawer.get_visible()
+
+        if ok and not failed:
+            if updated:
+                pkg_str = ", ".join(updated[:4])
+                if len(updated) > 4:
+                    pkg_str += "..."
+                toast = Adw.Toast.new(f"✅ Synced {len(updated)} package(s): {pkg_str}")
+                self.toast_overlay.add_toast(toast)
+                # Targeted refresh ONLY for the packages that actually changed!
+                for pkg in updated:
+                    self.refresh_single_package(pkg)
+            else:
+                toast = Adw.Toast.new("✅ Workspace is already up to date")
+                self.toast_overlay.add_toast(toast)
+                # 0 packages changed: zero bulk rescans!
+
+            # If the user did NOT manually open the drawer, close the tab quietly
+            if not drawer_was_opened_by_user and tab_state:
+                scroll = tab_state.get("scroll_widget")
+                if scroll:
+                    self.close_terminal_tab(scroll)
+        else:
+            # Errors or merge conflicts occurred!
+            fail_info = f" ({', '.join(failed)})" if failed else ""
+            toast = Adw.Toast.new(f"⚠️ Workspace sync encountered warnings or conflicts{fail_info}")
+            self.toast_overlay.add_toast(toast)
+
+            # Reveal terminal drawer so user can inspect and resolve
+            self.terminal_drawer.set_visible(True)
+            if tab_state:
+                scroll = tab_state.get("scroll_widget")
+                if scroll:
+                    page_num = self.notebook.page_num(scroll)
+                    if page_num != -1:
+                        self.notebook.set_current_page(page_num)
+                term = tab_state.get("terminal")
+                if term:
+                    term.grab_focus()
+
+            for pkg in failed:
+                self.refresh_single_package(pkg)
+
+    def allocate_workspace_terminal(self, title, working_dir, command, hidden=False):
+        """Deduplicates and allocates a custom workspace terminal tab (e.g. for git-project-sync)."""
+        if not hidden:
+            self.terminal_drawer.set_visible(True)
+
+        matching_tabs = [
+            tab for tab in self.terminal_tabs
+            if tab.get("pkg_name") == title
+        ]
+
+        for tab in matching_tabs:
+            if not self.is_shell_pid_active(tab["shell_pid"]):
+                page_num = self.notebook.page_num(tab["scroll_widget"])
+                if page_num != -1:
+                    self.notebook.set_current_page(page_num)
+                    if command:
+                        tab["terminal"].feed_child(f"{command}\n".encode('utf-8'))
+                    if not hidden and tab.get("terminal"):
+                        tab["terminal"].grab_focus()
+                    return
+
+        suffix = ""
+        if matching_tabs:
+            suffix = f" [{len(matching_tabs) + 1}]"
+
+        return self.show_terminal(title, "sync", command=command, suffix=suffix, custom_dir=working_dir, is_hidden_sync=hidden)
+
+        # Set safety timeout: if still running after 6 seconds, assume interactive input / attention needed
+        if hidden:
+            if getattr(self, "sync_timeout_id", 0) != 0:
+                GLib.source_remove(self.sync_timeout_id)
+
+            def check_sync_timeout():
+                self.sync_timeout_id = 0
+                if getattr(self, "is_sync_running", False):
+                    for tab in self.terminal_tabs:
+                        if tab.get("pkg_name") == title:
+                            if self.is_shell_pid_active(tab.get("shell_pid")):
+                                # Still active after 6s: reveal terminal drawer in case input is needed
+                                self.terminal_drawer.set_visible(True)
+                                page_num = self.notebook.page_num(tab["scroll_widget"])
+                                if page_num != -1:
+                                    self.notebook.set_current_page(page_num)
+                                if tab.get("terminal"):
+                                    tab["terminal"].grab_focus()
+                            break
+                return False
+
+            self.sync_timeout_id = GLib.timeout_add(6000, check_sync_timeout)
+
     def allocate_terminal(self, pkg_name, target_branch, command=None):
         """Deduplicates terminal tabs."""
         self.terminal_drawer.set_visible(True)
@@ -1572,9 +1753,14 @@ class SyncWindow(Adw.ApplicationWindow):
 
         self.show_terminal(pkg_name, target_branch, command, suffix)
 
-    def show_terminal(self, pkg_name, target_branch, command=None, suffix=""):
+    def show_terminal(self, pkg_name, target_branch, command=None, suffix="", custom_dir=None, is_hidden_sync=False):
         """Spawns a new VTE terminal tab inside the Gtk.Notebook drawer."""
-        resolved_dir = self.get_mapped_worktree_path(pkg_name, target_branch)
+        if custom_dir:
+            resolved_dir = custom_dir
+            label_text = f"{pkg_name}{suffix}"
+        else:
+            resolved_dir = self.get_mapped_worktree_path(pkg_name, target_branch)
+            label_text = f"{pkg_name} ({target_branch}){suffix}"
 
         terminal = Vte.Terminal()
         terminal.set_font(Pango.FontDescription.from_string(self.monospace_font))
@@ -1584,8 +1770,6 @@ class SyncWindow(Adw.ApplicationWindow):
         scroll.set_child(terminal)
 
         tab_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-
-        label_text = f"{pkg_name} ({target_branch}){suffix}"
         tab_label = Gtk.Label(label=label_text)
         tab_box.append(tab_label)
 
@@ -1615,7 +1799,8 @@ class SyncWindow(Adw.ApplicationWindow):
             "key_controller": key_controller,
             "shell_pid": None,
             "was_active": False,
-            "active_toast": None
+            "active_toast": None,
+            "is_hidden_sync": is_hidden_sync
         }
         self.terminal_tabs.append(tab_state)
 
@@ -1639,7 +1824,9 @@ class SyncWindow(Adw.ApplicationWindow):
             self.on_terminal_spawned,
             tab_state
         )
-        terminal.grab_focus()
+        if not is_hidden_sync:
+            terminal.grab_focus()
+        return tab_state
 
     def show_terminal_zoom_indicator(self, scale):
         """Displays temporary floating zoom percentage badge in the terminal drawer header."""
@@ -1676,7 +1863,16 @@ class SyncWindow(Adw.ApplicationWindow):
         return False
 
     def on_terminal_child_exited(self, terminal, status, scroll_widget):
+        exit_code = os.waitstatus_to_exitcode(status) if hasattr(os, "waitstatus_to_exitcode") else os.WEXITSTATUS(status)
+        tab_state = None
+        for t in self.terminal_tabs:
+            if t.get("scroll_widget") == scroll_widget:
+                tab_state = t
+                break
+
         GLib.idle_add(self.close_terminal_tab, scroll_widget)
+
+
 
     def on_terminal_spawned(self, terminal, pid, error, tab_state):
         if error is None:
@@ -1824,7 +2020,8 @@ class SyncWindow(Adw.ApplicationWindow):
                 if tab in self.terminal_tabs:
                     self.terminal_tabs.remove(tab)
 
-                self.refresh_single_package(pkg_name)
+                if pkg_name and pkg_name != "Workspace Sync":
+                    self.refresh_single_package(pkg_name)
                 break
 
         if self.notebook.get_n_pages() == 0:
@@ -3079,18 +3276,30 @@ class SyncWindow(Adw.ApplicationWindow):
 
         ahead = wt_info.get("ahead", 0)
         behind = wt_info.get("behind", 0)
+        has_conflict = wt_info.get("has_conflict", False)
         dirty = wt_info.get("dirty", False)
         untracked = wt_info.get("untracked", False)
 
         dirty_flag = ""
-        if dirty and untracked:
+        if has_conflict:
+            dirty_flag = " <span foreground='red' weight='bold' size='small'>[MERGE CONFLICT]</span>"
+        elif dirty and untracked:
             dirty_flag = " <span foreground='#f5c211' size='small'>[modified + untracked]</span>"
         elif dirty:
             dirty_flag = " <span foreground='#f5c211' size='small'>[uncommitted changes]</span>"
         elif untracked:
             dirty_flag = " <span foreground='#f5c211' size='small'>[untracked files]</span>"
 
-        if behind > 0 and ahead > 0:
+        if has_conflict:
+            lbl_widget.set_markup(
+                f"<span weight='bold' foreground='red'>⚠️ Merge Conflict (unresolved index entries)</span> "
+                f"(Behind: {behind} / Ahead: {ahead}){dirty_flag}"
+            )
+            pull_btn.set_sensitive(False)
+            pull_btn.set_label(f"📥 Pull ({behind})" if behind else "📥 Pull")
+            push_btn.set_sensitive(False)
+            push_btn.set_label(f"📤 Push ({ahead})" if ahead else "📤 Push")
+        elif behind > 0 and ahead > 0:
             lbl_widget.set_markup(
                 f"<span weight='bold' foreground='red'>Diverged from origin/{target_branch}</span> "
                 f"(Behind: {behind} / Ahead: {ahead}){dirty_flag}"
