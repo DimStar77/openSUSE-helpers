@@ -63,7 +63,9 @@ def render_single_package_dashboard(data):
             align_str = f"{sb.GREEN}✅ Up-to-date with {upstream_ref}{sb.RESET}"
         print(f"  Alignment:     {align_str}")
 
-        if dirty and untracked:
+        if wt.get("has_conflict"):
+            tree_str = f"{sb.RED}{sb.BOLD}⚠️  Merge Conflict (unresolved index entries){sb.RESET}"
+        elif dirty and untracked:
             tree_str = f"{sb.YELLOW}⚠️ Dirty (uncommitted modifications + untracked files){sb.RESET}"
         elif dirty:
             tree_str = f"{sb.YELLOW}⚠️ Dirty (uncommitted modifications){sb.RESET}"
@@ -162,6 +164,10 @@ def render_single_package_dashboard(data):
             actions.append(f"📤 Push local commits to remote: {sb.BOLD}git push origin {branch}{sb.RESET}")
         if dirty:
             actions.append(f"💾 Commit package changes: {sb.BOLD}geckopit-cli --commit{sb.RESET}")
+        if wt.get("has_conflict"):
+            actions.append(f"⚠️  Resolve merge conflicts in working tree: {sb.BOLD}git status / git mergetool{sb.RESET}")
+        elif behind > 0:
+            actions.append(f"🔄 Fast-forward from remote: {sb.BOLD}geckopit-cli --sync{sb.RESET}")
         if pool_behind > 0:
             actions.append(f"📥 Pull upstream changes from Pool: {sb.BOLD}git fetch https://src.opensuse.org/pool/{repo}.git factory && git merge FETCH_HEAD{sb.RESET}")
         if next_behind > 0:
@@ -333,6 +339,72 @@ def run_package_upgrade(pkg_dir=".", revision=None, dry_run=False):
     else:
         print(f"\033[1;31m=> Upgrade Failed:\033[0m {result.message}", file=sys.stderr)
         return 1
+
+
+def run_sync_action(target_pkg_dir=None, force=False, jobs=16):
+    sync_bin = sb.find_git_project_sync()
+    if not sync_bin:
+        print(f"\033[1;31m=> Error:\033[0m git-project-sync executable not found in PATH or ~/bin.", file=sys.stderr)
+        return 1
+
+    if target_pkg_dir:
+        pkg_dir = os.path.abspath(target_pkg_dir)
+        pkg_name = sb.get_package_name_from_dir(pkg_dir)
+        print(f"\033[1;34m=>\033[0m \033[1mGeckopit Package SCM Sync\033[0m: \033[1;37m{pkg_name}\033[0m")
+        print(f"\033[1;34m=>\033[0m Engine: \033[1;32mgit-project-sync\033[0m ({sync_bin})")
+        print(f"\033[1;34m=>\033[0m Target: \033[0;37m{pkg_dir}\033[0m")
+        if force:
+            print("\033[1;33m=> Mode: FORCE AUDIT (-f)\033[0m")
+        print()
+
+        ok, updated, failed = sb.run_workspace_sync([pkg_dir], jobs=jobs, force=force, on_log=lambda m: print(f"   {m}"))
+        print()
+        if ok and not failed:
+            print(f"\033[1;32m=> Sync Succeeded:\033[0m Package '{pkg_name}' synchronized with remote tracking.")
+            return 0
+        else:
+            print(f"\033[1;31m=> Sync Warning:\033[0m Synchronization failed or encountered conflicts in '{pkg_name}'.", file=sys.stderr)
+            return 1
+    else:
+        # Workspace-level sync
+        targets = []
+        if os.path.isfile(".gitmodules"):
+            targets = [os.path.abspath(".")]
+        else:
+            cfg = sb.load_config()
+            active_prof = cfg.get_active_profile() if hasattr(cfg, "get_active_profile") else {}
+            if not active_prof and isinstance(cfg, dict):
+                active_prof = cfg.get("profiles", {}).get(cfg.get("active_profile", ""), {})
+            sp = active_prof.get("stable_path")
+            up = active_prof.get("unstable_path")
+            for p in (sp, up):
+                if p and os.path.isdir(p) and p not in targets:
+                    targets.append(os.path.abspath(p))
+
+        if not targets:
+            targets = [os.path.abspath(".")]
+
+        print(f"\033[1;34m=>\033[0m \033[1mGeckopit Workspace SCM Sync\033[0m")
+        print(f"\033[1;34m=>\033[0m Engine: \033[1;32mgit-project-sync\033[0m ({sync_bin})")
+        print(f"\033[1;34m=>\033[0m Targets: \033[0;37m{', '.join(targets)}\033[0m")
+        if force:
+            print("\033[1;33m=> Mode: FORCE AUDIT (-f)\033[0m")
+        print()
+
+        ok, updated, failed = sb.run_workspace_sync(targets, jobs=jobs, force=force, on_log=lambda m: print(f"   {m}"))
+        print()
+        if ok and not failed:
+            summary = []
+            if updated:
+                summary.append(f"{len(updated)} package{'s' if len(updated) != 1 else ''} updated by bot ({', '.join(updated[:5])}{'...' if len(updated) > 5 else ''})")
+            else:
+                summary.append("workspace is fully up to date")
+            print(f"\033[1;32m=> Sync Succeeded:\033[0m {', '.join(summary)}")
+            return 0
+        else:
+            fail_str = f" ({', '.join(failed)})" if failed else ""
+            print(f"\033[1;31m=> Sync Notice:\033[0m Synchronization completed with warnings or conflicts{fail_str}.", file=sys.stderr)
+            return 1
 
 
 def run_package_commit(pkg_dir=".", interactive=True):
@@ -739,6 +811,21 @@ def main():
         target_pkg_dir = "."
     elif target_arg and sb.is_package_dir(target_arg):
         target_pkg_dir = target_arg
+
+    # Parse sync options
+    show_sync = "--sync" in sys.argv or "-s" in sys.argv or "--fetch" in sys.argv
+    force_sync = "--force" in sys.argv or "-f" in sys.argv
+    jobs_count = 16
+    for idx, arg in enumerate(sys.argv):
+        if arg in ("-j", "--jobs") and idx + 1 < len(sys.argv) and sys.argv[idx + 1].isdigit():
+            jobs_count = int(sys.argv[idx + 1])
+        elif arg.startswith("--jobs="):
+            v = arg.split("=", 1)[1]
+            if v.isdigit():
+                jobs_count = int(v)
+
+    if show_sync:
+        sys.exit(run_sync_action(target_pkg_dir, force=force_sync, jobs=jobs_count))
 
     # Parse commit options
     show_commit = "--commit" in sys.argv or "-c" in sys.argv

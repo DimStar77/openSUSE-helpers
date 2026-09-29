@@ -4,6 +4,7 @@ import sys
 import unittest
 import unittest.mock as mock
 import subprocess
+import tempfile
 
 # Ensure helpers are importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'helpers'))
@@ -179,6 +180,52 @@ class TestWorktreeTracking(unittest.TestCase):
         self.assertIn('stable_branch', conf)
         self.assertIn('unstable_branch', conf)
         self.assertEqual(conf.get('stable_branch'), 'factory')
+
+    @mock.patch("sync_backend.run_tracked")
+    @mock.patch("os.path.exists", return_value=True)
+    def test_unmerged_conflict_detection(self, mock_exists, mock_run):
+        porcelain_output = (
+            "# branch.oid 1234567890abcdef1234567890abcdef12345678\n"
+            "# branch.head next\n"
+            "# branch.upstream origin/next\n"
+            "# branch.ab +1 -1\n"
+            "u 100644 100644 100644 100644 1234567 1234567 1234567 AppStream.spec\n"
+        )
+        mock_proc = mock.MagicMock()
+        mock_proc.stdout = porcelain_output
+        mock_proc.returncode = 0
+        mock_run.return_value = mock_proc
+
+        res = sb.check_worktree_status("/fake/repo", "next")
+        self.assertTrue(res["exists"])
+        self.assertTrue(res["dirty"])
+        self.assertTrue(res["has_conflict"])
+
+    def test_find_git_project_sync(self):
+        found = sb.find_git_project_sync()
+        self.assertIsNotNone(found)
+        self.assertTrue(os.path.isfile(found))
+        self.assertTrue(os.access(found, os.X_OK))
+
+    @mock.patch("subprocess.Popen")
+    @mock.patch("sync_backend.find_git_project_sync", return_value="/bin/git-project-sync")
+    def test_run_workspace_sync_parsing(self, mock_find, mock_popen):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mock_proc = mock.MagicMock()
+            mock_proc.stdout = [
+                f"--- Synchronizing {tmpdir} ---\n",
+                "🚀 Bot update detected (2 package(s) changed: flatpak mozjs140 ). Fast-syncing...\n",
+                "Already up to date.\n"
+            ]
+            mock_proc.returncode = 0
+            mock_popen.return_value = mock_proc
+
+            logs = []
+            ok, updated, failed = sb.run_workspace_sync([tmpdir], on_log=logs.append)
+            self.assertTrue(ok)
+            self.assertEqual(updated, ["flatpak", "mozjs140"])
+            self.assertEqual(failed, [])
+            self.assertTrue(any("Bot update detected" in l for l in logs))
 
 if __name__ == '__main__':
     unittest.main()

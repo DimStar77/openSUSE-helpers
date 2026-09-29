@@ -827,7 +827,8 @@ def check_worktree_status(repo_path, expected_branch=None):
             "ahead": 0,
             "behind": 0,
             "dirty": False,
-            "untracked": False
+            "untracked": False,
+            "has_conflict": False
         }
 
     try:
@@ -841,6 +842,7 @@ def check_worktree_status(repo_path, expected_branch=None):
         behind = 0
         dirty = False
         untracked = False
+        has_conflict = False
 
         for line in res.stdout.splitlines():
             if line.startswith('# branch.head '):
@@ -858,7 +860,10 @@ def check_worktree_status(repo_path, expected_branch=None):
                 entry_name = line[2:].strip()
                 if not entry_name.endswith("/") and not os.path.isdir(os.path.join(repo_path, entry_name)):
                     untracked = True
-            elif line.startswith('1 ') or line.startswith('2 ') or line.startswith('u '):
+            elif line.startswith('u '):
+                dirty = True
+                has_conflict = True
+            elif line.startswith('1 ') or line.startswith('2 '):
                 dirty = True
 
         if upstream is None and expected_branch:
@@ -881,7 +886,8 @@ def check_worktree_status(repo_path, expected_branch=None):
             "ahead": ahead,
             "behind": behind,
             "dirty": dirty,
-            "untracked": untracked
+            "untracked": untracked,
+            "has_conflict": has_conflict
         }
     except Exception as e:
         return {
@@ -1172,3 +1178,100 @@ def check_single_package_full(pkg_dir=".", stable_branch=None, unstable_branch=N
         "pr": pr,
         "local_version": local_ver
     }
+
+
+def find_git_project_sync():
+    """Locates the git-project-sync executable in PATH, ~/bin, or repo git-helpers."""
+    import shutil
+    # 1. Check in PATH
+    found = shutil.which("git-project-sync")
+    if found and os.path.isfile(found) and os.access(found, os.X_OK):
+        return os.path.abspath(found)
+
+    # 2. Check in ~/bin
+    user_bin = os.path.expanduser("~/bin/git-project-sync")
+    if os.path.isfile(user_bin) and os.access(user_bin, os.X_OK):
+        return os.path.abspath(user_bin)
+
+    # 3. Check relative to this file: ../../git-helpers/git-project-sync
+    backend_dir = os.path.dirname(os.path.abspath(__file__))
+    sibling = os.path.abspath(os.path.join(backend_dir, "../../git-helpers/git-project-sync"))
+    if os.path.isfile(sibling) and os.access(sibling, os.X_OK):
+        return sibling
+
+    return None
+
+
+def run_workspace_sync(target_paths, jobs=16, force=False, on_log=None):
+    """
+    Runs git-project-sync sequentially across the specified target_paths.
+    Returns (success, updated_packages, failed_packages).
+    Streams output lines in real-time to on_log callback.
+    """
+    log = on_log or (lambda msg: None)
+    sync_bin = find_git_project_sync()
+    if not sync_bin:
+        log("Error: git-project-sync executable not found.")
+        return False, [], []
+
+    updated_submodules = set()
+    failed_packages = set()
+    overall_success = True
+
+    for path in target_paths:
+        if not path or not os.path.isdir(path):
+            continue
+
+        cmd = [sync_bin, "-j", str(jobs)]
+        if force:
+            cmd.append("-f")
+        cmd.append(os.path.abspath(path))
+
+        try:
+            p = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1
+            )
+            with _active_processes_lock:
+                if _active_processes is not None:
+                    _active_processes.append(p)
+
+            if p.stdout:
+                for line in p.stdout:
+                    clean_line = line.rstrip()
+                    if clean_line:
+                        log(clean_line)
+                        # Parse updated packages from bot update detection:
+                        # e.g.: 🚀 Bot update detected (2 package(s) changed: flatpak mozjs140 ). Fast-syncing...
+                        m_bot = re.search(r"changed:\s*([^)]+)\)", clean_line)
+                        if m_bot:
+                            pkgs = m_bot.group(1).split()
+                            for pkg in pkgs:
+                                updated_submodules.add(pkg)
+                        # Also catch single package sync lines:
+                        # e.g.: 🚀 Fast-forwarding AppStream on next...
+                        m_ff = re.search(r"Fast-forwarding\s+(\S+)", clean_line)
+                        if m_ff:
+                            updated_submodules.add(m_ff.group(1))
+                        # Detect failures:
+                        # e.g.: ⚠️  Fast-forward failed.
+                        if "Fast-forward failed" in clean_line or "error:" in clean_line.lower() or "conflict" in clean_line.lower():
+                            pkg_name = os.path.basename(path)
+                            failed_packages.add(pkg_name)
+
+            p.wait()
+            with _active_processes_lock:
+                if _active_processes is not None and p in _active_processes:
+                    _active_processes.remove(p)
+
+            if p.returncode != 0:
+                overall_success = False
+
+        except Exception as e:
+            log(f"Error running git-project-sync on {path}: {e}")
+            overall_success = False
+
+    return overall_success, sorted(updated_submodules), sorted(failed_packages)
