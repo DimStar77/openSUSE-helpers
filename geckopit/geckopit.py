@@ -1347,6 +1347,7 @@ class SyncWindow(Adw.ApplicationWindow):
         self.refreshed_packages = set()
         self.refreshed_sync_packages = set()
         self.refreshed_version_packages = set()
+        self.meson_drift_cache = {}
 
         # Global key event controller for application-wide shortcuts (Ctrl+F / Slash)
         window_key_controller = Gtk.EventControllerKey.new()
@@ -2342,6 +2343,8 @@ class SyncWindow(Adw.ApplicationWindow):
         if not self.repos or pkg_name not in self.repos:
             return
 
+        self.meson_drift_cache.pop(pkg_name, None)
+
         try:
             self.executor.submit(self.run_bg_sync_single, pkg_name)
             self.executor.submit(self.run_bg_version_single, pkg_name)
@@ -2781,6 +2784,63 @@ class SyncWindow(Adw.ApplicationWindow):
         self.open_term_fac_btn.connect("clicked", lambda btn: self.allocate_terminal(self.current_selected_package, "factory"))
         actions_box.append(self.open_term_fac_btn)
 
+        # Meson Dependency Drift Warning Expander for Stable Card (compact caption styling)
+        self.stable_drift_revealer = Gtk.Revealer()
+        self.stable_drift_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+
+        drift_s_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        drift_s_card.add_css_class("card")
+        drift_s_card.set_margin_top(4)
+        drift_s_card.set_margin_bottom(2)
+
+        drift_s_hdr = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        drift_s_hdr.set_margin_start(8)
+        drift_s_hdr.set_margin_end(8)
+        drift_s_hdr.set_margin_top(4)
+        drift_s_hdr.set_margin_bottom(4)
+
+        drift_s_icon = Gtk.Image.new_from_icon_name("dialog-warning-symbolic")
+        drift_s_icon.add_css_class("warning")
+        drift_s_hdr.append(drift_s_icon)
+
+        self.stable_drift_title_lbl = Gtk.Label(halign=Gtk.Align.START)
+        self.stable_drift_title_lbl.add_css_class("caption")
+        self.stable_drift_title_lbl.set_hexpand(True)
+        drift_s_hdr.append(self.stable_drift_title_lbl)
+
+        self.stable_drift_chevron = Gtk.Image.new_from_icon_name("pan-end-symbolic")
+        self.stable_drift_chevron.add_css_class("dim-label")
+        drift_s_hdr.append(self.stable_drift_chevron)
+
+        self.stable_drift_detail_revealer = Gtk.Revealer()
+        self.stable_drift_detail_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.stable_drift_detail_revealer.set_reveal_child(False)
+
+        self.stable_drift_lbl = Gtk.Label(halign=Gtk.Align.START)
+        self.stable_drift_lbl.set_wrap(True)
+        self.stable_drift_lbl.set_xalign(0.0)
+        self.stable_drift_lbl.set_selectable(True)
+        self.stable_drift_lbl.add_css_class("caption")
+        self.stable_drift_lbl.set_margin_start(28)
+        self.stable_drift_lbl.set_margin_end(8)
+        self.stable_drift_lbl.set_margin_bottom(6)
+        self.stable_drift_detail_revealer.set_child(self.stable_drift_lbl)
+
+        def on_stable_drift_click(gesture, n_press, x, y):
+            is_open = self.stable_drift_detail_revealer.get_reveal_child()
+            self.stable_drift_detail_revealer.set_reveal_child(not is_open)
+            self.stable_drift_chevron.set_from_icon_name("pan-down-symbolic" if not is_open else "pan-end-symbolic")
+
+        s_click = Gtk.GestureClick.new()
+        s_click.connect("pressed", on_stable_drift_click)
+        drift_s_hdr.add_controller(s_click)
+
+        drift_s_card.append(drift_s_hdr)
+        drift_s_card.append(self.stable_drift_detail_revealer)
+
+        self.stable_drift_revealer.set_child(drift_s_card)
+        box.append(self.stable_drift_revealer)
+
         box.append(actions_box)
         frame.set_child(box)
         return frame
@@ -2860,6 +2920,63 @@ class SyncWindow(Adw.ApplicationWindow):
         self.create_pr_btn = Gtk.Button(label="📤 Create PR")
         self.create_pr_btn.connect("clicked", self.on_detail_create_pr_clicked)
         actions_box.append(self.create_pr_btn)
+
+        # Meson Dependency Drift Warning Expander for Unstable Card (compact caption styling)
+        self.unstable_drift_revealer = Gtk.Revealer()
+        self.unstable_drift_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+
+        drift_u_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        drift_u_card.add_css_class("card")
+        drift_u_card.set_margin_top(4)
+        drift_u_card.set_margin_bottom(2)
+
+        drift_u_hdr = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        drift_u_hdr.set_margin_start(8)
+        drift_u_hdr.set_margin_end(8)
+        drift_u_hdr.set_margin_top(4)
+        drift_u_hdr.set_margin_bottom(4)
+
+        drift_u_icon = Gtk.Image.new_from_icon_name("dialog-warning-symbolic")
+        drift_u_icon.add_css_class("warning")
+        drift_u_hdr.append(drift_u_icon)
+
+        self.unstable_drift_title_lbl = Gtk.Label(halign=Gtk.Align.START)
+        self.unstable_drift_title_lbl.add_css_class("caption")
+        self.unstable_drift_title_lbl.set_hexpand(True)
+        drift_u_hdr.append(self.unstable_drift_title_lbl)
+
+        self.unstable_drift_chevron = Gtk.Image.new_from_icon_name("pan-end-symbolic")
+        self.unstable_drift_chevron.add_css_class("dim-label")
+        drift_u_hdr.append(self.unstable_drift_chevron)
+
+        self.unstable_drift_detail_revealer = Gtk.Revealer()
+        self.unstable_drift_detail_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.unstable_drift_detail_revealer.set_reveal_child(False)
+
+        self.unstable_drift_lbl = Gtk.Label(halign=Gtk.Align.START)
+        self.unstable_drift_lbl.set_wrap(True)
+        self.unstable_drift_lbl.set_xalign(0.0)
+        self.unstable_drift_lbl.set_selectable(True)
+        self.unstable_drift_lbl.add_css_class("caption")
+        self.unstable_drift_lbl.set_margin_start(28)
+        self.unstable_drift_lbl.set_margin_end(8)
+        self.unstable_drift_lbl.set_margin_bottom(6)
+        self.unstable_drift_detail_revealer.set_child(self.unstable_drift_lbl)
+
+        def on_unstable_drift_click(gesture, n_press, x, y):
+            is_open = self.unstable_drift_detail_revealer.get_reveal_child()
+            self.unstable_drift_detail_revealer.set_reveal_child(not is_open)
+            self.unstable_drift_chevron.set_from_icon_name("pan-down-symbolic" if not is_open else "pan-end-symbolic")
+
+        u_click = Gtk.GestureClick.new()
+        u_click.connect("pressed", on_unstable_drift_click)
+        drift_u_hdr.add_controller(u_click)
+
+        drift_u_card.append(drift_u_hdr)
+        drift_u_card.append(self.unstable_drift_detail_revealer)
+
+        self.unstable_drift_revealer.set_child(drift_u_card)
+        box.append(self.unstable_drift_revealer)
 
         box.append(actions_box)
         frame.set_child(box)
@@ -3198,6 +3315,53 @@ class SyncWindow(Adw.ApplicationWindow):
             toast = Adw.Toast.new("Diff copied to clipboard!")
             self.toast_overlay.add_toast(toast)
 
+    def run_bg_meson_drift(self, package_name, stable_p=None, unstable_p=None):
+        """Asynchronously checks for Meson dependency drift per branch in background thread without UI hitching."""
+        try:
+            import meson_drift
+            stable_drifts = meson_drift.audit_meson_drift(stable_p) if (stable_p and os.path.isdir(stable_p)) else []
+            unstable_drifts = meson_drift.audit_meson_drift(unstable_p) if (unstable_p and os.path.isdir(unstable_p)) else []
+            self.meson_drift_cache[package_name] = (stable_drifts, unstable_drifts)
+            GLib.idle_add(self.update_drift_banners, package_name, stable_drifts, unstable_drifts)
+        except Exception:
+            pass
+
+    def update_drift_banners(self, package_name, stable_drifts, unstable_drifts):
+        """Safely updates per-branch drift warning expanders on the main UI thread with zero animation jitter."""
+        if getattr(self, "current_selected_package", None) != package_name:
+            return False
+
+        def format_drift_caption(drifts):
+            lines = []
+            for d in drifts:
+                s_name = d.get("spec_name") or d["package"]
+                u_v = d.get("upstream_version")
+                op = d.get("comparator") or ">="
+                s_v = d.get("spec_version")
+                if s_v:
+                    lines.append(f"<span foreground='#e5a50a'>• <b>{s_name}</b> {op} {u_v} (spec currently requires &gt;= {s_v})</span>")
+                else:
+                    lines.append(f"<span foreground='#e5a50a'>• <b>{s_name}</b> {op} {u_v} (spec has unversioned BuildRequires)</span>")
+            return "\n".join(lines)
+
+        should_reveal_s = bool(stable_drifts)
+        if should_reveal_s:
+            count = len(stable_drifts)
+            self.stable_drift_title_lbl.set_markup(f"<span weight='bold' foreground='#e5a50a'>Meson Dependency Drift ({count} version bump{'s' if count != 1 else ''})</span>")
+            self.stable_drift_lbl.set_markup(format_drift_caption(stable_drifts))
+        if self.stable_drift_revealer.get_reveal_child() != should_reveal_s:
+            self.stable_drift_revealer.set_reveal_child(should_reveal_s)
+
+        should_reveal_u = bool(unstable_drifts)
+        if should_reveal_u:
+            count = len(unstable_drifts)
+            self.unstable_drift_title_lbl.set_markup(f"<span weight='bold' foreground='#e5a50a'>Meson Dependency Drift ({count} version bump{'s' if count != 1 else ''})</span>")
+            self.unstable_drift_lbl.set_markup(format_drift_caption(unstable_drifts))
+        if self.unstable_drift_revealer.get_reveal_child() != should_reveal_u:
+            self.unstable_drift_revealer.set_reveal_child(should_reveal_u)
+
+        return False
+
     def refresh_active_diff(self):
         package_name = self.current_selected_package
         if not package_name:
@@ -3511,6 +3675,19 @@ class SyncWindow(Adw.ApplicationWindow):
         # Resolve actual local on-disk versions for detail display
         stable_repo_p = self.get_mapped_worktree_path(package_name, "factory")
         unstable_repo_p = self.get_mapped_worktree_path(package_name, "next") if self.unstable_b else None
+
+        # Maintain stable Meson drift state without animation jitter on background scan updates
+        if package_name in self.meson_drift_cache:
+            s_drifts, u_drifts = self.meson_drift_cache[package_name]
+            self.update_drift_banners(package_name, s_drifts, u_drifts)
+        else:
+            self.stable_drift_revealer.set_reveal_child(False)
+            self.unstable_drift_revealer.set_reveal_child(False)
+            threading.Thread(
+                target=self.run_bg_meson_drift,
+                args=(package_name, stable_repo_p, unstable_repo_p),
+                daemon=True
+            ).start()
 
         local_stable_ver = sb.get_local_package_version(stable_repo_p)
         local_unstable_ver = sb.get_local_package_version(unstable_repo_p) if unstable_repo_p else None

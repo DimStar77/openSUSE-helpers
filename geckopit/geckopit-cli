@@ -18,6 +18,7 @@ if HELPERS_DIR not in sys.path:
 import sync_backend as sb
 import commit_helper as ch
 from upgrade import get_upgrade_helper, list_upgrade_helpers
+import meson_drift
 
 
 def render_single_package_dashboard(data):
@@ -183,6 +184,15 @@ def render_single_package_dashboard(data):
             h_cand = get_upgrade_helper(p_dir)
             if h_cand and getattr(h_cand, "uses_obscpio", None) and h_cand.uses_obscpio():
                 actions.append(f"⚠️  Migrate away from .obscpio (storing .obscpio in Git LFS is discouraged; migration to manual tar.xz highly recommended)")
+        except Exception:
+            pass
+
+        try:
+            p_dir = data.get('pkg_dir', '.')
+            drifts = meson_drift.audit_meson_drift(p_dir)
+            if drifts:
+                d_summary = meson_drift.format_drift_short_summary(drifts)
+                actions.append(f"{sb.YELLOW}{d_summary}{sb.RESET} (run {sb.BOLD}geckopit-cli --audit-deps{sb.RESET} for details)")
         except Exception:
             pass
 
@@ -758,6 +768,21 @@ def run_forward_check(repos, show_pr=False, only_no_pr=False):
     print(f"\n*Total packages displayed: {len(rows)}*")
 
 
+def run_audit_deps_action(pkg_dir="."):
+    pkg_dir = os.path.abspath(pkg_dir)
+    pkg_name = sb.get_package_name_from_dir(pkg_dir)
+    print(f"{sb.BOLD}=> Auditing Meson dependencies for '{pkg_name}'...{sb.RESET}")
+    drifts = meson_drift.audit_meson_drift(pkg_dir)
+    if drifts:
+        print()
+        print(meson_drift.format_drift_cli_report(drifts))
+        print(f"\n{sb.YELLOW}💡 Recommended Action:{sb.RESET} Update BuildRequires in {pkg_name}.spec to match upstream requirements.")
+        return 1
+    else:
+        print(f"\n{sb.GREEN}✅ All Meson dependencies are in sync with {pkg_name}.spec BuildRequires!{sb.RESET}")
+        return 0
+
+
 def print_help():
     print(f"{sb.BOLD}openSUSE Workspace Downstream Checker & Packaging Tool{sb.RESET}")
     print("\nAn optimized parallel dashboard and packaging tool for openSUSE maintainers.")
@@ -771,6 +796,7 @@ def print_help():
     print(f"  {sb.BOLD}-c, --commit{sb.RESET}       Stages packaging files, cleans whitespaces, and commits via $EDITOR.")
     print(f"  {sb.BOLD}-v, --version [b]{sb.RESET}  Compares package versions against release-monitoring.org.")
     print(f"  {sb.BOLD}-f, --forward{sb.RESET}      Identifies forwardable next branches.")
+    print(f"  {sb.BOLD}-d, --audit-deps{sb.RESET}   Audits Meson dependencies against .spec BuildRequires.")
     print(f"  {sb.BOLD}--todo{sb.RESET}             Alias for default sync checking mode.")
     print("\nOptions:")
     print(f"  {sb.BOLD}--no-edit{sb.RESET}          Used with --commit to commit without opening an interactive editor.")
@@ -835,6 +861,14 @@ def main():
 
     if show_sync:
         sys.exit(run_sync_action(target_pkg_dir, force=force_sync, jobs=jobs_count))
+
+    # Parse audit-deps options
+    show_audit_deps = "--audit-deps" in sys.argv or "-d" in sys.argv
+    if show_audit_deps:
+        if not target_pkg_dir:
+            print(f"{sb.RED}[Error]{sb.RESET} --audit-deps must be run inside a package directory (or target a package).", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(run_audit_deps_action(target_pkg_dir))
 
     # Parse commit options
     show_commit = "--commit" in sys.argv or "-c" in sys.argv

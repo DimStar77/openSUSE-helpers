@@ -205,11 +205,13 @@ class TarballUpgradeHelper(BaseUpgradeHelper):
                 tf = tarfile.open(tar_source, mode="r:*")
 
             with tf:
-                for member in tf.getmembers():
-                    if member.name.endswith("/" + candidate_name) or member.name == candidate_name:
-                        fh = tf.extractfile(member)
-                        if fh:
-                            return fh.read().decode("utf-8", errors="replace")
+                matches = [m for m in tf.getmembers() if m.name.endswith("/" + candidate_name) or m.name == candidate_name]
+                if matches:
+                    # Prefer shallowest path (root-level member)
+                    matches.sort(key=lambda m: m.name.count("/"))
+                    fh = tf.extractfile(matches[0])
+                    if fh:
+                        return fh.read().decode("utf-8", errors="replace")
         except Exception:
             pass
         return None
