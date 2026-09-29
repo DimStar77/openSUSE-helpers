@@ -73,6 +73,17 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         return None
 
     def get_package_name(self) -> str:
+        """Determines canonical package name (preferring .spec file over URL basename)."""
+        base = os.path.basename(self.package_dir)
+        try:
+            if os.path.isfile(os.path.join(self.package_dir, f"{base}.spec")):
+                return base
+            specs = [f[:-5] for f in os.listdir(self.package_dir) if f.endswith(".spec")]
+            if specs:
+                return specs[0]
+        except Exception:
+            pass
+
         service_file = os.path.join(self.package_dir, "_service")
         if os.path.isfile(service_file):
             try:
@@ -88,22 +99,112 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
             except Exception:
                 pass
 
-        base = os.path.basename(self.package_dir)
+        return base
+
+    def get_obsinfo_path(self, pkg_name: Optional[str] = None) -> Optional[str]:
+        """
+        Locates the primary .obsinfo file in package_dir.
+        Checks service filename param, package name, repo URL name, case variants,
+        and filters out submodule obsinfos.
+        """
+        service_file = os.path.join(self.package_dir, "_service")
+        filename_param = None
+        repo_name = None
+        submodule_names = set()
+
+        if os.path.isfile(service_file):
+            try:
+                tree = ET.parse(service_file)
+                root = tree.getroot()
+                for service in root.findall("service"):
+                    if service.get("name") in ("obs_scm", "tar_scm"):
+                        vfmt = None
+                        fname = None
+                        url_text = None
+                        for p in service.findall("param"):
+                            p_name = p.get("name")
+                            if p_name == "versionformat":
+                                vfmt = p.text.strip() if p.text else ""
+                            elif p_name == "filename":
+                                fname = p.text.strip() if p.text else ""
+                            elif p_name == "url":
+                                url_text = p.text.strip() if p.text else ""
+
+                        rname = None
+                        if url_text:
+                            u = re.sub(r"\.git/?$", "", url_text.strip())
+                            rname = u.rstrip("/").split("/")[-1]
+
+                        if vfmt == "0.gitmodule":
+                            if fname:
+                                submodule_names.add(fname)
+                            if rname:
+                                submodule_names.add(rname)
+                            continue
+
+                        if not filename_param and fname:
+                            filename_param = fname
+                        if not repo_name and rname:
+                            repo_name = rname
+            except Exception:
+                pass
+
+            if not filename_param or not repo_name:
+                try:
+                    with open(service_file, "r", encoding="utf-8", errors="replace") as f:
+                        content = f.read()
+                    if not filename_param:
+                        m_fn = re.search(r'<param\s+name=["\']filename["\']>([^<]+)</param>', content)
+                        if m_fn:
+                            filename_param = m_fn.group(1).strip()
+                    if not repo_name:
+                        m_u = re.search(r'<param\s+name=["\']url["\']>([^<]+)</param>', content)
+                        if m_u:
+                            u = re.sub(r"\.git/?$", "", m_u.group(1).strip())
+                            repo_name = u.rstrip("/").split("/")[-1]
+                except Exception:
+                    pass
+
+        actual_pkg = pkg_name or self.get_package_name()
+
+        candidates = []
+        if filename_param:
+            candidates.append(f"{filename_param}.obsinfo")
+        if actual_pkg:
+            candidates.append(f"{actual_pkg}.obsinfo")
+        if repo_name and repo_name not in candidates:
+            candidates.append(f"{repo_name}.obsinfo")
+
+        # 1. Exact matches
+        for cand in candidates:
+            p = os.path.join(self.package_dir, cand)
+            if os.path.isfile(p):
+                return p
+
+        # 2. Case-insensitive matches
         try:
-            if os.path.isfile(os.path.join(self.package_dir, f"{base}.spec")):
-                return base
-            specs = [f[:-5] for f in os.listdir(self.package_dir) if f.endswith(".spec")]
-            if specs:
-                return specs[0]
-        except Exception:
+            dir_files = os.listdir(self.package_dir)
+            lower_map = {f.lower(): f for f in dir_files if f.endswith(".obsinfo")}
+            for cand in candidates:
+                if cand.lower() in lower_map:
+                    return os.path.join(self.package_dir, lower_map[cand.lower()])
+
+            # 3. Fallback: filter out submodules
+            all_obsinfos = [f for f in dir_files if f.endswith(".obsinfo")]
+            non_sub = [f for f in all_obsinfos if f[:-8] not in submodule_names]
+            if len(non_sub) == 1:
+                return os.path.join(self.package_dir, non_sub[0])
+            if len(all_obsinfos) == 1:
+                return os.path.join(self.package_dir, all_obsinfos[0])
+        except OSError:
             pass
 
-        return os.path.basename(self.package_dir)
+        return None
 
-    def get_obsinfo_metadata(self, pkg_name: str) -> Tuple[Optional[str], Optional[str]]:
-        """Returns (version, commit) from <pkg_name>.obsinfo."""
-        obsinfo_file = os.path.join(self.package_dir, f"{pkg_name}.obsinfo")
-        if not os.path.isfile(obsinfo_file):
+    def get_obsinfo_metadata(self, pkg_name: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
+        """Returns (version, commit) from the package's .obsinfo file."""
+        obsinfo_file = self.get_obsinfo_path(pkg_name)
+        if not obsinfo_file or not os.path.isfile(obsinfo_file):
             return None, None
 
         version = None
@@ -119,6 +220,118 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         except Exception:
             pass
         return version, commit
+
+    def get_upstream_repo_dir(self, pkg_name: Optional[str] = None) -> Optional[str]:
+        """
+        Locates the directory where obs_scm cloned the upstream repository.
+        Checks repo name from URL, package name, case variations, and subdirectories with .git.
+        """
+        service_file = os.path.join(self.package_dir, "_service")
+        repo_name = None
+
+        if os.path.isfile(service_file):
+            try:
+                tree = ET.parse(service_file)
+                root = tree.getroot()
+                for service in root.findall("service"):
+                    if service.get("name") in ("obs_scm", "tar_scm"):
+                        vfmt = None
+                        url_text = None
+                        for p in service.findall("param"):
+                            p_name = p.get("name")
+                            if p_name == "versionformat":
+                                vfmt = p.text.strip() if p.text else ""
+                            elif p_name == "url":
+                                url_text = p.text.strip() if p.text else ""
+
+                        if vfmt == "0.gitmodule":
+                            continue
+
+                        if url_text:
+                            u = re.sub(r"\.git/?$", "", url_text.strip())
+                            repo_name = u.rstrip("/").split("/")[-1]
+                            break
+            except Exception:
+                pass
+
+            if not repo_name:
+                try:
+                    with open(service_file, "r", encoding="utf-8", errors="replace") as f:
+                        content = f.read()
+                    m = re.search(r'<param\s+name=["\']url["\']>([^<]+)</param>', content)
+                    if m:
+                        u = re.sub(r"\.git/?$", "", m.group(1).strip())
+                        repo_name = u.rstrip("/").split("/")[-1]
+                except Exception:
+                    pass
+
+        actual_pkg = pkg_name or self.get_package_name()
+
+        candidates = []
+        if repo_name:
+            candidates.append(repo_name)
+        if actual_pkg and actual_pkg not in candidates:
+            candidates.append(actual_pkg)
+
+        # 1. Exact candidate directory paths
+        for cand in candidates:
+            p = os.path.join(self.package_dir, cand)
+            if os.path.isdir(p) and (os.path.isdir(os.path.join(p, ".git")) or os.path.isfile(os.path.join(p, ".git"))):
+                return p
+
+        # 2. Case-insensitive candidate paths
+        try:
+            subdirs = [d for d in os.listdir(self.package_dir) if os.path.isdir(os.path.join(self.package_dir, d))]
+            lower_map = {d.lower(): d for d in subdirs}
+            for cand in candidates:
+                if cand.lower() in lower_map:
+                    p = os.path.join(self.package_dir, lower_map[cand.lower()])
+                    if os.path.isdir(os.path.join(p, ".git")) or os.path.isfile(os.path.join(p, ".git")):
+                        return p
+
+            # 3. Fallback: any subdirectory containing .git that is not .osc or hidden
+            for d in subdirs:
+                if d.startswith("."):
+                    continue
+                p = os.path.join(self.package_dir, d)
+                if os.path.isdir(os.path.join(p, ".git")) or os.path.isfile(os.path.join(p, ".git")):
+                    return p
+        except OSError:
+            pass
+
+        return None
+
+    def is_git_managed(self) -> bool:
+        """Returns True if this package directory is part of a git repository (not a legacy osc checkout)."""
+        if os.path.isdir(os.path.join(self.package_dir, ".osc")) and not os.path.exists(os.path.join(self.package_dir, ".git")):
+            return False
+        try:
+            res = subprocess.run(
+                ["git", "-C", self.package_dir, "rev-parse", "--is-inside-work-tree"],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            return res.returncode == 0 and res.stdout.strip() == "true"
+        except Exception:
+            return False
+
+    def uses_obscpio(self) -> bool:
+        """Returns True if the package is configured to produce or track .obscpio archives."""
+        service_file = os.path.join(self.package_dir, "_service")
+        if os.path.isfile(service_file):
+            try:
+                with open(service_file, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read()
+                is_manual_tar = bool(re.search(r'["\']tar["\'].*["\']manual["\']', content) or re.search(r'name=["\']tar["\']\s+mode=["\']manual["\']', content))
+                is_local_tar = bool(re.search(r'["\']tar["\'].*["\']local["\']', content) or re.search(r'name=["\']tar["\']\s+mode=["\']local["\']', content))
+                if is_manual_tar or is_local_tar:
+                    return False
+                if re.search(r'["\']tar["\'].*["\']buildtime["\']', content) or re.search(r'name=["\']tar["\']\s+mode=["\']buildtime["\']', content):
+                    return True
+            except OSError:
+                pass
+        return bool(glob.glob(os.path.join(self.package_dir, "*.obscpio")))
 
     def clean_stale_archives(self, on_log: Optional[Callable[[str], None]] = None) -> List[str]:
         """Removes *.obscpio and *.tar.xz archives prior to running service."""
@@ -180,7 +393,12 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
             return removed
         return []
 
-    def find_upstream_changelog_target(self, upstream_repo: str, old_rev: Optional[str] = None) -> str:
+    def find_upstream_changelog_target(
+        self,
+        upstream_repo: str,
+        old_rev: Optional[str] = None,
+        new_rev: Optional[str] = None
+    ) -> str:
         """
         Discovers the upstream release notes file.
         Prioritizes condensed, release-targeted files (NEWS*) over commit-dump logs (ChangeLog*).
@@ -194,10 +412,11 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         ]
 
         # 1. If old_rev is available, check which candidates actually changed in git
-        if old_rev:
+        rev_range = f"{old_rev}..{new_rev or 'HEAD'}" if old_rev else None
+        if rev_range:
             try:
                 res = subprocess.run(
-                    ["git", "-C", upstream_repo, "diff", "--no-ext-diff", "--name-only", f"{old_rev}..HEAD", "--"] + candidates,
+                    ["git", "-C", upstream_repo, "diff", "--no-ext-diff", "--name-only", rev_range, "--"] + candidates,
                     capture_output=True,
                     text=True,
                     check=False
@@ -213,7 +432,7 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
             # 1b. Check if an AppStream metainfo/appdata XML file was modified
             try:
                 res_all = subprocess.run(
-                    ["git", "-C", upstream_repo, "diff", "--no-ext-diff", "--name-only", f"{old_rev}..HEAD"],
+                    ["git", "-C", upstream_repo, "diff", "--no-ext-diff", "--name-only", rev_range],
                     capture_output=True,
                     text=True,
                     check=False
@@ -240,19 +459,20 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
 
     def extract_git_diffs(
         self,
-        pkg_name: str,
-        old_rev: str,
+        pkg_name: Optional[str] = None,
+        old_rev: Optional[str] = None,
+        new_rev: Optional[str] = None,
         new_ver: Optional[str] = None,
         on_log: Optional[Callable[[str], None]] = None
     ) -> Dict[str, str]:
-        """Extracts upstream git diffs between old_rev and HEAD for NEWS/ChangeLog and meson build files."""
+        """Extracts upstream git diffs between old_rev and new_rev (or HEAD) for NEWS/ChangeLog and meson build files."""
         diff_files = {}
-        upstream_repo = os.path.join(self.package_dir, pkg_name)
-        if not (os.path.isdir(upstream_repo) and os.path.exists(os.path.join(upstream_repo, ".git"))):
+        upstream_repo = self.get_upstream_repo_dir(pkg_name)
+        if not (upstream_repo and os.path.isdir(upstream_repo) and (os.path.isdir(os.path.join(upstream_repo, ".git")) or os.path.isfile(os.path.join(upstream_repo, ".git")))):
             return diff_files
 
         # Auto-detect upstream changelog filename (evaluating diff activity against old_rev)
-        changelog_target = self.find_upstream_changelog_target(upstream_repo, old_rev=old_rev)
+        changelog_target = self.find_upstream_changelog_target(upstream_repo, old_rev=old_rev, new_rev=new_rev)
 
         is_appstream = bool(re.search(r'(metainfo|appdata)\.xml(\.in)?$', changelog_target, re.IGNORECASE))
         if is_appstream:
@@ -276,38 +496,43 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
                     on_log(f"Extracted AppStream release notes from {changelog_target} for {new_ver or 'HEAD'}")
 
         targets = []
-        if not is_appstream:
+        if not is_appstream and old_rev:
             targets.append((changelog_target, "osc-collab.NEWS"))
-        targets.extend([
-            ("meson.build", "osc-collab.meson"),
-            ("meson_options.txt", "osc-collab.meson_options")
-        ])
+        if old_rev:
+            targets.extend([
+                ("meson.build", "osc-collab.meson"),
+                ("meson_options.txt", "osc-collab.meson_options")
+            ])
 
-        for git_target, out_filename in targets:
-            try:
-                res = subprocess.run(
-                    ["git", "-C", upstream_repo, "diff", "--no-ext-diff", f"{old_rev}..HEAD", "--", git_target],
-                    capture_output=True,
-                    text=True,
-                    check=False
-                )
-                if res.returncode == 0 and res.stdout.strip():
-                    out_path = os.path.join(self.package_dir, out_filename)
-                    with open(out_path, "w", encoding="utf-8") as f:
-                        f.write(res.stdout)
-                    diff_files[out_filename] = res.stdout
-            except Exception as e:
-                if on_log:
-                    on_log(f"Notice: Could not extract diff for {git_target}: {e}")
+        rev_range = f"{old_rev}..{new_rev or 'HEAD'}" if old_rev else None
+        if rev_range:
+            for git_target, out_filename in targets:
+                try:
+                    res = subprocess.run(
+                        ["git", "-C", upstream_repo, "diff", "--no-ext-diff", rev_range, "--", git_target],
+                        capture_output=True,
+                        text=True,
+                        check=False
+                    )
+                    if res.returncode == 0 and res.stdout.strip():
+                        out_path = os.path.join(self.package_dir, out_filename)
+                        with open(out_path, "w", encoding="utf-8") as f:
+                            f.write(res.stdout)
+                        diff_files[out_filename] = res.stdout
+                except Exception as e:
+                    if on_log:
+                        on_log(f"Notice: Could not extract diff for {git_target}: {e}")
 
-        if diff_files and on_log:
-            on_log(f"Extracted upstream diffs: {', '.join(diff_files.keys())}")
+        if diff_files:
+            self.ensure_gitignore_pattern("osc-collab.*")
+            if on_log:
+                on_log(f"Extracted upstream diffs: {', '.join(diff_files.keys())}")
 
         return diff_files
 
     def audit_and_drop_merged_patches(
         self,
-        pkg_name: str,
+        pkg_name: Optional[str] = None,
         on_log: Optional[Callable[[str], None]] = None
     ) -> List[str]:
         """
@@ -316,8 +541,8 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         If merged, deletes patch file, cleans spec file, and returns dropped patch list.
         """
         dropped_patches = []
-        upstream_repo = os.path.join(self.package_dir, pkg_name)
-        if not (os.path.isdir(upstream_repo) and os.path.exists(os.path.join(upstream_repo, ".git"))):
+        upstream_repo = self.get_upstream_repo_dir(pkg_name)
+        if not (upstream_repo and os.path.isdir(upstream_repo) and (os.path.isdir(os.path.join(upstream_repo, ".git")) or os.path.isfile(os.path.join(upstream_repo, ".git")))):
             return dropped_patches
 
         patch_files = glob.glob(os.path.join(self.package_dir, "*.patch"))
@@ -550,12 +775,19 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         log(f"New package state: version={new_ver or 'unknown'}, commit={new_rev[:8] if new_rev else 'unknown'}")
 
         # 5. Extract upstream diffs (NEWS/ChangeLog, meson.build, meson_options.txt)
-        diff_files = {}
-        if old_rev:
-            diff_files = self.extract_git_diffs(pkg_name, old_rev, new_ver=new_ver, on_log=log)
+        diff_files = self.extract_git_diffs(
+            pkg_name=pkg_name,
+            old_rev=old_rev,
+            new_rev=new_rev,
+            new_ver=new_ver,
+            on_log=log
+        )
 
-        # 6. Source duplication hygiene
+        # 6. Source duplication hygiene & obscpio git check
         self.clean_duplicate_obscpio_if_manual(on_log=log)
+        is_obscpio_git = self.is_git_managed() and self.uses_obscpio()
+        if is_obscpio_git:
+            log("⚠️  Notice: Package is using buildtime obscpio in a git-managed repository. Storing .obscpio in Git LFS is discouraged. Migrating away from obscpio (e.g. via migrate_service.sh to manual tar.xz) is highly recommended.")
 
         # 7. Audit and drop merged patches
         dropped_patches = self.audit_and_drop_merged_patches(pkg_name, on_log=log)
@@ -574,9 +806,10 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         else:
             log("⚠️  Notice: No upstream NEWS/changelog diff found. Please review upstream release notes.")
 
-        if new_ver and (old_rev != new_rev or not old_rev):
+        effective_ver = new_ver or (rev.lstrip("v") if not rev.startswith("@") else None)
+        if effective_ver and (old_rev != new_rev or not old_rev):
             self.update_changelog_via_osc(
-                new_ver,
+                effective_ver,
                 diff_text=news_diff,
                 dropped_patches=dropped_patches,
                 on_log=log
@@ -592,5 +825,6 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
             old_revision=old_rev,
             new_revision=new_rev,
             diff_files=diff_files,
-            has_retrospective_news=has_retro
+            has_retrospective_news=has_retro,
+            has_obscpio_warning=is_obscpio_git
         )

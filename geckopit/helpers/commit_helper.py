@@ -123,6 +123,23 @@ def stage_package_files(package_dir: str, on_log: Optional[Callable[[str], None]
     except Exception as e:
         return False, f"Error staging untracked files: {e}"
 
+    # 2b. If _service declares tar mode="buildtime", stage intermediate *.obscpio files (force add since *.obscpio is in .gitignore)
+    service_file = os.path.join(package_dir, "_service")
+    if os.path.isfile(service_file):
+        try:
+            with open(service_file, "r", encoding="utf-8", errors="replace") as f:
+                s_content = f.read()
+            if re.search(r'["\']tar["\'].*["\']buildtime["\']', s_content) or re.search(r'name=["\']tar["\']\s+mode=["\']buildtime["\']', s_content):
+                for obscpio_path in glob.glob(os.path.join(package_dir, "*.obscpio")):
+                    rel_obs = os.path.basename(obscpio_path)
+                    res = subprocess.run(["git", "-C", package_dir, "add", "-f", rel_obs], capture_output=True, check=False)
+                    if res.returncode == 0 and rel_obs not in staged_untracked:
+                        staged_untracked.append(rel_obs)
+                if on_log and any(f.endswith(".obscpio") for f in staged_untracked):
+                    on_log("⚠️  Notice: Staged .obscpio in git. Storing .obscpio in Git LFS is discouraged; migrating away from obscpio (e.g. via migrate_service.sh to manual tar.xz) is highly recommended.")
+        except Exception:
+            pass
+
     if staged_untracked and on_log:
         on_log(f"Staged new packaging files: {', '.join(staged_untracked)}")
 

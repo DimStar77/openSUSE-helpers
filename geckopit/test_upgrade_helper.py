@@ -445,5 +445,149 @@ Release:        0
             self.assertIn("+ New features:", formatted)
             self.assertIn("- First cool feature", formatted)
 
+    def test_obs_scm_get_obsinfo_path_and_metadata_mismatch(self):
+        """Tests case where repo URL is Junction.git, but obsinfo on disk is junction.obsinfo."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service_path = os.path.join(tmpdir, "_service")
+            with open(service_path, "w") as f:
+                f.write('''<services>
+  <service name="obs_scm" mode="manual">
+    <param name="url">https://github.com/sonnyp/Junction.git</param>
+    <param name="scm">git</param>
+    <param name="revision">v1.12</param>
+    <param name="filename">junction</param>
+  </service>
+</services>''')
+            obsinfo_path = os.path.join(tmpdir, "junction.obsinfo")
+            with open(obsinfo_path, "w") as f:
+                f.write('''name: junction
+version: 1.12
+mtime: 1768265974
+commit: 22cc7bade6a0d63b5ebeb3ab58f57f71ce1a26a1
+''')
+            spec_path = os.path.join(tmpdir, "junction.spec")
+            with open(spec_path, "w") as f:
+                f.write("Name: junction\nVersion: 1.12\n")
+
+            helper = ObsScmUpgradeHelper(tmpdir)
+            self.assertEqual(helper.get_package_name(), "junction")
+            found_obs = helper.get_obsinfo_path()
+            self.assertEqual(found_obs, obsinfo_path)
+
+            ver, rev = helper.get_obsinfo_metadata()
+            self.assertEqual(ver, "1.12")
+            self.assertEqual(rev, "22cc7bade6a0d63b5ebeb3ab58f57f71ce1a26a1")
+
+            # Calling with uppercase 'Junction' still finds junction.obsinfo
+            ver_u, rev_u = helper.get_obsinfo_metadata("Junction")
+            self.assertEqual(ver_u, "1.12")
+            self.assertEqual(rev_u, "22cc7bade6a0d63b5ebeb3ab58f57f71ce1a26a1")
+
+    def test_obs_scm_get_upstream_repo_dir(self):
+        """Tests discovery of cloned upstream directory matching URL basename case."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service_path = os.path.join(tmpdir, "_service")
+            with open(service_path, "w") as f:
+                f.write('''<services>
+  <service name="obs_scm">
+    <param name="url">https://github.com/sonnyp/Junction.git</param>
+  </service>
+</services>''')
+            # Package name is lowercase junction
+            with open(os.path.join(tmpdir, "junction.spec"), "w") as f:
+                f.write("Name: junction\n")
+
+            # Upstream clone directory is uppercase Junction
+            clone_dir = os.path.join(tmpdir, "Junction")
+            os.makedirs(os.path.join(clone_dir, ".git"))
+
+            helper = ObsScmUpgradeHelper(tmpdir)
+            found_repo = helper.get_upstream_repo_dir("junction")
+            self.assertEqual(found_repo, clone_dir)
+
+    def test_obs_scm_extract_appstream_diff(self):
+        """Tests AppStream release notes extraction without requiring old_rev."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service_path = os.path.join(tmpdir, "_service")
+            with open(service_path, "w") as f:
+                f.write('''<services>
+  <service name="obs_scm">
+    <param name="url">https://github.com/sonnyp/Junction.git</param>
+  </service>
+</services>''')
+            with open(os.path.join(tmpdir, "junction.spec"), "w") as f:
+                f.write("Name: junction\n")
+
+            clone_dir = os.path.join(tmpdir, "Junction")
+            data_dir = os.path.join(clone_dir, "data")
+            os.makedirs(os.path.join(clone_dir, ".git"))
+            os.makedirs(data_dir)
+
+            xml_path = os.path.join(data_dir, "re.sonny.Junction.metainfo.xml")
+            with open(xml_path, "w") as f:
+                f.write('''<?xml version="1.0" encoding="UTF-8"?>
+<component>
+  <releases>
+    <release version="1.13">
+      <description>
+        <ul>
+          <li>Use GNOME 51</li>
+          <li>Follow system color scheme</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+</component>''')
+
+            helper = ObsScmUpgradeHelper(tmpdir)
+            diffs = helper.extract_git_diffs(pkg_name="junction", new_ver="1.13")
+            self.assertIn("osc-collab.NEWS", diffs)
+            self.assertIn("Use GNOME 51", diffs["osc-collab.NEWS"])
+            self.assertIn("Follow system color scheme", diffs["osc-collab.NEWS"])
+
+    def test_ensure_gitignore_pattern(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            gi_path = os.path.join(tmpdir, ".gitignore")
+            with open(gi_path, "w") as f:
+                f.write("*.obscpio\n")
+
+            helper = ObsScmUpgradeHelper(tmpdir)
+            added = helper.ensure_gitignore_pattern("osc-collab.*")
+            self.assertTrue(added)
+
+            with open(gi_path, "r") as f:
+                content = f.read()
+            self.assertIn("osc-collab.*", content)
+
+            # Second call should not duplicate
+            added_again = helper.ensure_gitignore_pattern("osc-collab.*")
+            self.assertFalse(added_again)
+            with open(gi_path, "r") as f:
+                content_after = f.read()
+            self.assertEqual(content, content_after)
+
+    def test_obs_scm_is_git_managed_and_uses_obscpio(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service_path = os.path.join(tmpdir, "_service")
+            with open(service_path, "w") as f:
+                f.write('''<services>
+  <service name="tar" mode="buildtime" />
+</services>''')
+            helper = ObsScmUpgradeHelper(tmpdir)
+            self.assertTrue(helper.uses_obscpio())
+
+            # Legacy osc checkout (has .osc and no .git) is not git managed
+            os.makedirs(os.path.join(tmpdir, ".osc"))
+            self.assertFalse(helper.is_git_managed())
+
+            # Service with manual tar does not use obscpio
+            with open(service_path, "w") as f:
+                f.write('''<services>
+  <service name="tar" mode="manual" />
+</services>''')
+            self.assertFalse(helper.uses_obscpio())
+
+
+
 if __name__ == '__main__':
     unittest.main()
