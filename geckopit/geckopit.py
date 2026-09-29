@@ -1433,6 +1433,14 @@ class SyncWindow(Adw.ApplicationWindow):
         self.term_zoom_revealer.set_child(self.term_zoom_label)
         term_header.append(self.term_zoom_revealer)
 
+        # Auto-scroll on output toggle button
+        self.term_autoscroll_btn = Gtk.ToggleButton()
+        self.term_autoscroll_btn.set_icon_name("go-bottom-symbolic")
+        self.term_autoscroll_btn.set_active(True)
+        self.term_autoscroll_btn.set_tooltip_text("Auto-scroll on output: Enabled (click to pause)")
+        self.term_autoscroll_btn.connect("toggled", self.on_term_autoscroll_toggled)
+        term_header.append(self.term_autoscroll_btn)
+
         # Hide terminal button
         hide_btn = Gtk.Button.new_from_icon_name("window-close-symbolic")
         hide_btn.set_tooltip_text("Hide Terminal Console")
@@ -1940,6 +1948,8 @@ class SyncWindow(Adw.ApplicationWindow):
         terminal = Vte.Terminal()
         terminal.set_font(Pango.FontDescription.from_string(self.monospace_font))
         terminal.set_scrollback_lines(2000)
+        autoscroll_active = self.term_autoscroll_btn.get_active() if hasattr(self, "term_autoscroll_btn") else True
+        terminal.set_scroll_on_output(autoscroll_active)
 
         scroll = Gtk.ScrolledWindow()
         scroll.set_child(terminal)
@@ -1964,6 +1974,7 @@ class SyncWindow(Adw.ApplicationWindow):
         key_controller.connect("key-pressed", self.on_terminal_key_pressed, terminal)
         terminal.add_controller(key_controller)
 
+        vadj = scroll.get_vadjustment()
         tab_state = {
             "scroll_widget": scroll,
             "terminal": terminal,
@@ -1975,9 +1986,44 @@ class SyncWindow(Adw.ApplicationWindow):
             "shell_pid": None,
             "was_active": False,
             "active_toast": None,
-            "is_hidden_sync": is_hidden_sync
+            "is_hidden_sync": is_hidden_sync,
+            "frozen_val": vadj.get_value() if (hasattr(self, "term_autoscroll_btn") and not self.term_autoscroll_btn.get_active() and vadj) else None,
+            "last_upper": vadj.get_upper() if vadj else 0.0,
+            "updating_programmatically": False
         }
         self.terminal_tabs.append(tab_state)
+
+        # Wire vertical adjustment locking when auto-scroll is paused
+        def on_tab_vadj_changed(adj, state=tab_state):
+            if state.get("updating_programmatically"):
+                return
+            val = adj.get_value()
+            upper = adj.get_upper()
+            last_upper = state.get("last_upper", 0.0)
+
+            output_arrived = (upper > last_upper)
+            state["last_upper"] = upper
+
+            is_autoscroll = self.term_autoscroll_btn.get_active() if hasattr(self, "term_autoscroll_btn") else True
+            if not is_autoscroll:
+                if output_arrived:
+                    # Incoming process output: clamp viewport via GLib.idle_add so VTE redraws the frozen lines
+                    frozen = state.get("frozen_val")
+                    if frozen is not None:
+                        def restore_viewport():
+                            if hasattr(self, "term_autoscroll_btn") and not self.term_autoscroll_btn.get_active():
+                                state["updating_programmatically"] = True
+                                adj.set_value(frozen)
+                                state["updating_programmatically"] = False
+                            return False
+                        GLib.idle_add(restore_viewport)
+                else:
+                    # User manually scrolled with mousewheel or scrollbar: track user's new position
+                    state["frozen_val"] = val
+            else:
+                state["frozen_val"] = val
+
+        vadj.connect("value-changed", on_tab_vadj_changed)
 
         terminal.connect("child-exited", self.on_terminal_child_exited, scroll)
 
@@ -2002,6 +2048,36 @@ class SyncWindow(Adw.ApplicationWindow):
         if not is_hidden_sync:
             terminal.grab_focus()
         return tab_state
+
+    def on_term_autoscroll_toggled(self, btn):
+        """Toggles terminal auto-scroll across all open terminal tabs."""
+        is_active = btn.get_active()
+        if is_active:
+            btn.set_tooltip_text("Auto-scroll on output: Enabled (click to pause)")
+            for tab in self.terminal_tabs:
+                tab["frozen_val"] = None
+                terminal = tab.get("terminal")
+                if terminal:
+                    terminal.set_scroll_on_output(True)
+            current_page_idx = self.notebook.get_current_page()
+            if current_page_idx != -1:
+                page_widget = self.notebook.get_nth_page(current_page_idx)
+                if isinstance(page_widget, Gtk.ScrolledWindow):
+                    vadj = page_widget.get_vadjustment()
+                    if vadj:
+                        vadj.set_value(vadj.get_upper() - vadj.get_page_size())
+        else:
+            btn.set_tooltip_text("Auto-scroll on output: Paused (click to resume)")
+            for tab in self.terminal_tabs:
+                terminal = tab.get("terminal")
+                if terminal:
+                    terminal.set_scroll_on_output(False)
+                scroll_w = tab.get("scroll_widget")
+                if scroll_w:
+                    vadj = scroll_w.get_vadjustment()
+                    if vadj:
+                        tab["frozen_val"] = vadj.get_value()
+                        tab["last_upper"] = vadj.get_upper()
 
     def show_terminal_zoom_indicator(self, scale):
         """Displays temporary floating zoom percentage badge in the terminal drawer header."""
