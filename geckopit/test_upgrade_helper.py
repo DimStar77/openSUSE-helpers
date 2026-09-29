@@ -704,6 +704,74 @@ Source2:        myapp.keyring
             self.assertTrue(os.path.exists(os.path.join(tmpdir, "_constraints")))
             self.assertTrue(os.path.exists(os.path.join(tmpdir, ".gitignore")))
 
+    def test_tarball_audit_and_drop_merged_patches(self):
+        import tarfile, io
+        with tempfile.TemporaryDirectory() as tmpdir:
+            spec_path = os.path.join(tmpdir, "pkg.spec")
+            with open(spec_path, "w") as f:
+                f.write("""Name:           pkg
+Version:        1.0
+Release:        0
+Summary:        Test
+License:        GPL-2.0
+Source0:        pkg-%{version}.tar.gz
+Patch0:         fix.patch
+Patch1:         unmerged.patch
+%description
+Test
+""")
+            # Create patch files
+            fix_patch = os.path.join(tmpdir, "fix.patch")
+            with open(fix_patch, "w") as f:
+                f.write("""--- a/src/foo.c
++++ b/src/foo.c
+@@ -1,3 +1,3 @@
+ int main() {
+-    return 0;
++    return 1;
+ }
+""")
+            unmerged_patch = os.path.join(tmpdir, "unmerged.patch")
+            with open(unmerged_patch, "w") as f:
+                f.write("""--- a/src/bar.c
++++ b/src/bar.c
+@@ -1,3 +1,3 @@
+ int bar() {
+-    return 10;
++    return 20;
+ }
+""")
+
+            # Create new archive where fix.patch is incorporated, but unmerged.patch is not
+            new_tar = os.path.join(tmpdir, "pkg-1.1.tar.gz")
+            with tarfile.open(new_tar, "w:gz") as tf:
+                data_foo = b"int main() \n    return 1;\n}\n"
+                ti_foo = tarfile.TarInfo("pkg-1.1/src/foo.c")
+                ti_foo.size = len(data_foo)
+                tf.addfile(ti_foo, io.BytesIO(data_foo))
+
+                data_bar = b"int bar() \n    return 10;\n}\n"
+                ti_bar = tarfile.TarInfo("pkg-1.1/src/bar.c")
+                ti_bar.size = len(data_bar)
+                tf.addfile(ti_bar, io.BytesIO(data_bar))
+
+            helper = TarballUpgradeHelper(tmpdir)
+            logs = []
+            dropped = helper.audit_and_drop_merged_patches(new_tar, on_log=logs.append)
+
+            # fix.patch was merged and dropped
+            self.assertEqual(dropped, ["fix.patch"])
+            self.assertFalse(os.path.exists(fix_patch))
+
+            # unmerged.patch remains
+            self.assertTrue(os.path.exists(unmerged_patch))
+
+            # spec file reference for fix.patch removed, unmerged.patch retained
+            with open(spec_path, "r") as f:
+                spec_after = f.read()
+            self.assertNotIn("fix.patch", spec_after)
+            self.assertIn("unmerged.patch", spec_after)
+
     def test_tarball_diff_meson_options_json(self):
         import tarfile, io
         with tempfile.TemporaryDirectory() as tmpdir:

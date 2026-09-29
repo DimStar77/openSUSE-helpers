@@ -214,6 +214,128 @@ class TarballUpgradeHelper(BaseUpgradeHelper):
             pass
         return None
 
+    def audit_and_drop_merged_patches(
+        self,
+        new_archive_path: str,
+        on_log: Optional[Callable[[str], None]] = None
+    ) -> List[str]:
+        """
+        Scans package directory for *.patch files and checks if each patch
+        has been merged upstream into new_archive_path using reverse patch application.
+        If merged, removes patch from disk/SCM, updates .spec, and returns dropped patch list.
+        """
+        log = on_log or (lambda msg: None)
+        dropped_patches = []
+
+        patch_files = sorted(glob.glob(os.path.join(self.package_dir, "*.patch")))
+        if not patch_files or not os.path.isfile(new_archive_path):
+            return dropped_patches
+
+        is_lfs, oid, size = parse_lfs_pointer(new_archive_path)
+        tar_source = new_archive_path
+        fileobj = None
+        if is_lfs:
+            local_cache = find_local_lfs_object(self.package_dir, oid) if oid else None
+            if local_cache:
+                tar_source = local_cache
+            else:
+                data = smudge_lfs_object_in_memory(self.package_dir, oid, size)
+                if data:
+                    fileobj = io.BytesIO(data)
+                else:
+                    return dropped_patches
+
+        for patch_path in patch_files:
+            patch_name = os.path.basename(patch_path)
+            try:
+                with open(patch_path, "r", encoding="utf-8", errors="replace") as pf:
+                    patch_text = pf.read()
+            except OSError:
+                continue
+
+            target_files = set()
+            for line in patch_text.splitlines():
+                m = re.match(r"^(?:---|\+\+\+)\s+(\S+)", line)
+                if m:
+                    raw = m.group(1).strip()
+                    if raw != "/dev/null":
+                        cleaned = re.sub(r"^[ab]/", "", raw)
+                        target_files.add(cleaned)
+
+            if not target_files:
+                continue
+
+            is_merged = False
+            try:
+                if fileobj:
+                    fileobj.seek(0)
+                    tf = tarfile.open(fileobj=fileobj, mode="r:*")
+                else:
+                    tf = tarfile.open(tar_source, mode="r:*")
+
+                with tempfile.TemporaryDirectory() as extract_dir:
+                    root_prefix = None
+                    extract_kwargs = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
+                    for member in tf.getmembers():
+                        parts = member.name.split("/", 1)
+                        rel_path = parts[1] if len(parts) > 1 else parts[0]
+                        if rel_path in target_files:
+                            if root_prefix is None and len(parts) > 1:
+                                root_prefix = parts[0]
+                            tf.extract(member, path=extract_dir, **extract_kwargs)
+
+                    test_dir = os.path.join(extract_dir, root_prefix) if root_prefix else extract_dir
+
+                    for p_num in ["-p1", "-p0"]:
+                        res = subprocess.run(
+                            ["patch", "--dry-run", "--reverse", "--forward", "--batch", p_num, "-d", test_dir, "-i", patch_path],
+                            capture_output=True,
+                            text=True,
+                            check=False
+                        )
+                        if res.returncode == 0:
+                            is_merged = True
+                            break
+                tf.close()
+            except Exception as e:
+                log(f"Notice: Could not audit patch {patch_name}: {e}")
+
+            if is_merged:
+                dropped_patches.append(patch_name)
+                log(f"Detected merged patch: {patch_name} (carried upstream)")
+
+                if os.path.isdir(os.path.join(self.package_dir, ".osc")):
+                    try:
+                        subprocess.run(
+                            ["osc", "rm", "-f", patch_name],
+                            cwd=self.package_dir,
+                            capture_output=True,
+                            check=False
+                        )
+                    except Exception:
+                        pass
+
+                if os.path.exists(patch_path):
+                    try:
+                        os.remove(patch_path)
+                    except OSError:
+                        pass
+
+                spec_file = self.find_spec_file()
+                if spec_file:
+                    try:
+                        with open(spec_file, "r", encoding="utf-8") as f:
+                            orig_spec = f.read()
+                        clean_spec = remove_patch_from_spec(orig_spec, patch_name)
+                        if clean_spec != orig_spec:
+                            with open(spec_file, "w", encoding="utf-8") as f:
+                                f.write(clean_spec)
+                            log(f"Removed '{patch_name}' declaration from {os.path.basename(spec_file)}")
+                    except Exception:
+                        pass
+
+        return dropped_patches
+
     def execute_upgrade(
         self,
         target_revision: Optional[str] = None,
@@ -402,15 +524,18 @@ class TarballUpgradeHelper(BaseUpgradeHelper):
         if diff_files:
             self.ensure_gitignore_pattern("osc-collab.*")
 
+        # 4b. Audit and Drop Merged Patches
+        dropped_patches = self.audit_and_drop_merged_patches(new_archive_path, on_log=log)
+
         # 5. Format and Record .changes Entry via 'osc vc -F'
         has_retro = False
         if news_diff:
             has_retro = check_retrospective_news_changes(news_diff)
             if has_retro:
                 log("⚠️  Notice: Upstream NEWS diff contains additions to older release sections (e.g. historical CVE/GHSA annotations). Inspect 'osc-collab.NEWS' if past .changes entries should be updated.")
-            formatted_entry = format_changelog_entry(news_diff, target_version)
+            formatted_entry = format_changelog_entry(news_diff, target_version, dropped_patches=dropped_patches)
         else:
-            formatted_entry = f"- Update to version {target_version}."
+            formatted_entry = format_changelog_entry("", target_version, dropped_patches=dropped_patches)
 
         tmp_news = None
         try:
