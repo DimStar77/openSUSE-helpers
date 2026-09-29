@@ -3,42 +3,123 @@
 openSUSE Packaging post-merge Git Hook
 Runs automatically after a successful git merge or git pull.
 
-It scans the newly created merge commit (HEAD) for any added stable tarballs
-whose version doesn't match the Version: inside your local .spec file,
-and automatically unstages, deletes, and amends the merge commit to completely
-remove the unwanted stable tarball from the git history.
+When performing a catch-up merge (e.g. merging 'factory' into 'next'),
+it detects any source archives, detached signatures (.asc, .sig), or assets
+brought in from the other branch that are no longer referenced in the
+active package .spec file, and automatically unlinks and amends the merge
+commit to eliminate unwanted stale assets from the git history.
 """
 
 import sys
 import os
 import re
+import urllib.parse
 import subprocess
 
-def get_spec_version():
-    """Find the local .spec file and extract its Version: value."""
+def get_spec_referenced_files():
+    """Extract all source, signature, and patch filenames declared in the local .spec file."""
     spec_files = [f for f in os.listdir('.') if f.endswith('.spec')]
     if not spec_files:
-        return None
-    spec_file = spec_files[0]
+        return set()
+    spec_path = spec_files[0]
+    referenced = set()
+
+    # 1. Try librpm parseSpec natively
     try:
-        with open(spec_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                if line.strip().lower().startswith('version:'):
-                    return line.split(':', 1)[1].strip()
+        import rpm
+        ts = rpm.TransactionSet()
+        spec = ts.parseSpec(spec_path)
+        for s in spec.sources:
+            url_or_path = s[0]
+            parsed = urllib.parse.urlparse(url_or_path)
+            fname = os.path.basename(parsed.path) if parsed.path else os.path.basename(url_or_path)
+            if fname and not fname.startswith('%'):
+                referenced.add(fname)
+        if referenced:
+            return referenced
     except Exception:
         pass
-    return None
+
+    # 2. Fallback regex & macro expansion
+    try:
+        with open(spec_path, 'r', encoding='utf-8', errors='replace') as f:
+            content = f.read()
+
+        macros = {}
+        for line in content.splitlines():
+            line = line.strip()
+            if line.startswith('#'):
+                continue
+            m_def = re.match(r'^%(?:define|global)\s+([a-zA-Z0-9_]+)(?:\([^\)]*\))?\s+(.*)$', line)
+            if m_def:
+                macros[m_def.group(1)] = m_def.group(2).strip()
+                continue
+            m_tag = re.match(r'^(Name|Version|Release):\s*(.*)$', line, re.IGNORECASE)
+            if m_tag:
+                macros[m_tag.group(1).lower()] = m_tag.group(2).strip()
+
+        # Expand macros against each other
+        for _ in range(5):
+            changed = False
+            for k in list(macros.keys()):
+                val = macros[k]
+                for ok, ov in macros.items():
+                    if k == ok:
+                        continue
+                    pat = r'%\{?' + re.escape(ok) + r'\}?'
+                    nval = re.sub(pat, lambda m, repl=ov: repl, val, flags=re.IGNORECASE)
+                    if nval != val:
+                        macros[k] = nval
+                        val = nval
+                        changed = True
+            if not changed:
+                break
+
+        for line in content.splitlines():
+            if line.strip().startswith('#'):
+                continue
+            m_src = re.match(r'^(?:Source\d*|Patch\d*):\s*(\S+)', line.strip(), re.IGNORECASE)
+            if m_src:
+                val = m_src.group(1).strip()
+                for _ in range(5):
+                    ch = False
+                    for k, v in macros.items():
+                        pat = r'%\{?' + re.escape(k) + r'\}?'
+                        nv = re.sub(pat, lambda m, repl=v: repl, val, flags=re.IGNORECASE)
+                        if nv != val:
+                            val = nv
+                            ch = True
+                    if not ch:
+                        break
+                parsed = urllib.parse.urlparse(val)
+                fname = os.path.basename(parsed.path) if parsed.path else os.path.basename(val)
+                if fname and not fname.startswith('%'):
+                    referenced.add(fname)
+    except Exception:
+        pass
+
+    return referenced
 
 def main():
-    spec_version = get_spec_version()
-    if not spec_version:
-        sys.exit(0) # Not a package repo or no spec, exit cleanly
+    # 0. Only operate on true merge commits (HEAD must have at least 2 parents)
+    # Never amend fast-forward commits pulled from upstream!
+    try:
+        subprocess.run(
+            ['git', 'rev-parse', '--verify', '--quiet', 'HEAD^2'],
+            check=True, capture_output=True
+        )
+    except subprocess.CalledProcessError:
+        sys.exit(0) # Fast-forward pull or single-parent commit, exit cleanly
 
-    # 1. Get the list of all files modified/added in the last commit (HEAD)
-    # We pass --name-status to filter out deleted files (status 'D') which cannot be removed!
+    # Check if this directory is a package repository containing a .spec file
+    spec_sources = get_spec_referenced_files()
+    if not spec_sources:
+        sys.exit(0)
+
+    # 1. Get files added or modified in the merge commit relative to HEAD^1 (our branch before merge)
     try:
         res = subprocess.run(
-            ['git', 'diff-tree', '--no-commit-id', '--name-status', '-r', '-m', 'HEAD'],
+            ['git', 'diff-tree', '--no-commit-id', '--name-status', '-r', 'HEAD^1', 'HEAD'],
             check=True, capture_output=True, text=True
         )
         lines = res.stdout.splitlines()
@@ -53,38 +134,33 @@ def main():
             if status in ('A', 'M'): # Only check added or modified files
                 committed_files.append(file_path)
 
-    # 2. Check if any committed files are unwanted tarballs
-    tarball_extensions = ('.tar.xz', '.tar.gz', '.tar.bz2', '.tar.zst', '.zip')
-    unwanted_tarballs = []
-    
-    for file_path in committed_files:
-        if file_path.lower().endswith(tarball_extensions):
-            filename = os.path.basename(file_path)
-            
-            # Strip known extensions first so they don't get matched as part of the version string
-            filename_clean = filename
-            for ext in ('.tar.xz', '.tar.gz', '.tar.bz2', '.tar.zst', '.zip', '.tar'):
-                if filename_clean.lower().endswith(ext):
-                    filename_clean = filename_clean[:-len(ext)]
-            
-            # Extract version-like strings from the cleaned filename
-            match = re.search(r'-([0-9]+(?:\.[0-9a-zA-Z]+)+)', filename_clean)
-            if match:
-                file_version = match.group(1)
-                if file_version != spec_version:
-                    unwanted_tarballs.append(file_path)
+    # 2. Check if any incoming files are unreferenced source archives, signatures, or checksums
+    unwanted_extensions = (
+        '.tar.xz', '.tar.gz', '.tar.bz2', '.tar.zst', '.zip', '.obscpio',
+        '.asc', '.sig', '.sign', '.sha256', '.sha512'
+    )
+    unwanted_files = []
 
-    # 3. If any unwanted tarballs were committed, delete them and amend the merge commit
-    if unwanted_tarballs:
-        # De-duplicate the list (since -m lists them against each parent of a merge)
-        unwanted_tarballs = sorted(list(set(unwanted_tarballs)))
-        
-        print(f"🕒 Git Post-Merge Hook: Detected unwanted stable tarball(s) in merge commit: {', '.join(unwanted_tarballs)}", file=sys.stderr)
-        
-        # Remove and unstage the unwanted tarballs
-        for file_path in unwanted_tarballs:
+    for file_path in committed_files:
+        filename = os.path.basename(file_path)
+        # Skip core packaging files and dotfiles
+        if filename.startswith('.') or filename.endswith(('.spec', '.changes', '_service')) or filename == '_constraints':
+            continue
+
+        if filename.lower().endswith(unwanted_extensions):
+            if filename not in spec_sources:
+                unwanted_files.append(file_path)
+
+    # 3. If any unwanted files were brought in by the merge, delete them and amend the merge commit
+    if unwanted_files:
+        unwanted_files = sorted(list(set(unwanted_files)))
+
+        print(f"🕒 Git Post-Merge Hook: Detected unwanted archive/signature asset(s) from merged branch: {', '.join(unwanted_files)}", file=sys.stderr)
+
+        # Remove and unstage the unwanted files
+        for file_path in unwanted_files:
             subprocess.run(['git', 'rm', '-f', file_path], check=True)
-            
+
         # Clean up MERGE_HEAD so Git allows running git commit --amend inside post-merge
         try:
             res_git_dir = subprocess.run(
@@ -98,12 +174,11 @@ def main():
         except Exception:
             pass
 
-        # Amend the merge commit to cleanly remove them
-        # We temporarily set GIT_EDITOR=true to prevent git from opening the commit message editor during amend
+        # Amend the merge commit cleanly
         env = os.environ.copy()
         env['GIT_EDITOR'] = 'true'
-        
-        print("🕒 Git Post-Merge Hook: Amending the merge commit to completely remove unwanted tarball(s)...", file=sys.stderr)
+
+        print("🕒 Git Post-Merge Hook: Amending merge commit to cleanly drop unreferenced asset(s)...", file=sys.stderr)
         subprocess.run(['git', 'commit', '--amend', '--no-edit'], check=True, env=env)
         print("✅ Git Post-Merge Hook: Merge commit successfully amended and cleaned!", file=sys.stderr)
 
