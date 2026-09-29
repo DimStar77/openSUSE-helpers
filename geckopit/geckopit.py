@@ -15,6 +15,7 @@ import signal
 import re
 import time
 import json
+import html
 from pathlib import Path
 
 import gi
@@ -203,7 +204,7 @@ class PackageRow(Gtk.ListBoxRow):
 
         self.set_child(main_box)
 
-    def create_badge(self, text, color):
+    def create_badge(self, text, color, tooltip=None):
         label = Gtk.Label()
         label.set_margin_start(6)
         label.set_margin_end(6)
@@ -222,6 +223,8 @@ class PackageRow(Gtk.ListBoxRow):
         hex_color = color_map.get(color, "gray")
 
         label.set_markup(f"<span size='x-small' weight='bold' foreground='black' background='{hex_color}'>  {text}  </span>")
+        if tooltip:
+            label.set_tooltip_markup(tooltip)
         return label
 
     def update_ui(self, sync_data, version_data, pr_data, worktree_data=None):
@@ -244,20 +247,30 @@ class PackageRow(Gtk.ListBoxRow):
 
             if pool_behind > 0 or pool_ahead > 0:
                 subtitle_parts.append(f"Pool: B:{pool_behind}/A:{pool_ahead}")
-                self.badges_box.append(self.create_badge("Pool", "orange"))
+                tt = (
+                    f"<b>Central Pool Status</b>\n"
+                    f"• Behind Pool: <b>{pool_behind}</b> commit{'s' if pool_behind != 1 else ''} (Pull needed)\n"
+                    f"• Ahead of Pool: <b>{pool_ahead}</b> commit{'s' if pool_ahead != 1 else ''} (Submit needed)\n"
+                    f"• Remote: https://src.opensuse.org/pool/{self.package_name}.git"
+                )
+                self.badges_box.append(self.create_badge("Pool", "orange", tooltip=tt))
             elif pool_status == "Not in Pool":
                 subtitle_parts.append("Not in Gitea")
-                self.badges_box.append(self.create_badge("No Pool", "yellow"))
+                tt = f"<b>Central Pool Status</b>\n• Package <b>{self.package_name}</b> is not hosted in the central Gitea pool."
+                self.badges_box.append(self.create_badge("No Pool", "yellow", tooltip=tt))
             elif pool_status in ("Fetch failed", "Error"):
                 subtitle_parts.append(f"Pool: {pool_status}")
-                self.badges_box.append(self.create_badge("Pool Error", "red"))
+                tt = f"<b>Central Pool Status</b>\n• Remote fetch failed for pool/{self.package_name}.git: {pool_status}"
+                self.badges_box.append(self.create_badge("Pool Error", "red", tooltip=tt))
 
             if next_ahead > 0:
                 subtitle_parts.append(f"Next: +{next_ahead}")
-                self.badges_box.append(self.create_badge(f"+{next_ahead}", "cyan"))
+                tt = f"<b>Branch Forwarding</b>\n• Unstable is <b>{next_ahead}</b> commit{'s' if next_ahead != 1 else ''} ahead of stable."
+                self.badges_box.append(self.create_badge(f"+{next_ahead}", "cyan", tooltip=tt))
             elif next_behind > 0:
                 subtitle_parts.append(f"Next: -{next_behind}")
-                self.badges_box.append(self.create_badge(f"-{next_behind}", "red"))
+                tt = f"<b>Branch Forwarding</b>\n• Unstable is <b>{next_behind}</b> commit{'s' if next_behind != 1 else ''} behind stable (Catch-up merge needed)."
+                self.badges_box.append(self.create_badge(f"-{next_behind}", "red", tooltip=tt))
 
         # 2. Upstream Version updates
         if version_data:
@@ -268,17 +281,34 @@ class PackageRow(Gtk.ListBoxRow):
 
             if is_version_newer(upstream_stable, factory_ver, self.package_name):
                 subtitle_parts.append("Stable Update")
-                self.badges_box.append(self.create_badge("Stable 🔺", "green"))
+                tt = (
+                    f"<b>Stable Upstream Release</b>\n"
+                    f"• Current (factory): <b>{factory_ver}</b>\n"
+                    f"• Upstream Stable: <b>{upstream_stable}</b>"
+                )
+                self.badges_box.append(self.create_badge("Stable 🔺", "green", tooltip=tt))
 
             if is_version_newer(upstream_latest, next_ver, self.package_name):
                 subtitle_parts.append("Unstable Update")
-                self.badges_box.append(self.create_badge("Unstable 🔺", "purple"))
+                tt = (
+                    f"<b>Unstable Upstream Release</b>\n"
+                    f"• Current (next): <b>{next_ver}</b>\n"
+                    f"• Upstream Latest: <b>{upstream_latest}</b>"
+                )
+                self.badges_box.append(self.create_badge("Unstable 🔺", "purple", tooltip=tt))
 
         # 3. Active Pull Requests
         if pr_data and pr_data.get("has_pr", False):
             pr_num = pr_data.get("number", "PR")
+            pr_title = html.escape(str(pr_data.get("title") or "Pull Request"))
+            pr_url = pr_data.get("url") or "https://src.opensuse.org"
             subtitle_parts.append(f"PR #{pr_num}")
-            self.badges_box.append(self.create_badge(f"PR #{pr_num}", "green"))
+            tt = (
+                f"<b>Active Gitea Pull Request</b>\n"
+                f"• PR #{pr_num}: <b>{pr_title}</b>\n"
+                f"• URL: {pr_url}"
+            )
+            self.badges_box.append(self.create_badge(f"PR #{pr_num}", "green", tooltip=tt))
 
         # 4. Local worktree status (compact subtitle only to strictly preserve left-pane space)
         if worktree_data:
@@ -291,20 +321,51 @@ class PackageRow(Gtk.ListBoxRow):
             has_conflict = stable_wt.get("has_conflict", False) or unstable_wt.get("has_conflict", False)
             dirty = stable_wt.get("dirty", False) or unstable_wt.get("dirty", False)
 
+            s_desc = f"+{s_ahead} / -{s_behind}" if stable_wt.get("exists") else "no checkout"
+            u_desc = f"+{u_ahead} / -{u_behind}" if unstable_wt.get("exists") else "no checkout"
+
             if has_conflict:
                 subtitle_parts.append("Merge Conflict")
-                self.badges_box.append(self.create_badge("Conflict", "red"))
+                tt = (
+                    f"<b>Local Worktree Status</b>\n"
+                    f"• ⚠️ <b>Merge Conflict (unresolved index entries)</b>\n"
+                    f"• Stable worktree: {s_desc}\n"
+                    f"• Unstable worktree: {u_desc}\n"
+                    f"Run 'git status' or 'git mergetool' to resolve."
+                )
+                self.badges_box.append(self.create_badge("Conflict", "red", tooltip=tt))
             elif s_behind > 0 or u_behind > 0:
                 max_behind = max(s_behind, u_behind)
                 subtitle_parts.append(f"Pull needed (-{max_behind})")
-                self.badges_box.append(self.create_badge(f"Local -{max_behind}", "orange"))
+                tt = (
+                    f"<b>Local Worktree Status</b>\n"
+                    f"• Local branch is <b>behind remote</b> tracking\n"
+                    f"• Stable worktree: {s_desc}\n"
+                    f"• Unstable worktree: {u_desc}\n"
+                    f"Run 'git pull' or 'geckopit-cli --sync' to fast-forward."
+                )
+                self.badges_box.append(self.create_badge(f"Local -{max_behind}", "orange", tooltip=tt))
             elif s_ahead > 0 or u_ahead > 0:
                 max_ahead = max(s_ahead, u_ahead)
                 subtitle_parts.append(f"Unpushed (+{max_ahead})")
-                self.badges_box.append(self.create_badge(f"Local +{max_ahead}", "cyan"))
+                tt = (
+                    f"<b>Local Worktree Status</b>\n"
+                    f"• Local commits <b>ahead of remote</b> tracking\n"
+                    f"• Stable worktree: {s_desc}\n"
+                    f"• Unstable worktree: {u_desc}\n"
+                    f"Click 'Push' or run 'git push' to publish."
+                )
+                self.badges_box.append(self.create_badge(f"Local +{max_ahead}", "cyan", tooltip=tt))
             elif dirty:
                 subtitle_parts.append("Modified")
-                self.badges_box.append(self.create_badge("Dirty", "yellow"))
+                tt = (
+                    f"<b>Local Worktree Status</b>\n"
+                    f"• ⚠️ <b>Uncommitted modifications</b> present\n"
+                    f"• Stable worktree: {s_desc}\n"
+                    f"• Unstable worktree: {u_desc}\n"
+                    f"Run 'geckopit-cli --commit' to stage and commit."
+                )
+                self.badges_box.append(self.create_badge("Dirty", "yellow", tooltip=tt))
 
         # Apply subtitle
         if subtitle_parts:
