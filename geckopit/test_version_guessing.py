@@ -493,7 +493,10 @@ class TestSyncWindow(unittest.TestCase):
         # Verify tab2 was removed from terminal_tabs
         self.assertNotIn(tab2, mock_win.terminal_tabs)
         # Verify terminal1 grab_focus was scheduled
-        MockIdleAdd.assert_called_with(terminal1.grab_focus)
+        MockIdleAdd.assert_called_with(mock_win.idle_grab_focus, terminal1)
+        # Verify idle_grab_focus returns False to remove the GLib idle source
+        self.assertFalse(SyncWindow.idle_grab_focus(mock_win, terminal1))
+        terminal1.grab_focus.assert_called_once()
 
     def test_sync_diff_dialog_copy_action(self):
         from geckopit import SyncDiffDialog

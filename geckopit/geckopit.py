@@ -2114,12 +2114,12 @@ class SyncWindow(Adw.ApplicationWindow):
         return False
 
     def on_terminal_child_exited(self, terminal, status, scroll_widget):
-        exit_code = os.waitstatus_to_exitcode(status) if hasattr(os, "waitstatus_to_exitcode") else os.WEXITSTATUS(status)
-        tab_state = None
-        for t in self.terminal_tabs:
-            if t.get("scroll_widget") == scroll_widget:
-                tab_state = t
-                break
+        exit_code = -1
+        if status is not None and status >= 0:
+            try:
+                exit_code = os.waitstatus_to_exitcode(status) if hasattr(os, "waitstatus_to_exitcode") else os.WEXITSTATUS(status)
+            except (ValueError, OSError):
+                exit_code = status
 
         GLib.idle_add(self.close_terminal_tab, scroll_widget)
 
@@ -2162,18 +2162,7 @@ class SyncWindow(Adw.ApplicationWindow):
                     self.terminal_tabs.remove(tab)
                 continue
 
-            try:
-                reaped_pid, status = os.waitpid(shell_pid, os.WNOHANG)
-                if reaped_pid == shell_pid:
-                    tab["shell_pid"] = None
-                    GLib.idle_add(self.close_terminal_tab, tab["scroll_widget"])
-                    continue
-            except ChildProcessError:
-                tab["shell_pid"] = None
-                GLib.idle_add(self.close_terminal_tab, tab["scroll_widget"])
-                continue
-            except Exception:
-                pass
+
 
             is_active = self.is_shell_pid_active(shell_pid)
             was_active = tab["was_active"]
@@ -2213,6 +2202,12 @@ class SyncWindow(Adw.ApplicationWindow):
 
         return True
 
+    def idle_grab_focus(self, terminal):
+        """Focuses the terminal widget and explicitly returns False to prevent infinite idle loops."""
+        if terminal:
+            terminal.grab_focus()
+        return False
+
     def on_toast_clicked(self, toast, scroll_widget):
         page_num = self.notebook.page_num(scroll_widget)
         if page_num != -1:
@@ -2220,7 +2215,7 @@ class SyncWindow(Adw.ApplicationWindow):
             self.terminal_drawer.set_visible(True)
             for tab in self.terminal_tabs:
                 if tab["scroll_widget"] == scroll_widget and tab.get("terminal"):
-                    GLib.idle_add(tab["terminal"].grab_focus)
+                    GLib.idle_add(self.idle_grab_focus, tab["terminal"])
                     break
 
     def on_notebook_switch_page(self, notebook, page, page_num):
@@ -2235,7 +2230,7 @@ class SyncWindow(Adw.ApplicationWindow):
                     tab["active_toast"] = None
                 terminal = tab.get("terminal")
                 if terminal:
-                    GLib.idle_add(terminal.grab_focus)
+                    GLib.idle_add(self.idle_grab_focus, terminal)
                 break
 
     def close_terminal_tab(self, page_widget):
@@ -2259,7 +2254,7 @@ class SyncWindow(Adw.ApplicationWindow):
                     if terminal and controller:
                         terminal.remove_controller(controller)
 
-                    if terminal:
+                    if terminal and hasattr(terminal, "destroy"):
                         terminal.destroy()
 
                     tab["terminal"] = None
@@ -2283,8 +2278,7 @@ class SyncWindow(Adw.ApplicationWindow):
                 active_page = self.notebook.get_nth_page(current_idx)
                 for tab in self.terminal_tabs:
                     if tab["scroll_widget"] == active_page and tab.get("terminal"):
-                        terminal = tab["terminal"]
-                        GLib.idle_add(terminal.grab_focus)
+                        GLib.idle_add(self.idle_grab_focus, tab["terminal"])
                         break
 
     def hide_terminal(self):
