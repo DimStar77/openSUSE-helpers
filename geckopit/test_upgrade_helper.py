@@ -705,6 +705,52 @@ Source2:        myapp.keyring
             self.assertTrue(os.path.exists(os.path.join(tmpdir, ".gitignore")))
 
     @mock.patch("subprocess.run")
+    def test_tarball_upgrade_safe_temp_news_symlink_protection(self, mock_run):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            spec_path = os.path.join(tmpdir, "pkg.spec")
+            with open(spec_path, "w") as f:
+                f.write("Name: pkg\nVersion: 1.0.0\nRelease: 0\nSummary: test\nLicense: GPL-2.0\nSource0: pkg-%{version}.tar.xz\n")
+            with open(os.path.join(tmpdir, "pkg-1.0.0.tar.xz"), "w") as f:
+                f.write("old")
+
+            # Create sensitive target and a .NEWS symlink pointing to it
+            sensitive_target = os.path.join(tmpdir, "sensitive.txt")
+            with open(sensitive_target, "w") as f:
+                f.write("original sensitive data")
+            symlink_news = os.path.join(tmpdir, ".NEWS")
+            os.symlink(sensitive_target, symlink_news)
+
+            captured_osc_vc_args = []
+            def fake_run(cmd, *args, **kwargs):
+                if "download_files" in cmd:
+                    with open(os.path.join(tmpdir, "pkg-1.0.1.tar.xz"), "w") as f:
+                        f.write("new")
+                if "vc" in cmd and "-F" in cmd:
+                    captured_osc_vc_args.append(cmd)
+                res = mock.MagicMock()
+                res.returncode = 0
+                res.stdout = ""
+                return res
+
+            mock_run.side_effect = fake_run
+
+            helper = TarballUpgradeHelper(tmpdir)
+            res = helper.execute_upgrade(target_revision="1.0.1")
+            self.assertTrue(res.success)
+
+            # Sensitive target must not have been overwritten via symlink
+            with open(sensitive_target, "r") as f:
+                self.assertEqual(f.read(), "original sensitive data")
+
+            # Check that osc vc was called with an unpredictable .NEWS-* file, not static .NEWS
+            self.assertTrue(len(captured_osc_vc_args) > 0)
+            vc_cmd = captured_osc_vc_args[0]
+            f_idx = vc_cmd.index("-F")
+            passed_filename = vc_cmd[f_idx + 1]
+            self.assertTrue(passed_filename.startswith(".NEWS-"))
+            self.assertNotEqual(passed_filename, ".NEWS")
+
+    @mock.patch("subprocess.run")
     def test_tarball_upgrade_cleans_obsolete_signature_and_archive(self, mock_run):
         with tempfile.TemporaryDirectory() as tmpdir:
             spec_path = os.path.join(tmpdir, "AppStream.spec")

@@ -11,6 +11,7 @@ import os
 import re
 import shlex
 import subprocess
+import tempfile
 from typing import Optional, Callable, Dict, Tuple, List
 
 from .base import BaseUpgradeHelper, UpgradeResult
@@ -675,13 +676,15 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
             width=CHANGELOG_WRAP_WIDTH
         )
 
-        tmp_news = os.path.join(self.package_dir, ".NEWS")
+        tmp_news = None
         try:
-            with open(tmp_news, "w", encoding="utf-8") as f:
+            with tempfile.NamedTemporaryFile("w", dir=self.package_dir, prefix=".NEWS-", delete=False, encoding="utf-8") as f:
                 f.write(changelog_content + "\n")
+                tmp_news = f.name
 
+            rel_tmp_news = os.path.basename(tmp_news)
             res = subprocess.run(
-                ["osc", "vc", "-F", ".NEWS"],
+                ["osc", "vc", "-F", rel_tmp_news],
                 cwd=self.package_dir,
                 capture_output=True,
                 text=True,
@@ -697,8 +700,11 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
                     on_log(f"Warning: 'osc vc' returned code {res.returncode}: {err}")
                 return False
         finally:
-            if os.path.isfile(tmp_news):
-                os.remove(tmp_news)
+            if tmp_news and os.path.exists(tmp_news):
+                try:
+                    os.remove(tmp_news)
+                except OSError:
+                    pass
 
     def execute_upgrade(
         self,

@@ -12,6 +12,7 @@ import os
 import re
 import shlex
 import subprocess
+import tempfile
 import tarfile
 from typing import Optional, Dict, List, Tuple, Callable
 
@@ -410,13 +411,14 @@ class TarballUpgradeHelper(BaseUpgradeHelper):
         else:
             formatted_entry = f"- Update to version {target_version}."
 
-        tmp_news = os.path.join(self.package_dir, ".NEWS")
+        tmp_news = None
         try:
-            with open(tmp_news, "w", encoding="utf-8") as fh:
+            with tempfile.NamedTemporaryFile("w", dir=self.package_dir, prefix=".NEWS-", delete=False, encoding="utf-8") as fh:
                 fh.write(formatted_entry.rstrip() + "\n")
+                tmp_news = fh.name
             log("Recording changes entry using 'osc vc -F'...")
             subprocess.run(
-                ["osc", "vc", "-F", tmp_news],
+                ["osc", "vc", "-F", os.path.basename(tmp_news)],
                 cwd=self.package_dir,
                 capture_output=True,
                 check=True
@@ -424,8 +426,11 @@ class TarballUpgradeHelper(BaseUpgradeHelper):
         except subprocess.CalledProcessError as e:
             log(f"Warning: 'osc vc -F' failed: {e.stderr.decode() if e.stderr else e}")
         finally:
-            if os.path.isfile(tmp_news):
-                os.remove(tmp_news)
+            if tmp_news and os.path.exists(tmp_news):
+                try:
+                    os.remove(tmp_news)
+                except OSError:
+                    pass
 
         # 6. Clean obsolete files no longer referenced in spec (and any stale old archives)
         if new_archive_path:
