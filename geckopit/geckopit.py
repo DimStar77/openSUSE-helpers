@@ -4038,6 +4038,7 @@ class SyncWindow(Adw.ApplicationWindow):
                     self.toast_overlay.add_toast(toast)
                     self.load_package_detail(pkg_name)
                     self.update_row_ui(pkg_name)
+                    self.refresh_single_package_priority(pkg_name)
                 else:
                     toast = Adw.Toast.new(f"⚠️ Pull failed: {msg[:60]}. Opening terminal...")
                     self.toast_overlay.add_toast(toast)
@@ -4067,6 +4068,7 @@ class SyncWindow(Adw.ApplicationWindow):
                     self.toast_overlay.add_toast(toast)
                     self.load_package_detail(pkg_name)
                     self.update_row_ui(pkg_name)
+                    self.refresh_single_package_priority(pkg_name)
                 else:
                     toast = Adw.Toast.new(f"⚠️ Push failed: {msg[:60]}. Opening terminal...")
                     self.toast_overlay.add_toast(toast)
