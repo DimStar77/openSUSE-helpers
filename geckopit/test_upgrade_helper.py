@@ -12,6 +12,7 @@ from upgrade import (
     BaseUpgradeHelper,
     UpgradeResult,
     ObsScmUpgradeHelper,
+    TarballUpgradeHelper,
     get_upgrade_helper,
     list_upgrade_helpers,
     register_upgrade_helper
@@ -588,6 +589,210 @@ commit: 22cc7bade6a0d63b5ebeb3ab58f57f71ce1a26a1
             self.assertFalse(helper.uses_obscpio())
 
 
+    def test_get_referenced_files_librpm(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            spec_path = os.path.join(tmpdir, "testpkg.spec")
+            with open(spec_path, "w") as f:
+                f.write("""Name:           testpkg
+Version:        1.2.0
+Release:        0
+Summary:        Test summary
+License:        GPL-2.0
+Source0:        https://example.com/releases/%{name}-%{version}.tar.xz
+Source1:        https://example.com/releases/%{name}-%{version}.tar.xz.asc
+Source2:        testpkg.keyring
+Patch0:         fix-build.patch
+%description
+Test package
+""")
+            refs = BaseUpgradeHelper.get_referenced_files(spec_path=spec_path)
+            self.assertIn("testpkg-1.2.0.tar.xz", refs)
+            self.assertIn("testpkg-1.2.0.tar.xz.asc", refs)
+            self.assertIn("testpkg.keyring", refs)
+            self.assertIn("fix-build.patch", refs)
+
+    def test_get_referenced_files_fallback(self):
+        spec_content = """%define rname myapp
+%global subver 3.4.1
+Name:           %{rname}
+Version:        %{subver}
+Source0:        https://example.com/%{name}-%{version}.tar.xz
+Source1:        https://example.com/%{name}-%{version}.tar.xz.sig
+Source2:        myapp.keyring
+# Source99:     commented.tar.gz
+"""
+        refs = BaseUpgradeHelper._extract_referenced_files_fallback(spec_content)
+        self.assertIn("myapp-3.4.1.tar.xz", refs)
+        self.assertIn("myapp-3.4.1.tar.xz.sig", refs)
+        self.assertIn("myapp.keyring", refs)
+        self.assertNotIn("commented.tar.gz", refs)
+
+    def test_clean_obsolete_files_path_traversal_prevention(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            external_file = os.path.join(tmpdir, "secret.txt")
+            with open(external_file, "w") as f:
+                f.write("sensitive data")
+
+            pkg_dir = os.path.join(tmpdir, "pkg")
+            os.makedirs(pkg_dir)
+
+            valid_obsolete = os.path.join(pkg_dir, "old-1.0.tar.xz")
+            with open(valid_obsolete, "w") as f:
+                f.write("obsolete content")
+
+            helper = TarballUpgradeHelper(pkg_dir)
+            malicious_inputs = {
+                "../secret.txt",
+                "../../secret.txt",
+                external_file,
+                "/etc/shadow",
+                "subdir/nested.tar.gz",
+                "old-1.0.tar.xz",
+            }
+            logs = []
+            removed = helper.clean_obsolete_files(malicious_inputs, on_log=logs.append)
+
+            # Valid obsolete file inside pkg_dir was removed
+            self.assertFalse(os.path.exists(valid_obsolete))
+            self.assertEqual(removed, ["old-1.0.tar.xz"])
+
+            # External file must remain completely untouched
+            self.assertTrue(os.path.exists(external_file))
+            with open(external_file, "r") as f:
+                self.assertEqual(f.read(), "sensitive data")
+
+    def test_clean_obsolete_files_guards(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            files_to_create = [
+                "pkg-1.0.tar.xz",
+                "pkg-1.0.tar.xz.asc",
+                "pkg.keyring",
+                "pkg.spec",
+                "pkg.changes",
+                "_service",
+                "_constraints",
+                ".gitignore"
+            ]
+            for fname in files_to_create:
+                with open(os.path.join(tmpdir, fname), "w") as f:
+                    f.write("content")
+
+            helper = TarballUpgradeHelper(tmpdir)
+            obsolete_candidates = {
+                "pkg-1.0.tar.xz",
+                "pkg-1.0.tar.xz.asc",
+                "pkg.spec",
+                "pkg.changes",
+                "_service",
+                "_constraints",
+                ".gitignore",
+                "nonexistent-file.tar.gz"
+            }
+            logs = []
+            removed = helper.clean_obsolete_files(obsolete_candidates, on_log=logs.append)
+
+            # Obsolete files removed
+            self.assertFalse(os.path.exists(os.path.join(tmpdir, "pkg-1.0.tar.xz")))
+            self.assertFalse(os.path.exists(os.path.join(tmpdir, "pkg-1.0.tar.xz.asc")))
+            self.assertEqual(sorted(removed), ["pkg-1.0.tar.xz", "pkg-1.0.tar.xz.asc"])
+
+            # Protected packaging files must remain intact
+            self.assertTrue(os.path.exists(os.path.join(tmpdir, "pkg.keyring")))
+            self.assertTrue(os.path.exists(os.path.join(tmpdir, "pkg.spec")))
+            self.assertTrue(os.path.exists(os.path.join(tmpdir, "pkg.changes")))
+            self.assertTrue(os.path.exists(os.path.join(tmpdir, "_service")))
+            self.assertTrue(os.path.exists(os.path.join(tmpdir, "_constraints")))
+            self.assertTrue(os.path.exists(os.path.join(tmpdir, ".gitignore")))
+
+    @mock.patch("subprocess.run")
+    def test_tarball_upgrade_cleans_obsolete_signature_and_archive(self, mock_run):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            spec_path = os.path.join(tmpdir, "AppStream.spec")
+            with open(spec_path, "w") as f:
+                f.write("""Name:           AppStream
+Version:        1.2.0
+Release:        0
+Summary:        AppStream tools
+License:        LGPL-2.1-or-later
+Source0:        https://example.com/AppStream-%{version}.tar.xz
+Source1:        https://example.com/AppStream-%{version}.tar.xz.asc
+Source2:        AppStream.keyring
+%description
+AppStream description
+""")
+            # Create old source archive and asc
+            old_tar = os.path.join(tmpdir, "AppStream-1.2.0.tar.xz")
+            old_asc = os.path.join(tmpdir, "AppStream-1.2.0.tar.xz.asc")
+            keyring = os.path.join(tmpdir, "AppStream.keyring")
+            with open(old_tar, "w") as f: f.write("old archive")
+            with open(old_asc, "w") as f: f.write("old asc")
+            with open(keyring, "w") as f: f.write("keyring")
+
+            helper = TarballUpgradeHelper(tmpdir)
+
+            def fake_run(cmd, *args, **kwargs):
+                # When download_files runs, pretend it downloaded new archive and asc
+                if "download_files" in cmd:
+                    with open(os.path.join(tmpdir, "AppStream-1.2.1.tar.xz"), "w") as f:
+                        f.write("new archive")
+                    with open(os.path.join(tmpdir, "AppStream-1.2.1.tar.xz.asc"), "w") as f:
+                        f.write("new asc")
+                res = mock.MagicMock()
+                res.returncode = 0
+                res.stdout = ""
+                return res
+
+            mock_run.side_effect = fake_run
+
+            logs = []
+            result = helper.execute_upgrade(target_revision="1.2.1", on_log=logs.append)
+            self.assertTrue(result.success)
+
+            # Old files removed
+            self.assertFalse(os.path.exists(old_tar))
+            self.assertFalse(os.path.exists(old_asc))
+
+            # New files present
+            self.assertTrue(os.path.exists(os.path.join(tmpdir, "AppStream-1.2.1.tar.xz")))
+            self.assertTrue(os.path.exists(os.path.join(tmpdir, "AppStream-1.2.1.tar.xz.asc")))
+            self.assertTrue(os.path.exists(keyring))
+
+            self.assertIn("AppStream-1.2.0.tar.xz", result.removed_files)
+            self.assertIn("AppStream-1.2.0.tar.xz.asc", result.removed_files)
+
+    def test_tarball_upgrade_dry_run_reports_obsolete_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            spec_path = os.path.join(tmpdir, "AppStream.spec")
+            with open(spec_path, "w") as f:
+                f.write("""Name:           AppStream
+Version:        1.2.0
+Release:        0
+Summary:        AppStream tools
+License:        LGPL-2.1-or-later
+Source0:        https://example.com/AppStream-%{version}.tar.xz
+Source1:        https://example.com/AppStream-%{version}.tar.xz.asc
+Source2:        AppStream.keyring
+%description
+AppStream description
+""")
+            old_tar = os.path.join(tmpdir, "AppStream-1.2.0.tar.xz")
+            old_asc = os.path.join(tmpdir, "AppStream-1.2.0.tar.xz.asc")
+            with open(old_tar, "w") as f: f.write("old archive")
+            with open(old_asc, "w") as f: f.write("old asc")
+
+            helper = TarballUpgradeHelper(tmpdir)
+            logs = []
+            res = helper.execute_upgrade(target_revision="1.2.1", dry_run=True, on_log=logs.append)
+            self.assertTrue(res.success)
+
+            # In dry-run, files must NOT be deleted
+            self.assertTrue(os.path.exists(old_tar))
+            self.assertTrue(os.path.exists(old_asc))
+
+            self.assertIn("AppStream-1.2.0.tar.xz", res.removed_files)
+            self.assertIn("AppStream-1.2.0.tar.xz.asc", res.removed_files)
+            self.assertTrue(any("Would remove obsolete file: AppStream-1.2.0.tar.xz" in l for l in logs))
+            self.assertTrue(any("Would remove obsolete file: AppStream-1.2.0.tar.xz.asc" in l for l in logs))
 
 if __name__ == '__main__':
     unittest.main()

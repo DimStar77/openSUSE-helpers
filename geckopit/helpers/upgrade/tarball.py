@@ -266,18 +266,10 @@ class TarballUpgradeHelper(BaseUpgradeHelper):
         if not old_archive_path and existing_archives:
             old_archive_path = existing_archives[0]
 
-        if dry_run:
-            log(f"[DRY-RUN] Would update Version in {spec_basename}: {current_version} ➔ {target_version}")
-            log(f"[DRY-RUN] Would run 'osc service mr download_files' to retrieve new source archive")
-            return UpgradeResult(
-                True,
-                f"[DRY-RUN] Validation completed for {package_name} (target: {target_version})",
-                package_name=package_name,
-                old_version=current_version,
-                new_version=target_version
-            )
+        # Extract referenced files before version bump
+        old_referenced = self.get_referenced_files(spec_path=spec_file)
 
-        # 1. Bump Version in .spec
+        # Calculate new spec content with bumped Version
         new_spec_content = re.sub(
             r"^(Version:\s*)\S+",
             r"\g<1>" + target_version,
@@ -285,9 +277,44 @@ class TarballUpgradeHelper(BaseUpgradeHelper):
             count=1,
             flags=re.MULTILINE | re.IGNORECASE
         )
+
+        new_referenced = self.get_referenced_files(spec_content=new_spec_content)
+        obsolete_files = set(old_referenced - new_referenced)
+        if old_archive_path and os.path.isfile(old_archive_path):
+            old_name = os.path.basename(old_archive_path)
+            if old_name not in new_referenced:
+                obsolete_files.add(old_name)
+
+        if dry_run:
+            log(f"[DRY-RUN] Would update Version in {spec_basename}: {current_version} ➔ {target_version}")
+            log(f"[DRY-RUN] Would run 'osc service mr download_files' to retrieve new source archive")
+            candidate_removals = []
+            for f in sorted(obsolete_files):
+                if os.path.isfile(os.path.join(self.package_dir, f)):
+                    log(f"[DRY-RUN] Would remove obsolete file: {f}")
+                    candidate_removals.append(f)
+            return UpgradeResult(
+                True,
+                f"[DRY-RUN] Validation completed for {package_name} (target: {target_version})",
+                package_name=package_name,
+                old_version=current_version,
+                new_version=target_version,
+                removed_files=candidate_removals
+            )
+
+        # 1. Bump Version in .spec
         with open(spec_file, "w", encoding="utf-8") as f:
             f.write(new_spec_content)
         log(f"Updated {spec_basename} Version: {current_version} ➔ {target_version}")
+
+        disk_new_referenced = self.get_referenced_files(spec_path=spec_file)
+        if disk_new_referenced:
+            new_referenced = disk_new_referenced
+            obsolete_files = set(old_referenced - new_referenced)
+            if old_archive_path and os.path.isfile(old_archive_path):
+                old_name = os.path.basename(old_archive_path)
+                if old_name not in new_referenced:
+                    obsolete_files.add(old_name)
 
         # 2. Run 'osc service mr download_files'
         log("Executing 'osc service mr download_files' (downloading upstream source)...")
@@ -370,6 +397,9 @@ class TarballUpgradeHelper(BaseUpgradeHelper):
                     diff_files[f"osc-collab.{clean_bc}"] = collab_b_path
                     log(f"Extracted build file diff: osc-collab.{clean_bc}")
 
+        if diff_files:
+            self.ensure_gitignore_pattern("osc-collab.*")
+
         # 5. Format and Record .changes Entry via 'osc vc -F'
         has_retro = False
         if news_diff:
@@ -397,14 +427,10 @@ class TarballUpgradeHelper(BaseUpgradeHelper):
             if os.path.isfile(tmp_news):
                 os.remove(tmp_news)
 
-        # 6. Clean stale old archive
-        if old_archive_path and os.path.isfile(old_archive_path) and old_archive_path != new_archive_path:
-            old_name = os.path.basename(old_archive_path)
-            try:
-                os.remove(old_archive_path)
-                log(f"Removed stale archive: {old_name}")
-            except OSError:
-                pass
+        # 6. Clean obsolete files no longer referenced in spec (and any stale old archives)
+        if new_archive_path:
+            obsolete_files.discard(os.path.basename(new_archive_path))
+        removed_files = self.clean_obsolete_files(obsolete_files, on_log=log)
 
         log(f"Successfully upgraded {package_name} to {target_version}!")
         return UpgradeResult(
@@ -414,5 +440,6 @@ class TarballUpgradeHelper(BaseUpgradeHelper):
             old_version=current_version,
             new_version=target_version,
             diff_files=diff_files,
-            has_retrospective_news=has_retro
+            has_retrospective_news=has_retro,
+            removed_files=removed_files
         )
