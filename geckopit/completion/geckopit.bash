@@ -105,7 +105,7 @@ _geckopit_completion() {
         prev="${COMP_WORDS[COMP_CWORD-1]}"
     fi
 
-    local options="--upgrade -u --commit -c --no-edit --audit-deps -d --fix-deps --sync -s --fetch --force -f --jobs -j --version -v --branch -b --profile -p --package --not-in-pool --include-not-in-pool --guide --docs --dry-run -n --help -h --bash-completion"
+    local options="--upgrade -u --commit -c --no-edit --audit-deps -d --fix-deps --sync -s --fetch --force -f --jobs -j --version -v --branch -b --profile -p --package --not-in-pool --include-not-in-pool --guide --docs --check-setup --setup --dry-run -n --help -h --bash-completion"
     local branches="factory next stable unstable"
 
     case "$prev" in

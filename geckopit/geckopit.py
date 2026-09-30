@@ -911,6 +911,277 @@ def detect_git_branch(path):
     return None
 
 
+class EnvironmentSetupDialog(Adw.PreferencesDialog):
+    def __init__(self, parent_window):
+        super().__init__(title="Packaging Environment Setup")
+        self.set_content_width(640)
+        self.set_content_height(720)
+        self.parent_window = parent_window
+
+        import onboarding
+        self.onboarding = onboarding
+        self.readiness = self.onboarding.check_all_readiness(test_ssh=False)
+
+        page = Adw.PreferencesPage()
+        self.add(page)
+
+        # 1. Git Identity Group
+        grp_git = Adw.PreferencesGroup(title="Git Identity", description="Your name and email used in packaging commits")
+        page.add(grp_git)
+
+        git_st = self.readiness["git"]
+        self.row_git_name = Adw.EntryRow(title="Full Name")
+        if git_st.get("name"):
+            self.row_git_name.set_text(git_st["name"])
+        self.row_git_email = Adw.EntryRow(title="Packaging Email")
+        if git_st.get("email"):
+            self.row_git_email.set_text(git_st["email"])
+
+        row_git_save = Adw.ActionRow(title="Save Identity")
+        btn_git_save = Gtk.Button(label="Save")
+        btn_git_save.add_css_class("suggested-action")
+        btn_git_save.connect("clicked", self.on_save_git_identity)
+        row_git_save.add_suffix(btn_git_save)
+
+        grp_git.add(self.row_git_name)
+        grp_git.add(self.row_git_email)
+        grp_git.add(row_git_save)
+
+        # 2. SSH Authentication Group
+        grp_ssh = Adw.PreferencesGroup(title="SSH Authentication", description=f"Connection to {self.onboarding.GITEA_SSH_USER}@{self.onboarding.GITEA_SSH_HOST}")
+        page.add(grp_ssh)
+
+        ssh_st = self.readiness["ssh"]
+        self.row_ssh_status = Adw.ActionRow(title="Status")
+        if ssh_st.get("has_keys"):
+            self.row_ssh_status.set_subtitle(f"🔍 Testing connection to {self.onboarding.GITEA_SSH_HOST}...")
+        else:
+            self.row_ssh_status.set_subtitle("❌ No SSH keys found")
+        grp_ssh.add(self.row_ssh_status)
+
+        self.row_ssh_key = Adw.ComboRow(title="SSH Public Key")
+        self.btn_gen_key = Gtk.Button(label="Generate ed25519")
+        self.btn_gen_key.add_css_class("suggested-action")
+        self.btn_gen_key.connect("clicked", self.on_generate_ssh_key)
+
+        self.btn_copy_key = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
+        self.btn_copy_key.set_tooltip_text("Copy Selected Public Key to Clipboard")
+        self.btn_copy_key.connect("clicked", self.on_copy_public_key)
+
+        self.row_ssh_key.add_suffix(self.btn_gen_key)
+        self.row_ssh_key.add_suffix(self.btn_copy_key)
+        self.update_ssh_key_row(ssh_st)
+        grp_ssh.add(self.row_ssh_key)
+
+        row_ssh_actions = Adw.ActionRow(title="Gitea Account Setup")
+        btn_open_keys = Gtk.Button(label="Add Key on Web")
+        btn_open_keys.connect("clicked", lambda b: self.open_uri(f"{self.onboarding.GITEA_WEB_URL}/user/settings/keys"))
+        btn_test_ssh = Gtk.Button(label="Test Connection")
+        btn_test_ssh.connect("clicked", self.on_test_ssh_connection)
+        row_ssh_actions.add_suffix(btn_open_keys)
+        row_ssh_actions.add_suffix(btn_test_ssh)
+        grp_ssh.add(row_ssh_actions)
+
+        # 3. Open Build Service (OBS) Group
+        grp_obs = Adw.PreferencesGroup(title="Open Build Service", description="Credentials stored in ~/.config/osc/oscrc")
+        page.add(grp_obs)
+
+        obs_st = self.readiness["obs"]
+        self.row_obs_status = Adw.ActionRow(title="Status")
+        self.update_obs_status_row(obs_st)
+        grp_obs.add(self.row_obs_status)
+
+        self.exp_obs = Adw.ExpanderRow(title="Change Credentials" if obs_st["configured"] else "Configure Credentials")
+        self.exp_obs.set_enable_expansion(True)
+        self.exp_obs.set_expanded(not obs_st["configured"])
+
+        self.row_obs_user = Adw.EntryRow(title="openSUSE Username")
+        if obs_st.get("user"):
+            self.row_obs_user.set_text(obs_st["user"])
+        self.row_obs_pass = Adw.PasswordEntryRow(title="OBS Password / Token")
+
+        row_obs_save = Adw.ActionRow(title="Save to ~/.config/osc/oscrc")
+        btn_obs_save = Gtk.Button(label="Save")
+        btn_obs_save.add_css_class("suggested-action")
+        btn_obs_save.connect("clicked", self.on_save_obs_credentials)
+        row_obs_save.add_suffix(btn_obs_save)
+
+        self.exp_obs.add_row(self.row_obs_user)
+        self.exp_obs.add_row(self.row_obs_pass)
+        self.exp_obs.add_row(row_obs_save)
+        grp_obs.add(self.exp_obs)
+
+        # 4. Gitea API (tea) Group
+        grp_tea = Adw.PreferencesGroup(title="Gitea API Token (tea)", description="API token stored in ~/.config/tea/config.yml")
+        page.add(grp_tea)
+
+        tea_st = self.readiness["tea"]
+        self.row_tea_status = Adw.ActionRow(title="Status")
+        self.update_tea_status_row(tea_st)
+        grp_tea.add(self.row_tea_status)
+
+        self.exp_tea = Adw.ExpanderRow(title="Change API Token" if tea_st["configured"] else "Configure API Token")
+        self.exp_tea.set_enable_expansion(True)
+        self.exp_tea.set_expanded(not tea_st["configured"])
+
+        self.row_tea_token = Adw.PasswordEntryRow(title="Gitea API Token")
+        row_tea_actions = Adw.ActionRow(title="Gitea Token Setup")
+        btn_open_tea = Gtk.Button(label="Generate Token on Web")
+        btn_open_tea.connect("clicked", lambda b: self.open_uri(f"{self.onboarding.GITEA_WEB_URL}/user/settings/applications"))
+        btn_save_tea = Gtk.Button(label="Save Token")
+        btn_save_tea.add_css_class("suggested-action")
+        btn_save_tea.connect("clicked", self.on_save_gitea_token)
+        row_tea_actions.add_suffix(btn_open_tea)
+        row_tea_actions.add_suffix(btn_save_tea)
+
+        self.exp_tea.add_row(self.row_tea_token)
+        self.exp_tea.add_row(row_tea_actions)
+        grp_tea.add(self.exp_tea)
+
+        # Asynchronously verify SSH connection in background without blocking dialog presentation
+        if ssh_st.get("has_keys"):
+            self.start_async_ssh_test()
+
+    def open_uri(self, uri: str):
+        if hasattr(Gtk, "UriLauncher"):
+            try:
+                launcher = Gtk.UriLauncher.new(uri)
+                launcher.launch(self.parent_window, None, None, None)
+                return
+            except Exception:
+                pass
+        try:
+            import webbrowser
+            webbrowser.open(uri)
+        except Exception:
+            pass
+
+    def start_async_ssh_test(self):
+        def worker():
+            ssh_st = self.onboarding.check_ssh_readiness(test_connection=True)
+            def update():
+                self.update_ssh_status_row(ssh_st)
+            GLib.idle_add(update)
+        import threading
+        threading.Thread(target=worker, daemon=True).start()
+
+    def update_ssh_status_row(self, ssh_st):
+        if ssh_st["authenticated"]:
+            user_lbl = f" as '{ssh_st['username']}'" if ssh_st['username'] else ""
+            self.row_ssh_status.set_subtitle(f"✅ Connected to {self.onboarding.GITEA_SSH_HOST}{user_lbl}")
+        elif ssh_st["has_keys"]:
+            self.row_ssh_status.set_subtitle(f"⚠️ Keys present, but not authenticated on {self.onboarding.GITEA_SSH_HOST}")
+        else:
+            self.row_ssh_status.set_subtitle("❌ No SSH keys found")
+
+    def update_ssh_key_row(self, ssh_st):
+        keys = ssh_st.get("keys", [])
+        if keys:
+            # Sort keys prioritizing modern secure algorithms: ed25519 > ecdsa > rsa > others
+            def key_priority(k):
+                kl = k.lower()
+                if "ed25519" in kl: return 0
+                if "ecdsa" in kl: return 1
+                if "rsa" in kl: return 2
+                return 3
+            sorted_keys = sorted(keys, key=lambda k: (key_priority(k), k))
+            model = Gtk.StringList.new(sorted_keys)
+            self.row_ssh_key.set_model(model)
+            self.row_ssh_key.set_selected(0)
+            self.row_ssh_key.set_subtitle("Select which public key to copy for src.opensuse.org")
+            self.btn_gen_key.set_visible(False)
+            self.btn_copy_key.set_visible(True)
+        else:
+            self.row_ssh_key.set_model(None)
+            self.row_ssh_key.set_subtitle("No SSH keys found in ~/.ssh/")
+            self.btn_gen_key.set_visible(True)
+            self.btn_copy_key.set_visible(False)
+
+    def on_save_git_identity(self, btn):
+        name = self.row_git_name.get_text().strip()
+        email = self.row_git_email.get_text().strip()
+        ok, msg = self.onboarding.configure_git_identity(name, email)
+        if ok and hasattr(self.parent_window, "toast_overlay"):
+            self.parent_window.toast_overlay.add_toast(Adw.Toast.new(f"✅ {msg}"))
+
+    def on_generate_ssh_key(self, btn):
+        email = self.row_git_email.get_text().strip() or None
+        ok, pubkey, msg = self.onboarding.generate_ssh_key(comment=email)
+        if ok:
+            ssh_st = self.onboarding.check_ssh_readiness(test_connection=False)
+            self.update_ssh_key_row(ssh_st)
+            if hasattr(self.parent_window, "toast_overlay"):
+                self.parent_window.toast_overlay.add_toast(Adw.Toast.new("✅ Generated ~/.ssh/id_ed25519"))
+
+    def on_copy_public_key(self, btn):
+        ssh_dir = os.path.expanduser("~/.ssh")
+        selected_item = self.row_ssh_key.get_selected_item()
+        key_name = selected_item.get_string() if selected_item else None
+        if key_name:
+            key_path = os.path.join(ssh_dir, key_name)
+            if os.path.isfile(key_path):
+                with open(key_path, "r", encoding="utf-8") as f:
+                    content = f.read().strip()
+                self.get_clipboard().set(content)
+                if hasattr(self.parent_window, "toast_overlay"):
+                    self.parent_window.toast_overlay.add_toast(Adw.Toast.new(f"📋 Copied {key_name} to clipboard"))
+
+    def on_test_ssh_connection(self, btn):
+        btn.set_sensitive(False)
+        self.row_ssh_status.set_subtitle(f"🔍 Testing connection to {self.onboarding.GITEA_SSH_HOST}...")
+        def run_test():
+            ssh_st = self.onboarding.check_ssh_readiness(test_connection=True)
+            def update_ui():
+                self.update_ssh_status_row(ssh_st)
+                btn.set_sensitive(True)
+                if ssh_st["authenticated"] and hasattr(self.parent_window, "toast_overlay"):
+                    self.parent_window.toast_overlay.add_toast(Adw.Toast.new(f"✅ SSH authenticated as '{ssh_st['username']}'"))
+            from gi.repository import GLib
+            GLib.idle_add(update_ui)
+        import threading
+        threading.Thread(target=run_test, daemon=True).start()
+
+    def update_obs_status_row(self, obs_st):
+        if obs_st["configured"]:
+            self.row_obs_status.set_subtitle(f"✅ Configured as '{obs_st['user']}' ({obs_st['apiurl']})")
+        else:
+            self.row_obs_status.set_subtitle("❌ Missing credentials in ~/.config/osc/oscrc")
+
+    def update_tea_status_row(self, tea_st):
+        if tea_st["configured"]:
+            user_lbl = f" as '{tea_st['user']}'" if tea_st.get("user") else ""
+            self.row_tea_status.set_subtitle(f"✅ Configured for {tea_st.get('url') or 'https://src.opensuse.org'}{user_lbl}")
+        else:
+            self.row_tea_status.set_subtitle("❌ Not configured in ~/.config/tea/config.yml")
+
+    def on_save_obs_credentials(self, btn):
+        user = self.row_obs_user.get_text().strip()
+        pwd = self.row_obs_pass.get_text().strip()
+        if user and pwd:
+            ok, msg = self.onboarding.configure_osc_credentials(user, pwd)
+            if ok:
+                obs_st = self.onboarding.check_obs_credentials()
+                self.update_obs_status_row(obs_st)
+                self.row_obs_pass.set_text("")
+                self.exp_obs.set_title("Change Credentials")
+                self.exp_obs.set_expanded(False)
+                if hasattr(self.parent_window, "toast_overlay"):
+                    self.parent_window.toast_overlay.add_toast(Adw.Toast.new(f"✅ Saved OBS credentials for '{user}'"))
+
+    def on_save_gitea_token(self, btn):
+        token = self.row_tea_token.get_text().strip()
+        if token:
+            ok, msg = self.onboarding.configure_gitea_login(token)
+            if ok:
+                tea_st = self.onboarding.check_gitea_tea()
+                self.update_tea_status_row(tea_st)
+                self.row_tea_token.set_text("")
+                self.exp_tea.set_title("Change API Token")
+                self.exp_tea.set_expanded(False)
+                if hasattr(self.parent_window, "toast_overlay"):
+                    self.parent_window.toast_overlay.add_toast(Adw.Toast.new("✅ Saved Gitea API configuration"))
+
+
 class WorkspaceManagerDialog(Gtk.Window):
     def __init__(self, parent_window, config, callback_on_save):
         super().__init__(transient_for=parent_window, modal=True, title="Workspace Manager Settings")
@@ -1408,6 +1679,12 @@ class SyncWindow(Adw.ApplicationWindow):
         help_btn.connect("clicked", lambda btn: docs_builder.open_user_guide(self))
         self.header_bar.pack_end(help_btn)
 
+        # Right: Packaging Environment Setup Button
+        setup_btn = Gtk.Button.new_from_icon_name("avatar-default-symbolic")
+        setup_btn.set_tooltip_text("Packaging Environment Setup & Verification")
+        setup_btn.connect("clicked", self.on_environment_setup_clicked)
+        self.header_bar.pack_end(setup_btn)
+
         # Apply profile configuration UI states dynamically on startup
         self.apply_active_profile_ui()
 
@@ -1671,6 +1948,10 @@ class SyncWindow(Adw.ApplicationWindow):
                 self.config.active_workspace = ws_name
                 self.config.save()
                 self.reload_workspace()
+
+    def on_environment_setup_clicked(self, btn=None):
+        dialog = EnvironmentSetupDialog(self)
+        dialog.present(self)
 
     def on_settings_clicked(self, btn):
         dialog = WorkspaceManagerDialog(self, self.config, self.reload_workspace)

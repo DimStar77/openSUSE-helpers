@@ -545,6 +545,29 @@ class TestSyncWindow(unittest.TestCase):
             "Run 'python3 geckopit/helpers/docs_builder.py' to synchronize."
         )
 
+    def test_user_guide_html_anchor_integrity(self):
+        import os, re
+
+        repo_dir = os.path.dirname(os.path.abspath(__file__))
+        html_path = os.path.join(repo_dir, "USER_GUIDE.html")
+        self.assertTrue(os.path.isfile(html_path), "Missing USER_GUIDE.html")
+
+        with open(html_path, "r", encoding="utf-8") as f:
+            html = f.read()
+
+        # Extract all internal anchor links: <a href="#target">
+        anchor_links = re.findall(r'<a\s+href="#([^"]+)">', html)
+        self.assertGreater(len(anchor_links), 0, "No anchor links found in USER_GUIDE.html")
+
+        # Extract all target element IDs: id="target"
+        target_ids = set(re.findall(r'\bid="([^"]+)"', html))
+
+        broken = [link for link in anchor_links if link not in target_ids]
+        self.assertEqual(
+            broken, [],
+            f"Found broken anchor links in USER_GUIDE.html that do not match any header ID: {broken}"
+        )
+
     def test_check_repo_sync_pool_status_classification(self):
         import subprocess
         import sync_backend as sb

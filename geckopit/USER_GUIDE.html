@@ -155,17 +155,21 @@ hr {
 <h1 id="geckopit-user-guide-packaging-workflow-cockpit">🦎 Geckopit User Guide: Packaging Workflow Cockpit</h1>
 <p>Welcome to the <strong>Geckopit User Guide</strong>. Geckopit is a graphical cockpit and command-line tool for openSUSE packagers maintaining multi-branch upstream repositories (such as <code>GNOME:Factory</code> and <code>GNOME:Next</code>).</p>
 <p>This guide is organized by packaging tasks. Each section provides dedicated, step-by-step instructions for both the <strong>Desktop Cockpit (GUI)</strong> and the <strong>Terminal Suite (CLI)</strong>.</p>
+<blockquote>
+<p>💡 <strong>First time packaging on this machine?</strong> See the <a href="#appendix-packaging-environment-setup-onboarding">Appendix: Packaging Environment Setup &amp; Onboarding</a> to verify or configure Git identity, SSH keys, OBS, and Gitea in under a minute.</p>
+</blockquote>
 <hr />
 <h2 id="table-of-contents">📑 Table of Contents</h2>
 <ol>
-<li><a href="#-1-overview--cockpit-layout">🚀 Overview &amp; Cockpit Layout</a></li>
-<li><a href="#-2-finding-what-needs-attention--browsing">🎯 Finding What Needs Attention &amp; Browsing</a></li>
-<li><a href="#-3-upgrading-a-package-to-a-new-upstream-release">⚙️ Upgrading a Package to a New Upstream Release</a></li>
-<li><a href="#-4-auditing--fixing-build-dependency-drift-meson-cmake-autotools-python">🔧 Auditing &amp; Fixing Build Dependency Drift (Meson, CMake, Autotools, Python)</a></li>
-<li><a href="#-5-promoting-next-pre-releases-to-factory-gitea-prs">🔀 Promoting Next Pre-Releases to Factory (Gitea PRs)</a></li>
-<li><a href="#-6-synchronizing-multi-branch-workspaces">🔄 Synchronizing Multi-Branch Workspaces</a></li>
-<li><a href="#-7-committing-packaging-changes--whitespace-sanitization">💾 Committing Packaging Changes &amp; Whitespace Sanitization</a></li>
-<li><a href="#-8-hands-off-the-mouse-keyboard-navigation">⌨️ Hands-Off-The-Mouse Keyboard Navigation</a></li>
+<li><a href="#1-overview-cockpit-layout">🚀 Overview &amp; Cockpit Layout</a></li>
+<li><a href="#2-finding-what-needs-attention-browsing">🎯 Finding What Needs Attention &amp; Browsing</a></li>
+<li><a href="#3-upgrading-a-package-to-a-new-upstream-release">⚙️ Upgrading a Package to a New Upstream Release</a></li>
+<li><a href="#4-auditing-fixing-build-dependency-drift-meson-cmake-autotools-python">🔧 Auditing &amp; Fixing Build Dependency Drift (Meson, CMake, Autotools, Python)</a></li>
+<li><a href="#5-promoting-next-pre-releases-to-factory-gitea-prs">🔀 Promoting Next Pre-Releases to Factory (Gitea PRs)</a></li>
+<li><a href="#6-synchronizing-multi-branch-workspaces">🔄 Synchronizing Multi-Branch Workspaces</a></li>
+<li><a href="#7-committing-packaging-changes-whitespace-sanitization">💾 Committing Packaging Changes &amp; Whitespace Sanitization</a></li>
+<li><a href="#8-hands-off-the-mouse-keyboard-navigation">⌨️ Hands-Off-The-Mouse Keyboard Navigation</a></li>
+<li><a href="#appendix-packaging-environment-setup-onboarding">🛠️ Appendix: Packaging Environment Setup &amp; Onboarding</a></li>
 </ol>
 <hr />
 <h2 id="1-overview-cockpit-layout">🚀 1. Overview &amp; Cockpit Layout</h2>
@@ -271,6 +275,12 @@ geckopit-cli --include-not-in-pool
 
 # Comprehensive single-package dashboard (run inside package checkout or pass directory)
 geckopit-cli zenity
+
+# Verify maintainer environment readiness (Git identity, SSH keys, OBS, and Gitea)
+geckopit-cli --check-setup
+
+# Interactively configure missing developer credentials and keys
+geckopit-cli --setup
 </code></pre>
 <hr />
 <h2 id="3-upgrading-a-package-to-a-new-upstream-release">⚙️ 3. Upgrading a Package to a New Upstream Release</h2>
@@ -478,6 +488,43 @@ geckopit-cli --commit --no-edit
 </tbody>
 </table>
 <p><em>Note: Defensive input guards prevent shortcuts from intercepting keystrokes while you are actively typing inside an embedded terminal shell or text field.</em></p>
+<hr />
+<h2 id="appendix-packaging-environment-setup-onboarding">🛠️ Appendix: Packaging Environment Setup &amp; Onboarding</h2>
+<p>When setting up Geckopit on a new machine, laptop, or Flatpak installation, four developer pillars must be configured to fetch sources, manage pull requests, and commit changes:
+1. <strong>Git Identity</strong>: Your <code>user.name</code> and <code>user.email</code> used in commit headers.
+2. <strong>SSH Authentication</strong>: An SSH keypair and authenticated connection to <code>gitea@src.opensuse.org</code>.
+3. <strong>Open Build Service (OBS)</strong>: Your openSUSE credentials in <code>~/.config/osc/oscrc</code>.
+4. <strong>Gitea CLI (<code>tea</code>)</strong>: An API token configured in <code>~/.config/tea/config.yml</code>.</p>
+<hr />
+<h3 id="in-the-cockpit-gui_6">In the Cockpit (GUI)</h3>
+<p>Click the <strong>Setup &amp; Verification</strong> button (<code>avatar-default-symbolic</code>) on the right side of the HeaderBar to open the interactive setup assistant:</p>
+<h3 id="figure-6-packaging-environment-setup-dialog">Figure 6: Packaging Environment Setup Dialog</h3>
+<p><img alt="Packaging Environment Setup Dialog" src="./docs/images/figure6_environment_setup.png" /></p>
+<ul>
+<li><strong>Git Identity</strong>: Fill in your Full Name and Packaging Email, then click <strong>Save</strong>.</li>
+<li><strong>SSH Authentication</strong>:</li>
+<li>If no SSH keys exist, click <strong>Generate ed25519</strong> to create a secure keypair automatically.</li>
+<li>If keys already exist, select your preferred public key from the dropdown list and click the <strong>📋 Copy</strong> icon.</li>
+<li>Click <strong>Add Key on Web</strong> to open <code>src.opensuse.org/user/settings/keys</code> in your browser and paste the key.</li>
+<li>Click <strong>Test Connection</strong> to verify access against <code>gitea@src.opensuse.org</code> without freezing the interface.</li>
+<li><strong>Open Build Service (OBS)</strong>:</li>
+<li>Shows your existing configuration status at a glance.</li>
+<li>Expand <strong>Change Credentials</strong> to enter an updated username and password/token, securely saving to <code>~/.config/osc/oscrc</code> with <code>0600</code> permissions.</li>
+<li><strong>Gitea API Token (<code>tea</code>)</strong>:</li>
+<li>Shows your existing configuration status.</li>
+<li>Click <strong>Generate Token on Web</strong> to open <code>src.opensuse.org/user/settings/applications</code>.</li>
+<li>Expand <strong>Change API Token</strong>, paste your token, and click <strong>Save Token</strong> to configure <code>~/.config/tea/config.yml</code>.</li>
+</ul>
+<hr />
+<h3 id="in-the-terminal-cli_6">In the Terminal (CLI)</h3>
+<p>Verify or configure your environment headlessly or step-by-step from your terminal:</p>
+<pre><code class="language-bash"># 1. Non-destructive readiness check across all 4 pillars
+geckopit-cli --check-setup
+
+# 2. Interactive step-by-step onboarding wizard
+geckopit-cli --setup
+</code></pre>
+<p>The interactive wizard tests existing settings, offers to generate keys and configurations, displays clickable web links, and automatically validates connections before concluding.</p>
 <hr />
 <p><em>For technical architecture, command-line reference, and helper internals, see <a href="MAINTAINERS_GUIDE.md">MAINTAINERS_GUIDE.md</a>.</em></p>
 </div>

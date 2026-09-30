@@ -840,6 +840,104 @@ def run_forward_check(repos, show_pr=False, only_no_pr=False):
     print(f"\n*Total packages displayed: {len(rows)}*")
 
 
+def run_check_setup_action():
+    import onboarding
+    print(f"{sb.BOLD}=> Checking packaging environment readiness...{sb.RESET}\n")
+    readiness = onboarding.check_all_readiness(test_ssh=True)
+    report = onboarding.format_readiness_cli_report(readiness)
+    print(report)
+    return 0 if readiness["all_ready"] else 1
+
+
+def run_interactive_setup_action():
+    import onboarding
+    print(f"{sb.BOLD}=> openSUSE Maintainer Environment Onboarding Wizard{sb.RESET}\n")
+    readiness = onboarding.check_all_readiness(test_ssh=True)
+    print(onboarding.format_readiness_cli_report(readiness))
+
+    if readiness["all_ready"]:
+        return 0
+
+    print(f"\n{sb.BOLD}--- Step-by-Step Setup ---{sb.RESET}")
+
+    # 1. Git Identity
+    if not readiness["git"]["configured"]:
+        print(f"\n{sb.BOLD}1. Git Identity Setup{sb.RESET}")
+        try:
+            name = input("   Enter your Full Name (e.g. Jane Maintainer): ").strip()
+            email = input("   Enter your Packaging Email (e.g. jane@opensuse.org): ").strip()
+            if name and email:
+                ok, msg = onboarding.configure_git_identity(name, email)
+                print(f"   {sb.GREEN}✓ {msg}{sb.RESET}" if ok else f"   {sb.RED}✗ {msg}{sb.RESET}")
+        except (KeyboardInterrupt, EOFError):
+            print("\nSetup cancelled.")
+            return 1
+
+    # 2. SSH Keys & Authentication
+    if not readiness["ssh"]["authenticated"]:
+        print(f"\n{sb.BOLD}2. SSH Authentication ({onboarding.GITEA_SSH_HOST}){sb.RESET}")
+        if not readiness["ssh"]["has_keys"]:
+            try:
+                gen_ans = input("   No SSH keys found. Generate a secure ed25519 keypair now? [Y/n]: ").strip().lower()
+                if gen_ans in ("", "y", "yes"):
+                    ok, pubkey, msg = onboarding.generate_ssh_key()
+                    if ok:
+                        print(f"   {sb.GREEN}✓ {msg}{sb.RESET}")
+                        print(f"\n   {sb.BOLD}Your Public SSH Key:{sb.RESET}")
+                        print(f"   {sb.CYAN}{pubkey}{sb.RESET}")
+                        print(f"\n   Please copy the key above and add it to your Gitea account:")
+                        print(f"   👉 \x1b[4m{onboarding.GITEA_WEB_URL}/user/settings/keys\x1b[0m")
+            except (KeyboardInterrupt, EOFError):
+                print("\nSetup cancelled.")
+                return 1
+
+        try:
+            input("\n   Press Enter after adding your key to src.opensuse.org to verify connection... ")
+            print(f"   Testing SSH connection to {onboarding.GITEA_SSH_USER}@{onboarding.GITEA_SSH_HOST}...")
+            ssh_test = onboarding.check_ssh_readiness(test_connection=True)
+            if ssh_test["authenticated"]:
+                print(f"   {sb.GREEN}✓ Successfully authenticated to {onboarding.GITEA_SSH_HOST} as '{ssh_test['username']}'!{sb.RESET}")
+            else:
+                print(f"   {sb.YELLOW}! Authentication failed: {ssh_test['message']}{sb.RESET}")
+        except (KeyboardInterrupt, EOFError):
+            print("\nSetup cancelled.")
+            return 1
+
+    # 3. OBS Credentials
+    if not readiness["obs"]["configured"]:
+        print(f"\n{sb.BOLD}3. Open Build Service (OBS) Credentials{sb.RESET}")
+        try:
+            obs_ans = input("   Configure ~/.config/osc/oscrc now? [Y/n]: ").strip().lower()
+            if obs_ans in ("", "y", "yes"):
+                obs_user = input("   Enter openSUSE username: ").strip()
+                import getpass
+                obs_pass = getpass.getpass("   Enter OBS password or token: ").strip()
+                if obs_user and obs_pass:
+                    ok, msg = onboarding.configure_osc_credentials(obs_user, obs_pass)
+                    print(f"   {sb.GREEN}✓ {msg}{sb.RESET}" if ok else f"   {sb.RED}✗ {msg}{sb.RESET}")
+        except (KeyboardInterrupt, EOFError):
+            print("\nSetup cancelled.")
+            return 1
+
+    # 4. Gitea CLI (tea)
+    if not readiness["tea"]["configured"]:
+        print(f"\n{sb.BOLD}4. Gitea CLI (tea) API Token{sb.RESET}")
+        print(f"   Generate an API token at: \x1b[4m{onboarding.GITEA_WEB_URL}/user/settings/applications\x1b[0m")
+        try:
+            tea_ans = input("   Enter Gitea API token (or press Enter to skip): ").strip()
+            if tea_ans:
+                ok, msg = onboarding.configure_gitea_login(tea_ans)
+                print(f"   {sb.GREEN}✓ {msg}{sb.RESET}" if ok else f"   {sb.RED}✗ {msg}{sb.RESET}")
+        except (KeyboardInterrupt, EOFError):
+            print("\nSetup cancelled.")
+            return 1
+
+    print(f"\n{sb.BOLD}Re-checking environment...{sb.RESET}")
+    final_readiness = onboarding.check_all_readiness(test_ssh=True)
+    print(onboarding.format_readiness_cli_report(final_readiness))
+    return 0 if final_readiness["all_ready"] else 1
+
+
 def run_fix_deps_action(pkg_dir="."):
     import meson_drift
     pkg_dir = os.path.abspath(pkg_dir)
@@ -893,6 +991,8 @@ def print_help():
     print(f"  {sb.BOLD}-f, --forward{sb.RESET}      Identifies forwardable next branches.")
     print(f"  {sb.BOLD}--not-in-pool{sb.RESET}     Lists packages in checkout not registered in the central Gitea pool.")
     print(f"  {sb.BOLD}--guide, --docs{sb.RESET}    Opens the Geckopit User Guide in your default browser.")
+    print(f"  {sb.BOLD}--check-setup{sb.RESET}      Verifies readiness of Git identity, SSH keys, OBS, and Gitea.")
+    print(f"  {sb.BOLD}--setup{sb.RESET}            Interactively configures missing packaging tools and credentials.")
     print(f"  {sb.BOLD}-d, --audit-deps{sb.RESET}   Audits upstream build dependencies (Meson, CMake, Autotools) against .spec BuildRequires.")
     print(f"  {sb.BOLD}--fix-deps{sb.RESET}         Audits and fixes .spec BuildRequires according to upstream build files, recording a changelog entry.")
     print(f"  {sb.BOLD}--todo{sb.RESET}             Alias for default sync checking mode.")
@@ -973,6 +1073,12 @@ def main():
 
     if show_sync:
         sys.exit(run_sync_action(target_pkg_dir, force=force_sync, jobs=jobs_count))
+
+    # Check setup / onboarding options
+    if "--check-setup" in sys.argv:
+        sys.exit(run_check_setup_action())
+    if "--setup" in sys.argv:
+        sys.exit(run_interactive_setup_action())
 
     # Parse fix-deps options
     show_fix_deps = "--fix-deps" in sys.argv
