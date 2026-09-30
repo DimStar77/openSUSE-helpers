@@ -161,7 +161,7 @@ hr {
 <li><a href="#-1-overview--cockpit-layout">🚀 Overview &amp; Cockpit Layout</a></li>
 <li><a href="#-2-finding-what-needs-attention--browsing">🎯 Finding What Needs Attention &amp; Browsing</a></li>
 <li><a href="#-3-upgrading-a-package-to-a-new-upstream-release">⚙️ Upgrading a Package to a New Upstream Release</a></li>
-<li><a href="#-4-auditing--fixing-build-dependency-drift-meson-cmake-autotools">🔧 Auditing &amp; Fixing Build Dependency Drift (Meson, CMake, Autotools)</a></li>
+<li><a href="#-4-auditing--fixing-build-dependency-drift-meson-cmake-autotools-python">🔧 Auditing &amp; Fixing Build Dependency Drift (Meson, CMake, Autotools, Python)</a></li>
 <li><a href="#-5-promoting-next-pre-releases-to-factory-gitea-prs">🔀 Promoting Next Pre-Releases to Factory (Gitea PRs)</a></li>
 <li><a href="#-6-synchronizing-multi-branch-workspaces">🔄 Synchronizing Multi-Branch Workspaces</a></li>
 <li><a href="#-7-committing-packaging-changes--whitespace-sanitization">💾 Committing Packaging Changes &amp; Whitespace Sanitization</a></li>
@@ -301,8 +301,8 @@ geckopit-cli --upgrade 4.2.2
 geckopit-cli --upgrade 4.2.2 --dry-run
 </code></pre>
 <hr />
-<h2 id="4-auditing-fixing-build-dependency-drift-meson-cmake-autotools">🔧 4. Auditing &amp; Fixing Build Dependency Drift (Meson, CMake, Autotools)</h2>
-<p>Upstream projects often bump minimum dependency constraints in <code>meson.build</code>, <code>CMakeLists.txt</code>, or <code>configure.ac</code> without maintainers noticing. Geckopit inspects the <code>.spec</code> file to identify the active build system (supporting declarative <code>BuildSystem:</code> tags, build invocation macros, and BuildRequires), and audits upstream declarations against your <code>.spec</code> <code>BuildRequires:</code>.</p>
+<h2 id="4-auditing-fixing-build-dependency-drift-meson-cmake-autotools-python">🔧 4. Auditing &amp; Fixing Build Dependency Drift (Meson, CMake, Autotools, Python)</h2>
+<p>Upstream projects often bump minimum dependency constraints in <code>meson.build</code>, <code>CMakeLists.txt</code>, <code>configure.ac</code>, or <code>pyproject.toml</code> without maintainers noticing. Geckopit inspects the <code>.spec</code> file to identify active build systems (supporting declarative <code>BuildSystem:</code> tags, build invocation macros, <code>%pyproject_wheel</code>, and BuildRequires), and audits upstream declarations against your <code>.spec</code> <code>BuildRequires:</code> (including <code>%{python_module ...}</code>).</p>
 <hr />
 <h3 id="in-the-cockpit-gui_2">🖥️ In the Cockpit (GUI)</h3>
 <ol>

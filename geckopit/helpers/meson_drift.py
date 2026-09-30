@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Upstream Build Dependency Drift Auditor & Automated Spec Fixer.
-Supports Meson (meson.build), CMake (CMakeLists.txt), and Autotools (configure.ac/in).
+Supports Meson (meson.build), CMake (CMakeLists.txt), Autotools (configure.ac/in),
+and Python (pyproject.toml / PEP 517 & 518 & 621 / Poetry).
 Inspects RPM .spec files (including declarative 'BuildSystem:' tags and %build macros)
 to strictly audit only the build system actually used during packaging.
 """
@@ -42,6 +43,20 @@ DEVEL_PACKAGE_MAP = {
     "wayland-protocols": "wayland-protocols-devel",
     "gcr-4": "gcr-devel",
     "gcr-3": "gcr3-devel",
+}
+
+# Python package alias map: maps PyPI module names to openSUSE %{python_module ...} candidate names
+PYTHON_PACKAGE_MAP = {
+    "pygobject": ["gobject", "pygobject"],
+    "gobject": ["gobject", "pygobject"],
+    "pycairo": ["cairo", "pycairo"],
+    "cairo": ["cairo", "pycairo"],
+    "poetry-core": ["poetry-core"],
+    "poetry_core": ["poetry-core"],
+    "flit-core": ["flit-core"],
+    "flit_core": ["flit-core"],
+    "setuptools-scm": ["setuptools-scm"],
+    "setuptools_scm": ["setuptools-scm"],
 }
 
 
@@ -85,11 +100,22 @@ def compare_versions(ver1: str, ver2: str) -> int:
     return 0
 
 
+def is_python_package(spec_content: str) -> bool:
+    """Returns True if the spec builds or installs a Python wheel or module."""
+    if not spec_content:
+        return False
+    if re.search(r"^\s*%(?:pyproject_wheel|pyproject_install|python_subpackages)\b", spec_content, re.MULTILINE):
+        return True
+    if re.search(r"^\s*BuildSystem:\s*pyproject\b", spec_content, re.MULTILINE | re.IGNORECASE):
+        return True
+    return False
+
+
 def detect_package_build_system(spec_content: str) -> Optional[str]:
     """
-    Detects which build system is actually used during the RPM build by inspecting .spec.
+    Detects which primary build system is actually used during the RPM build by inspecting .spec.
     Guards against sources providing multiple build files (e.g. legacy autotools alongside meson).
-    Returns 'meson', 'cmake', 'autotools', or None.
+    Returns 'meson', 'cmake', 'autotools', 'python', or None.
     """
     if not spec_content:
         return None
@@ -104,6 +130,8 @@ def detect_package_build_system(spec_content: str) -> Optional[str]:
             return "cmake"
         elif "autotools" in bs_val or "configure" in bs_val:
             return "autotools"
+        elif "pyproject" in bs_val or "python" in bs_val:
+            return "python"
 
     # 2. Build invocation macros in %build / %install
     if re.search(r"^\s*%(?:meson|meson_build|meson_install)\b", spec_content, re.MULTILINE):
@@ -112,6 +140,8 @@ def detect_package_build_system(spec_content: str) -> Optional[str]:
         return "cmake"
     if re.search(r"^\s*(?:%configure|\./configure|autoreconf)\b", spec_content, re.MULTILINE):
         return "autotools"
+    if re.search(r"^\s*%(?:pyproject_wheel|pyproject_install)\b", spec_content, re.MULTILINE):
+        return "python"
 
     # 3. Explicit build system tool BuildRequires
     if re.search(r"^\s*BuildRequires:\s+meson\b", spec_content, re.MULTILINE | re.IGNORECASE):
@@ -120,6 +150,8 @@ def detect_package_build_system(spec_content: str) -> Optional[str]:
         return "cmake"
     if re.search(r"^\s*BuildRequires:\s+(?:libtool|autoconf|automake)\b", spec_content, re.MULTILINE | re.IGNORECASE):
         return "autotools"
+    if re.search(r"^\s*BuildRequires:\s+python-rpm-macros\b", spec_content, re.MULTILINE | re.IGNORECASE):
+        return "python"
 
     return None
 
@@ -163,7 +195,7 @@ def find_obs_scm_clone_dir(package_dir: str) -> Optional[str]:
         try:
             with open(service_file, "r", encoding="utf-8", errors="replace") as f:
                 c = f.read()
-            m = re.search(r'<param\s+name=["\']url["\']>([^<]+)</param>', c)
+            m = re.search(r"""<param\s+name=['"]url['"]>([^<]+)</param>""", c)
             if m:
                 u = re.sub(r"\.git/?$", "", m.group(1).strip())
                 repo_name = u.rstrip("/").split("/")[-1]
@@ -189,7 +221,7 @@ def find_obs_scm_clone_dir(package_dir: str) -> Optional[str]:
     for cand in candidates:
         cand_path = os.path.join(package_dir, cand)
         if os.path.isdir(cand_path):
-            for f in ("meson.build", "CMakeLists.txt", "configure.ac", "configure.in"):
+            for f in ("meson.build", "CMakeLists.txt", "configure.ac", "configure.in", "pyproject.toml"):
                 if os.path.isfile(os.path.join(cand_path, f)):
                     return cand_path
 
@@ -220,7 +252,7 @@ def parse_meson_dependencies(content: str) -> Dict[str, Tuple[str, str, bool]]:
         lines = [re.sub(r"#.*$", "", l) for l in content.splitlines()]
         content_clean = "\n".join(lines)
 
-    # 1. Extract Meson string and version variables (including .format() resolution)
+    # 2. Extract Meson string and version variables (including .format() resolution)
     vars_map = {}
     for line in content_clean.splitlines():
         line = line.strip()
@@ -236,7 +268,7 @@ def parse_meson_dependencies(content: str) -> Dict[str, Tuple[str, str, bool]]:
                     v_fmt = v_fmt.replace(f"@{idx}@", resolved_val)
             vars_map[v_name] = v_fmt
 
-    # 2. Extract dependency(...) calls
+    # 3. Extract dependency(...) calls
     deps = {}
     dep_pattern = re.compile(
         r"""dependency\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*(.*?))?\s*\)""",
@@ -386,7 +418,7 @@ def parse_autotools_dependencies(content: str) -> Dict[str, Tuple[str, str, bool
     for call in pkg_calls:
         expanded = re.sub(r"\$([a-zA-Z0-9_]+)", lambda m: vars_map.get(m.group(1), m.group(0)), call)
         expanded = re.sub(r"\$\{([a-zA-Z0-9_]+)\}", lambda m: vars_map.get(m.group(1), m.group(0)), expanded)
-        tokens = re.split(r"[\s\\]+", expanded)
+        tokens = re.split(r"[\s\\\\]+", expanded)
         idx = 0
         while idx < len(tokens):
             tok = tokens[idx].strip().strip('[]\"\'')
@@ -416,10 +448,82 @@ def parse_autotools_dependencies(content: str) -> Dict[str, Tuple[str, str, bool
     return deps
 
 
+def parse_python_dependencies(content: str) -> Dict[str, Tuple[str, str, bool]]:
+    """
+    Parses build-system.requires, project.dependencies, and tool.poetry.dependencies
+    from pyproject.toml content.
+    Returns a dict mapping normalized package name to:
+        (comparator, minimum_version, is_required)
+    """
+    if not content:
+        return {}
+
+    deps = {}
+    try:
+        try:
+            import tomllib
+            data = tomllib.loads(content)
+        except ImportError:
+            import tomli as tomllib
+            data = tomllib.loads(content)
+    except Exception:
+        # Fallback basic regex parsing for [build-system] and [project]
+        data = {}
+        m_bs = re.search(r"\[build-system\][^\[]*requires\s*=\s*\[(.*?)\]", content, re.DOTALL)
+        if m_bs:
+            data.setdefault("build-system", {})["requires"] = re.findall(r"""['"]([^'"]+)['"]""", m_bs.group(1))
+        m_proj = re.search(r"\[project\][^\[]*dependencies\s*=\s*\[(.*?)\]", content, re.DOTALL)
+        if m_proj:
+            data.setdefault("project", {})["dependencies"] = re.findall(r"""['"]([^'"]+)['"]""", m_proj.group(1))
+
+    reqs = []
+    # 1. PEP 518 build-system requires
+    if "build-system" in data and "requires" in data["build-system"]:
+        for r in data["build-system"]["requires"]:
+            if isinstance(r, str):
+                reqs.append((r, True))
+
+    # 2. PEP 621 project dependencies
+    if "project" in data and "dependencies" in data["project"]:
+        for r in data["project"]["dependencies"]:
+            if isinstance(r, str):
+                reqs.append((r, True))
+
+    # 3. Poetry dependencies
+    if "tool" in data and "poetry" in data["tool"] and "dependencies" in data["tool"]["poetry"]:
+        poetry_deps = data["tool"]["poetry"]["dependencies"]
+        for p_name, p_val in poetry_deps.items():
+            if p_name.lower() == "python":
+                continue
+            if isinstance(p_val, str):
+                reqs.append((f"{p_name} {p_val}", True))
+            elif isinstance(p_val, dict) and "version" in p_val:
+                is_opt = p_val.get("optional", False)
+                if not is_opt:
+                    reqs.append((f"{p_name} {p_val['version']}", True))
+
+    for req_str, is_req in reqs:
+        base = req_str.split(";")[0].strip()
+        if not base:
+            continue
+        m = re.match(r"^([a-zA-Z0-9_\-+.]+)\s*([><=~!^]+)?\s*([0-9]+(?:\.[0-9]+)*.*)?$", base)
+        if m:
+            raw_name = m.group(1).strip()
+            raw_op = m.group(2) or ">="
+            raw_ver = (m.group(3) or "").strip()
+            op = ">=" if raw_op in ("^", "~", "~=") else raw_op
+            clean_name = re.sub(r"\[.*?\]", "", raw_name).lower().replace("_", "-")
+            if clean_name not in deps or (raw_ver and not deps[clean_name][1]):
+                deps[clean_name] = (op, raw_ver, is_req)
+
+    return deps
+
+
 def parse_spec_build_requires(spec_content: str) -> Dict[str, Tuple[str, str, str]]:
     """
-    Parses BuildRequires in an RPM .spec file.
-    Returns a dict mapping normalized package/pkgconfig name to:
+    Parses BuildRequires in an RPM .spec file, including pkgconfig(...) declarations,
+    regular package names, and openSUSE %{python_module ...} macro declarations.
+    Returns a dict mapping normalized package/module name to:
         (comparator, version, raw_declaration)
     """
     if not spec_content:
@@ -461,6 +565,27 @@ def parse_spec_build_requires(spec_content: str) -> Dict[str, Tuple[str, str, st
         if clean_line.startswith("#") or not clean_line.lower().startswith("buildrequires:"):
             continue
 
+        # Check for openSUSE %{python_module <modname> [op ver]}
+        m_pymod = re.match(
+            r"^BuildRequires:\s+%{python_module\s+([a-zA-Z0-9_\-+.]+)(?:\s*([><=]+)\s*([^}]+))?}",
+            clean_line,
+            re.IGNORECASE
+        )
+        if m_pymod:
+            pkg_name = m_pymod.group(1).strip().lower().replace("_", "-")
+            op = m_pymod.group(2) or ">="
+            raw_ver = (m_pymod.group(3) or "").strip()
+            ver = raw_ver
+            for k, v in macros.items():
+                ver = ver.replace(f"%{{{k}}}", v).replace(f"%{k}", v)
+
+            spec_deps[pkg_name] = (op, ver, clean_line)
+            spec_deps[f"python-{pkg_name}"] = (op, ver, clean_line)
+            spec_deps[f"python3-{pkg_name}"] = (op, ver, clean_line)
+            spec_deps[f"%{{python_module {pkg_name}}}"] = (op, ver, clean_line)
+            continue
+
+        # Standard BuildRequires: <name> [op ver]
         m = re.match(
             r"^BuildRequires:\s+(\S+)(?:\s*([><=]+)\s*(\S+))?",
             clean_line,
@@ -487,12 +612,19 @@ def parse_spec_build_requires(spec_content: str) -> Dict[str, Tuple[str, str, st
         if raw_name != pkg_name:
             spec_deps[raw_name] = (op, ver, clean_line)
 
+        # Also register python3- prefixed names without prefix
+        if pkg_name.startswith("python3-"):
+            spec_deps[pkg_name[8:]] = (op, ver, clean_line)
+        elif pkg_name.startswith("python-"):
+            spec_deps[pkg_name[7:]] = (op, ver, clean_line)
+
     return spec_deps
 
 
 def audit_meson_drift(package_dir: str, meson_content: Optional[str] = None, bumps_only: bool = True, include_unversioned: bool = True, build_system: Optional[str] = None) -> List[Dict]:
     """
-    Audits upstream build dependencies (Meson, CMake, or Autotools) against local .spec BuildRequires.
+    Audits upstream build dependencies (Meson, CMake, Autotools, or Python/pyproject.toml)
+    against local .spec BuildRequires.
     Detects build system from .spec to ensure only the build system used during RPM build is audited.
     Returns a list of detected drift records.
     """
@@ -512,11 +644,14 @@ def audit_meson_drift(package_dir: str, meson_content: Optional[str] = None, bum
         return []
 
     active_build_system = build_system or detect_package_build_system(spec_content)
-    if not active_build_system and not meson_content:
-        # Default fallback to meson if build system could not be determined
+    if not active_build_system:
         active_build_system = "meson"
 
-    # 2. Resolve build definition content for the active build system
+    has_python = is_python_package(spec_content)
+    spec_deps = parse_spec_build_requires(spec_content)
+    drifts = []
+
+    # 2. Resolve build definition content for the active primary build system
     content = meson_content
     if not content:
         if active_build_system == "meson":
@@ -612,24 +747,16 @@ def audit_meson_drift(package_dir: str, meson_content: Optional[str] = None, bum
                     except Exception:
                         pass
 
-    if not content:
-        return []
+    # 3. Parse primary upstream dependencies
+    upstream_deps = {}
+    if content:
+        if active_build_system == "cmake":
+            upstream_deps = parse_cmake_dependencies(content)
+        elif active_build_system == "autotools":
+            upstream_deps = parse_autotools_dependencies(content)
+        elif active_build_system == "meson":
+            upstream_deps = parse_meson_dependencies(content)
 
-    # 3. Parse upstream dependencies
-    if active_build_system == "cmake":
-        upstream_deps = parse_cmake_dependencies(content)
-    elif active_build_system == "autotools":
-        upstream_deps = parse_autotools_dependencies(content)
-    else:
-        upstream_deps = parse_meson_dependencies(content)
-
-    if not upstream_deps:
-        return []
-
-    spec_deps = parse_spec_build_requires(spec_content)
-
-    # 4. Compare upstream dependencies against .spec BuildRequires
-    drifts = []
     for dep_name, (u_op, u_ver, u_req) in upstream_deps.items():
         matched_spec = None
         spec_decl_name = None
@@ -667,18 +794,85 @@ def audit_meson_drift(package_dir: str, meson_content: Optional[str] = None, bum
                     "type": "unversioned",
                     "build_system": active_build_system
                 })
-        elif not bumps_only:
-            # Only report missing if explicitly requested, preventing false positives from disabled options (e.g. -Dqt=false)
-            if u_req and u_ver:
-                drifts.append({
-                    "package": dep_name,
-                    "spec_name": f"pkgconfig({dep_name})",
-                    "upstream_version": u_ver,
-                    "spec_version": None,
-                    "comparator": u_op,
-                    "type": "missing",
-                    "build_system": active_build_system
-                })
+        elif not bumps_only and u_req and u_ver:
+            drifts.append({
+                "package": dep_name,
+                "spec_name": f"pkgconfig({dep_name})",
+                "upstream_version": u_ver,
+                "spec_version": None,
+                "comparator": u_op,
+                "type": "missing",
+                "build_system": active_build_system
+            })
+
+    # 4. If package uses Python (%pyproject_wheel), audit pyproject.toml
+    if has_python or active_build_system == "python":
+        pyproject_content = None
+        py_local = os.path.join(package_dir, "pyproject.toml")
+        if os.path.isfile(py_local):
+            try:
+                with open(py_local, "r", encoding="utf-8", errors="replace") as f:
+                    pyproject_content = f.read()
+            except Exception:
+                pass
+        else:
+            clone_dir = find_obs_scm_clone_dir(package_dir)
+            if clone_dir and os.path.isfile(os.path.join(clone_dir, "pyproject.toml")):
+                try:
+                    with open(os.path.join(clone_dir, "pyproject.toml"), "r", encoding="utf-8", errors="replace") as f:
+                        pyproject_content = f.read()
+                except Exception:
+                    pass
+        if not pyproject_content:
+            archives = [f for f in os.listdir(package_dir) if f.endswith((".tar.xz", ".tar.gz", ".tar.bz2", ".tar.zst"))]
+            if archives:
+                try:
+                    from upgrade.tarball import TarballUpgradeHelper
+                    archive_path = os.path.join(package_dir, sorted(archives)[-1])
+                    pyproject_content = TarballUpgradeHelper.extract_member_content(archive_path, "pyproject.toml", package_dir=package_dir)
+                except Exception:
+                    pass
+
+        if pyproject_content:
+            py_deps = parse_python_dependencies(pyproject_content)
+            for py_pkg, (u_op, u_ver, u_req) in py_deps.items():
+                matched_spec = None
+                spec_decl_name = None
+
+                # Build candidate names to look up in spec_deps
+                py_cands = [py_pkg, f"python-{py_pkg}", f"python3-{py_pkg}", f"%{{python_module {py_pkg}}}"]
+                mapped = PYTHON_PACKAGE_MAP.get(py_pkg, [])
+                for m_alias in mapped:
+                    py_cands.extend([m_alias, f"python-{m_alias}", f"python3-{m_alias}", f"%{{python_module {m_alias}}}"])
+
+                for cand in py_cands:
+                    if cand in spec_deps:
+                        matched_spec = spec_deps[cand]
+                        spec_decl_name = cand
+                        break
+
+                if matched_spec is not None:
+                    s_op, s_ver, s_raw = matched_spec
+                    if u_ver and s_ver and compare_versions(u_ver, s_ver) > 0:
+                        drifts.append({
+                            "package": py_pkg,
+                            "spec_name": spec_decl_name,
+                            "upstream_version": u_ver,
+                            "spec_version": s_ver,
+                            "comparator": u_op,
+                            "type": "bump",
+                            "build_system": "python"
+                        })
+                    elif u_ver and not s_ver and (include_unversioned or not bumps_only):
+                        drifts.append({
+                            "package": py_pkg,
+                            "spec_name": spec_decl_name,
+                            "upstream_version": u_ver,
+                            "spec_version": None,
+                            "comparator": u_op,
+                            "type": "unversioned",
+                            "build_system": "python"
+                        })
 
     return drifts
 
@@ -688,10 +882,20 @@ def format_drift_cli_report(drifts: List[Dict]) -> str:
     if not drifts:
         return ""
 
-    build_sys = drifts[0].get("build_system", "meson")
-    sys_label = "CMake" if build_sys == "cmake" else ("Autotools" if build_sys == "autotools" else "Meson")
+    build_systems = list(dict.fromkeys(d.get("build_system", "meson") for d in drifts))
+    sys_labels = []
+    for bs in build_systems:
+        if bs == "cmake":
+            sys_labels.append("CMake")
+        elif bs == "autotools":
+            sys_labels.append("Autotools")
+        elif bs == "python":
+            sys_labels.append("Python (pyproject.toml)")
+        else:
+            sys_labels.append("Meson")
 
-    lines = [f"\x1b[1;33m⚠️  {sys_label} Dependency Drift Detected:\x1b[0m"]
+    title = " & ".join(sys_labels)
+    lines = [f"\x1b[1;33m⚠️  {title} Dependency Drift Detected:\x1b[0m"]
     for d in drifts:
         spec_name = d.get("spec_name") or d["package"]
         u_ver = d["upstream_version"]
@@ -714,8 +918,18 @@ def format_drift_short_summary(drifts: List[Dict]) -> str:
     if not drifts:
         return ""
 
-    build_sys = drifts[0].get("build_system", "meson")
-    sys_label = "CMake" if build_sys == "cmake" else ("Autotools" if build_sys == "autotools" else "Meson")
+    build_systems = list(dict.fromkeys(d.get("build_system", "meson") for d in drifts))
+    sys_labels = []
+    for bs in build_systems:
+        if bs == "cmake":
+            sys_labels.append("CMake")
+        elif bs == "autotools":
+            sys_labels.append("Autotools")
+        elif bs == "python":
+            sys_labels.append("Python")
+        else:
+            sys_labels.append("Meson")
+    title = " & ".join(sys_labels)
 
     bumps = [d for d in drifts if d.get("type") == "bump"]
     missing = [d for d in drifts if d.get("type") == "missing"]
@@ -729,13 +943,13 @@ def format_drift_short_summary(drifts: List[Dict]) -> str:
     if unversioned:
         parts.append(f"{len(unversioned)} unversioned")
 
-    return f"⚠️ {sys_label} drift: {', '.join(parts)}"
+    return f"⚠️ {title} drift: {', '.join(parts)}"
 
 
 def fix_meson_drift(package_dir: str, on_log: Optional[any] = None) -> List[Dict]:
     """
-    Audits and automatically updates .spec BuildRequires (and associated %define
-    macros) to match upstream build dependency requirements.
+    Audits and automatically updates .spec BuildRequires (including %{python_module ...}
+    and associated %define macros) to match upstream build dependency requirements.
     Returns the list of fixed drift items.
     """
     log = on_log or (lambda msg: None)
@@ -765,11 +979,17 @@ def fix_meson_drift(package_dir: str, on_log: Optional[any] = None) -> List[Dict
         pkg = d["package"]
         u_ver = d["upstream_version"]
         op = d.get("comparator") or ">="
+        b_sys = d.get("build_system", "meson")
 
-        cands = [f"pkgconfig({pkg})", pkg]
-        devel_name = DEVEL_PACKAGE_MAP.get(pkg)
-        if devel_name:
-            cands.append(devel_name)
+        if b_sys == "python":
+            cands = [pkg, pkg.replace("-", "_")]
+            mapped = PYTHON_PACKAGE_MAP.get(pkg, [])
+            cands.extend(mapped)
+        else:
+            cands = [f"pkgconfig({pkg})", pkg]
+            devel_name = DEVEL_PACKAGE_MAP.get(pkg)
+            if devel_name:
+                cands.append(devel_name)
 
         found = False
         for c in cands:
@@ -778,6 +998,41 @@ def fix_meson_drift(package_dir: str, on_log: Optional[any] = None) -> List[Dict
                 if clean.startswith("#") or not clean.lower().startswith("buildrequires:"):
                     continue
 
+                # 1. Check for %{python_module <c> [op ver]}
+                m_pymod_line = re.search(
+                    r"^(\s*BuildRequires:\s+%{python_module\s+" + re.escape(c) + r")(?:\s*([><=]+)\s*([^}]+))?(\s*}.*)$",
+                    line,
+                    re.IGNORECASE
+                )
+                if m_pymod_line:
+                    prefix = m_pymod_line.group(1)
+                    raw_val = (m_pymod_line.group(3) or "").strip()
+                    suffix = m_pymod_line.group(4)
+
+                    m_macro = re.match(r"^%\{?([a-zA-Z0-9_]+)\}?$", raw_val)
+                    if m_macro:
+                        macro_name = m_macro.group(1)
+                        for def_idx, def_line in enumerate(lines):
+                            m_def = re.match(
+                                r"^(%(?:define|global)\s+" + re.escape(macro_name) + r"\s+)(.*)$",
+                                def_line
+                            )
+                            if m_def:
+                                lines[def_idx] = f"{m_def.group(1)}{u_ver}"
+                                d["fixed_macro"] = macro_name
+                                fixed_drifts.append(d)
+                                found = True
+                                log(f"Updated macro %{macro_name}: {m_def.group(2)} ➔ {u_ver}")
+                                break
+                    if not found:
+                        lines[idx] = f"{prefix} {op} {u_ver}{suffix}"
+                        d["fixed_declaration"] = f"%{{python_module {c} {op} {u_ver}}}"
+                        fixed_drifts.append(d)
+                        found = True
+                        log(f"Updated {os.path.basename(spec_path)}: %{{python_module {c} {op} {u_ver}}}")
+                    break
+
+                # 2. Standard BuildRequires: <c> [op ver]
                 m_req = re.search(
                     r"^BuildRequires:\s+" + re.escape(c) + r"(?:\s*([><=]+)\s*(\S+))?",
                     clean,
@@ -785,11 +1040,9 @@ def fix_meson_drift(package_dir: str, on_log: Optional[any] = None) -> List[Dict
                 )
                 if m_req:
                     raw_val = m_req.group(2) or ""
-                    # Check if version is a macro like %{min_ver}
                     m_macro = re.match(r"^%\{?([a-zA-Z0-9_]+)\}?$", raw_val)
                     if m_macro:
                         macro_name = m_macro.group(1)
-                        # Find macro definition in spec
                         for def_idx, def_line in enumerate(lines):
                             m_def = re.match(
                                 r"^(%(?:define|global)\s+" + re.escape(macro_name) + r"\s+)(.*)$",
@@ -805,7 +1058,6 @@ def fix_meson_drift(package_dir: str, on_log: Optional[any] = None) -> List[Dict
 
                     if not found:
                         if raw_val:
-                            # Replace old version with new version preserving spacing
                             lines[idx] = re.sub(
                                 r"([><=]+\s*)" + re.escape(raw_val),
                                 r"\g<1>" + u_ver,
@@ -813,7 +1065,6 @@ def fix_meson_drift(package_dir: str, on_log: Optional[any] = None) -> List[Dict
                                 count=1
                             )
                         else:
-                            # Append operator and version before any trailing comments
                             lines[idx] = re.sub(r"(\s*(?:#.*)?)$", rf" {op} {u_ver}\g<1>", line, count=1)
 
                         d["fixed_declaration"] = f"{d.get('spec_name') or c} {op} {u_ver}"
@@ -838,27 +1089,45 @@ def fix_meson_drift(package_dir: str, on_log: Optional[any] = None) -> List[Dict
 def record_drift_changelog(package_dir: str, fixed_drifts: List[Dict], on_log: Optional[any] = None) -> bool:
     """
     Records an automated openSUSE changelog entry for applied build dependency drift fixes.
-    Dynamically names the build definition file (meson.build, CMakeLists.txt, or configure.ac).
+    Dynamically names the build definition file(s).
     """
     log = on_log or (lambda msg: None)
     if not fixed_drifts:
         return False
 
-    build_sys = fixed_drifts[0].get("build_system", "meson")
-    if build_sys == "cmake":
-        build_file = "CMakeLists.txt"
-    elif build_sys == "autotools":
-        build_file = "configure.ac"
-    else:
-        build_file = "meson.build"
+    build_systems = list(dict.fromkeys(d.get("build_system", "meson") for d in fixed_drifts))
+    file_names = []
+    for bs in build_systems:
+        if bs == "cmake":
+            file_names.append("CMakeLists.txt")
+        elif bs == "autotools":
+            file_names.append("configure.ac")
+        elif bs == "python":
+            file_names.append("pyproject.toml")
+        else:
+            file_names.append("meson.build")
 
-    msg = f"Update version dependencies according to {build_file}."
+    import textwrap
+    files_str = " and ".join(file_names)
+    raw_text = f"Update version dependencies according to {files_str}."
+
+    # Format strictly according to openSUSE 67-column changelog wrapping rules
+    wrapper = textwrap.TextWrapper(
+        width=67,
+        initial_indent="- ",
+        subsequent_indent="  ",
+        break_long_words=False,
+        break_on_hyphens=False
+    )
+    full_bullet = wrapper.fill(raw_text)
+    # For osc vc -m (which prepends '- ' to the first line), pass message without leading '- '
+    osc_msg = full_bullet[2:] if full_bullet.startswith("- ") else full_bullet
 
     # 1. Try osc vc first
     try:
         import subprocess
         res = subprocess.run(
-            ["osc", "vc", "-m", msg],
+            ["osc", "vc", "-m", osc_msg],
             cwd=package_dir,
             capture_output=True,
             text=True
@@ -877,7 +1146,7 @@ def record_drift_changelog(package_dir: str, fixed_drifts: List[Dict], on_log: O
             return False
         changes_path = os.path.join(package_dir, changes_files[0])
         cm = ChangelogManager(changes_path)
-        cm.prepend_entry([f"- {msg}"])
+        cm.prepend_entry([full_bullet])
         log(f"Recorded changelog entry in {changes_files[0]}")
         return True
     except Exception:
@@ -888,7 +1157,7 @@ def record_drift_changelog(package_dir: str, fixed_drifts: List[Dict], on_log: O
             user_name = os.environ.get("USER", "maintainer")
             user_email = os.environ.get("MAIL", f"{user_name}@opensuse.org")
 
-            entry = f"-------------------------------------------------------------------\n{now_str} - {user_email}\n\n- {msg}\n\n"
+            entry = f"-------------------------------------------------------------------\n{now_str} - {user_email}\n\n{full_bullet}\n\n"
             changes_files = [f for f in os.listdir(package_dir) if f.endswith(".changes")]
             if changes_files:
                 p = os.path.join(package_dir, changes_files[0])

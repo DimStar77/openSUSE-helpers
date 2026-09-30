@@ -358,5 +358,148 @@ make %{?_smp_mflags}
             self.assertIn("- Update version dependencies according to configure.ac.", new_changes)
 
 
+    def test_python_dependency_drift_and_spec_fix(self):
+        pyproject_code = """[build-system]
+build-backend = "mesonpy"
+requires = ["meson-python>=0.12.1", "pygobject>=2.90.1"]
+
+[project]
+name = "PyAtspi"
+dependencies = [
+    "pygobject>=2.90.1"
+]
+"""
+        spec_code = """Name: python-testatspi
+Version: 1.0.0
+Release: 0
+BuildRequires:  %{python_module meson-python}
+BuildRequires:  %{python_module gobject >= 2.90.1}
+BuildRequires:  python-rpm-macros
+%build
+%pyproject_wheel
+%install
+%pyproject_install
+"""
+        with tempfile.TemporaryDirectory() as td:
+            spec_file = os.path.join(td, "python-testatspi.spec")
+            changes_file = os.path.join(td, "python-testatspi.changes")
+            with open(spec_file, "w", encoding="utf-8") as f:
+                f.write(spec_code)
+            with open(changes_file, "w", encoding="utf-8") as f:
+                f.write("-------------------------------------------------------------------\nWed Sep 23 12:00:00 UTC 2026 - test@opensuse.org\n\n- Initial packaging.\n\n")
+            with open(os.path.join(td, "pyproject.toml"), "w", encoding="utf-8") as f:
+                f.write(pyproject_code)
+
+            # Audit
+            drifts = meson_drift.audit_meson_drift(td)
+            self.assertEqual(len(drifts), 1)
+            self.assertEqual(drifts[0]["package"], "meson-python")
+            self.assertEqual(drifts[0]["type"], "unversioned")
+            self.assertEqual(drifts[0]["upstream_version"], "0.12.1")
+            self.assertEqual(drifts[0]["build_system"], "python")
+
+            # Report
+            report = meson_drift.format_drift_cli_report(drifts)
+            self.assertIn("Python (pyproject.toml) Dependency Drift Detected", report)
+
+            # Fix
+            fixed = meson_drift.fix_meson_drift(td)
+            self.assertEqual(len(fixed), 1)
+            with open(spec_file, "r", encoding="utf-8") as f:
+                new_spec = f.read()
+            self.assertIn("BuildRequires:  %{python_module meson-python >= 0.12.1}", new_spec)
+
+            # Changelog
+            ok = meson_drift.record_drift_changelog(td, fixed)
+            self.assertTrue(ok)
+            with open(changes_file, "r", encoding="utf-8") as f:
+                new_changes = f.read()
+            self.assertIn("- Update version dependencies according to pyproject.toml.", new_changes)
+
+    def test_python_poetry_dependency_drift(self):
+        pyproject_code = """[tool.poetry]
+name = "pygtkspellcheck"
+version = "5.0.4"
+
+[tool.poetry.dependencies]
+python = "^3.7"
+pyenchant = "^3.0"
+PyGObject = "^3.42.1"
+
+[build-system]
+requires = ["poetry_core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+"""
+        spec_code = """Name: python-spell
+Version: 5.0.4
+Release: 0
+BuildRequires:  %{python_module poetry-core >= 0.9.0}
+BuildRequires:  %{python_module pyenchant >= 2.0.0}
+BuildRequires:  python-rpm-macros
+%build
+%pyproject_wheel
+"""
+        with tempfile.TemporaryDirectory() as td:
+            with open(os.path.join(td, "python-spell.spec"), "w", encoding="utf-8") as f:
+                f.write(spec_code)
+            with open(os.path.join(td, "pyproject.toml"), "w", encoding="utf-8") as f:
+                f.write(pyproject_code)
+
+            drifts = meson_drift.audit_meson_drift(td)
+            self.assertEqual(len(drifts), 2)
+            pkgs = {d["package"]: d for d in drifts}
+            self.assertIn("poetry-core", pkgs)
+            self.assertEqual(pkgs["poetry-core"]["type"], "bump")
+            self.assertEqual(pkgs["poetry-core"]["upstream_version"], "1.0.0")
+            self.assertIn("pyenchant", pkgs)
+            self.assertEqual(pkgs["pyenchant"]["type"], "bump")
+            self.assertEqual(pkgs["pyenchant"]["upstream_version"], "3.0")
+
+    def test_hybrid_meson_python_package(self):
+        meson_code = "dependency('glib-2.0', version: '>= 2.40.0')"
+        pyproject_code = """[build-system]
+requires = ["meson-python>=0.14.0"]
+"""
+        spec_code = """Name: python-hybrid
+Version: 1.0.0
+Release: 0
+BuildRequires:  %{python_module meson-python}
+BuildRequires:  pkgconfig(glib-2.0) >= 2.36.0
+%build
+%meson
+%meson_build
+%pyproject_wheel
+"""
+        with tempfile.TemporaryDirectory() as td:
+            spec_file = os.path.join(td, "python-hybrid.spec")
+            changes_file = os.path.join(td, "python-hybrid.changes")
+            with open(spec_file, "w", encoding="utf-8") as f:
+                f.write(spec_code)
+            with open(changes_file, "w", encoding="utf-8") as f:
+                f.write("-------------------------------------------------------------------\nWed Sep 23 12:00:00 UTC 2026 - test@opensuse.org\n\n- Initial packaging.\n\n")
+            with open(os.path.join(td, "meson.build"), "w", encoding="utf-8") as f:
+                f.write(meson_code)
+            with open(os.path.join(td, "pyproject.toml"), "w", encoding="utf-8") as f:
+                f.write(pyproject_code)
+
+            drifts = meson_drift.audit_meson_drift(td)
+            self.assertEqual(len(drifts), 2)
+            report = meson_drift.format_drift_cli_report(drifts)
+            self.assertIn("Meson & Python (pyproject.toml) Dependency Drift Detected", report)
+
+            fixed = meson_drift.fix_meson_drift(td)
+            self.assertEqual(len(fixed), 2)
+            with open(spec_file, "r", encoding="utf-8") as f:
+                new_spec = f.read()
+            self.assertIn("BuildRequires:  %{python_module meson-python >= 0.14.0}", new_spec)
+            self.assertIn("BuildRequires:  pkgconfig(glib-2.0) >= 2.40.0", new_spec)
+
+            ok = meson_drift.record_drift_changelog(td, fixed)
+            self.assertTrue(ok)
+            with open(changes_file, "r", encoding="utf-8") as f:
+                new_changes = f.read()
+            self.assertIn("- Update version dependencies according to meson.build and\n  pyproject.toml.", new_changes)
+
+
 if __name__ == "__main__":
     unittest.main()
