@@ -52,7 +52,7 @@ cd ~/Documents/git-rw/openSUSE-helpers/geckopit
 **What `install.sh` handles automatically:**
 1.  **Dependency Verification**: Checks for required Python modules and GObject Introspection bindings (`python3-rpm`, `python3-requests`, `python3-gobject`, `typelib-1_0-Gtk-4_0`, `typelib-1_0-Adw-1`, `typelib-1_0-Vte-3_91`, and `gitea-tea`).
 2.  **Automated Zypper Prompt**: If any packages are missing, it prompts you to install them with a single `sudo zypper in -y` command.
-3.  **CLI Command Symlinks**: Creates clean symlinks in `~/bin` for `geckopit`, `geckopit-cli`, and `geckopit-upgrade` (and verifies `~/bin` is in your `$PATH`).
+3.  **CLI Command Symlinks**: Creates clean symlinks in `~/.local/bin` for `geckopit`, `geckopit-cli`, and `geckopit-upgrade` (and verifies `~/.local/bin` is in your `$PATH`).
 4.  **Wayland Desktop Launcher & Icon**: Copies `org.opensuse.geckopit.desktop` into `~/.local/share/applications/` and the HD vector SVG icon into `~/.local/share/icons/hicolor/scalable/apps/`, refreshing application and icon databases.
 
 ---
@@ -71,11 +71,11 @@ sudo zypper in \
     typelib-1_0-Vte-3_91 \
     gitea-tea
 
-# 2. Create command symlinks in ~/bin
-mkdir -p ~/bin
-ln -sf ~/Documents/git-rw/openSUSE-helpers/geckopit/geckopit.py ~/bin/geckopit
-ln -sf ~/Documents/git-rw/openSUSE-helpers/geckopit/geckopit-cli ~/bin/geckopit-cli
-ln -sf ~/Documents/git-rw/openSUSE-helpers/geckopit/geckopit-upgrade ~/bin/geckopit-upgrade
+# 2. Create command symlinks in ~/.local/bin
+mkdir -p ~/.local/bin
+ln -sf ~/Documents/git-rw/openSUSE-helpers/geckopit/geckopit.py ~/.local/bin/geckopit
+ln -sf ~/Documents/git-rw/openSUSE-helpers/geckopit/geckopit-cli ~/.local/bin/geckopit-cli
+ln -sf ~/Documents/git-rw/openSUSE-helpers/geckopit/geckopit-upgrade ~/.local/bin/geckopit-upgrade
 export PATH=$HOME/bin:$PATH
 
 # 3. Install desktop launcher and icon

@@ -1195,19 +1195,24 @@ def check_single_package_full(pkg_dir=".", stable_branch=None, unstable_branch=N
 
 
 def find_git_project_sync():
-    """Locates the git-project-sync executable in PATH, ~/bin, or repo git-helpers."""
+    """Locates the git-project-sync executable in PATH, ~/.local/bin, ~/bin, or repo git-helpers."""
     import shutil
     # 1. Check in PATH
     found = shutil.which("git-project-sync")
     if found and os.path.isfile(found) and os.access(found, os.X_OK):
         return os.path.abspath(found)
 
-    # 2. Check in ~/bin
+    # 2. Check in ~/.local/bin
+    local_bin = os.path.expanduser("~/.local/bin/git-project-sync")
+    if os.path.isfile(local_bin) and os.access(local_bin, os.X_OK):
+        return os.path.abspath(local_bin)
+
+    # 3. Check in legacy ~/bin
     user_bin = os.path.expanduser("~/bin/git-project-sync")
     if os.path.isfile(user_bin) and os.access(user_bin, os.X_OK):
         return os.path.abspath(user_bin)
 
-    # 3. Check relative to this file: ../../git-helpers/git-project-sync
+    # 4. Check relative to this file: ../../git-helpers/git-project-sync
     backend_dir = os.path.dirname(os.path.abspath(__file__))
     sibling = os.path.abspath(os.path.join(backend_dir, "../../git-helpers/git-project-sync"))
     if os.path.isfile(sibling) and os.access(sibling, os.X_OK):

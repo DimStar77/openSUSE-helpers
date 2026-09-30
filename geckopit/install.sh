@@ -120,18 +120,45 @@ else
 fi
 
 # 4. Local binary symlinking
-info "Setting up local command-line symlinks..."
-mkdir -p "$HOME/bin"
+info "Setting up local command-line symlinks in ~/.local/bin..."
+BIN_DIR="$HOME/.local/bin"
+mkdir -p "$BIN_DIR"
 
-ln -sf "${SCRIPT_DIR}/geckopit.py" "$HOME/bin/geckopit"
-ln -sf "${SCRIPT_DIR}/geckopit-cli" "$HOME/bin/geckopit-cli"
-ln -sf "${SCRIPT_DIR}/geckopit-upgrade" "$HOME/bin/geckopit-upgrade"
+ln -sf "${SCRIPT_DIR}/geckopit.py" "$BIN_DIR/geckopit"
+ln -sf "${SCRIPT_DIR}/geckopit-cli" "$BIN_DIR/geckopit-cli"
+ln -sf "${SCRIPT_DIR}/geckopit-upgrade" "$BIN_DIR/geckopit-upgrade"
+ln -sf "${SCRIPT_DIR}/geckopit-cli" "$BIN_DIR/git-vc"
 
-# Check if ~/bin is in PATH
-if [[ ":$PATH:" != *":$HOME/bin:"* ]]; then
-    warn "$HOME/bin is not in your PATH environment variable."
+# Link gc.sh and git-project-sync from sibling helper directories
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+GC_SRC="${REPO_ROOT}/GNOME-maintainer-scripts/gc.sh"
+if [ -f "$GC_SRC" ] && [ -x "$GC_SRC" ]; then
+    ln -sf "$GC_SRC" "$BIN_DIR/gc.sh"
+fi
+
+GIT_SYNC_SRC="${REPO_ROOT}/git-helpers/git-project-sync"
+if [ -f "$GIT_SYNC_SRC" ] && [ -x "$GIT_SYNC_SRC" ]; then
+    ln -sf "$GIT_SYNC_SRC" "$BIN_DIR/git-project-sync"
+fi
+
+# Clean up legacy ~/bin symlinks if they point to this installation
+if [ -d "$HOME/bin" ]; then
+    for old_bin in geckopit geckopit-cli geckopit-upgrade; do
+        if [ -L "$HOME/bin/$old_bin" ]; then
+            target_link="$(readlink "$HOME/bin/$old_bin" || true)"
+            if [[ "$target_link" == *"${SCRIPT_DIR}"* ]]; then
+                rm -f "$HOME/bin/$old_bin"
+                info "Removed legacy ~/bin/$old_bin (migrated to ~/.local/bin/$old_bin)"
+            fi
+        fi
+    done
+fi
+
+# Check if ~/.local/bin is in PATH
+if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
+    warn "$BIN_DIR is not in your PATH environment variable."
     warn "To run geckopit from your terminal, add this to your ~/.bashrc or ~/.zshrc:"
-    warn "  export PATH=\$HOME/bin:\$PATH"
+    warn "  export PATH=\$HOME/.local/bin:\$PATH"
 fi
 
 # 5. Desktop & Icon integration
@@ -157,5 +184,40 @@ mkdir -p "$COMPLETION_DIR"
 cp "${SCRIPT_DIR}/completion/geckopit.bash" "$COMPLETION_DIR/geckopit-cli"
 ln -sf "$COMPLETION_DIR/geckopit-cli" "$COMPLETION_DIR/geckopit"
 ln -sf "$COMPLETION_DIR/geckopit-cli" "$COMPLETION_DIR/geckopit-upgrade"
+ln -sf "$COMPLETION_DIR/geckopit-cli" "$COMPLETION_DIR/git-vc"
+
+# 7. Git Merge Drivers for openSUSE packaging (.changes and .spec)
+REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+RESOLVE_CHANGES="${REPO_DIR}/GNOME-maintainer-scripts/resolve-changes"
+RESOLVE_SPEC="${REPO_DIR}/GNOME-maintainer-scripts/resolve-spec"
+
+if [ -f "$RESOLVE_CHANGES" ] && [ -f "$RESOLVE_SPEC" ]; then
+    info "Configuring automated Git merge drivers for .changes and .spec..."
+
+    # Configure merge drivers directly referencing repository executables (no symlinks needed)
+    GIT_CONFIG_TARGET="$HOME/.gitconfig"
+    GIT_CFG=(git config --file "$GIT_CONFIG_TARGET")
+
+    "${GIT_CFG[@]}" merge.merge-changes.name "openSUSE changes file merge driver"
+    "${GIT_CFG[@]}" merge.merge-changes.driver "'$RESOLVE_CHANGES' %O %A %B %P"
+
+    "${GIT_CFG[@]}" merge.spec-merge.name "openSUSE spec file merge driver"
+    "${GIT_CFG[@]}" merge.spec-merge.driver "'$RESOLVE_SPEC' %O %A %B %P"
+
+    "${GIT_CFG[@]}" merge.keep-ours.name "Keep Ours merge driver"
+    "${GIT_CFG[@]}" merge.keep-ours.driver "true"
+
+    # Configure global git attributes
+    GIT_ATTR_DIR="$HOME/.config/git"
+    GIT_ATTR_FILE="$GIT_ATTR_DIR/attributes"
+    mkdir -p "$GIT_ATTR_DIR"
+    touch "$GIT_ATTR_FILE"
+
+    for mapping in "*.changes merge=merge-changes" "*.spec merge=spec-merge" "_service merge=keep-ours" "*.obsinfo merge=keep-ours"; do
+        if ! grep -qxF "$mapping" "$GIT_ATTR_FILE" 2>/dev/null; then
+            echo "$mapping" >> "$GIT_ATTR_FILE"
+        fi
+    done
+fi
 
 info "Setup completed successfully! Enjoy Geckopit SCM Cockpit."

@@ -904,6 +904,12 @@ def print_help():
 
 
 def main():
+    # If invoked via git-vc (e.g. 'git vc'), gc, or gc.sh, automatically route to --commit mode
+    prog_name = os.path.basename(sys.argv[0])
+    if prog_name in ("git-vc", "gc", "gc.sh"):
+        if "--commit" not in sys.argv and "-c" not in sys.argv:
+            sys.argv.insert(1, "--commit")
+
     if "--bash-completion" in sys.argv:
         comp_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "completion", "geckopit.bash")
         if os.path.isfile(comp_file):
