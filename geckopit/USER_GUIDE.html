@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Geckopit User Guide: Packaging Workflow Cockpit</title>
+<style>
+:root {
+    --bg-color: #ffffff;
+    --text-color: #24292f;
+    --border-color: #d0d7de;
+    --code-bg: #f6f8fa;
+    --table-zebra: #f6f8fa;
+    --link-color: #0969da;
+    --shadow-color: rgba(0, 0, 0, 0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg-color: #1e1e1e;
+        --text-color: #e0e0e0;
+        --border-color: #383838;
+        --code-bg: #2d2d2d;
+        --table-zebra: #282828;
+        --link-color: #58a6ff;
+        --shadow-color: rgba(0, 0, 0, 0.4);
+    }
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Cantarell, Ubuntu, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    color: var(--text-color);
+    background-color: var(--bg-color);
+    margin: 0;
+    padding: 0;
+}
+
+.container {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 2.5rem 1.5rem;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    margin-top: 1.8rem;
+    margin-bottom: 0.8rem;
+    font-weight: 600;
+    line-height: 1.25;
+}
+
+h1 {
+    font-size: 2.2rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+h2 {
+    font-size: 1.5rem;
+    padding-bottom: 0.3rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+h3 {
+    font-size: 1.25rem;
+}
+
+a {
+    color: var(--link-color);
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+pre {
+    background-color: var(--code-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 1rem;
+    overflow-x: auto;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 0.9rem;
+    line-height: 1.45;
+}
+
+code {
+    background-color: var(--code-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 0.15em 0.35em;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 0.88em;
+}
+
+pre code {
+    background: transparent;
+    border: none;
+    padding: 0;
+    font-size: inherit;
+}
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1.2rem 0;
+    overflow-x: auto;
+    display: block;
+}
+
+th, td {
+    padding: 8px 14px;
+    border: 1px solid var(--border-color);
+    text-align: left;
+}
+
+th {
+    background-color: var(--code-bg);
+    font-weight: 600;
+}
+
+tr:nth-child(even) {
+    background-color: var(--table-zebra);
+}
+
+img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 1.4rem auto;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px var(--shadow-color);
+    border: 1px solid var(--border-color);
+}
+
+blockquote {
+    margin: 1rem 0;
+    padding: 0 1rem;
+    color: #57606a;
+    border-left: 4px solid var(--border-color);
+}
+
+hr {
+    height: 1px;
+    background-color: var(--border-color);
+    border: none;
+    margin: 2rem 0;
+}
+</style>
+</head>
+<body>
+<div class="container">
+<h1 id="geckopit-user-guide-packaging-workflow-cockpit">🦎 Geckopit User Guide: Packaging Workflow Cockpit</h1>
+<p>Welcome to the <strong>Geckopit User Guide</strong>. Geckopit is a graphical cockpit and command-line tool for openSUSE packagers maintaining multi-branch upstream repositories (such as <code>GNOME:Factory</code> and <code>GNOME:Next</code>).</p>
+<p>This guide is organized by packaging tasks. Each section provides dedicated, step-by-step instructions for both the <strong>Desktop Cockpit (GUI)</strong> and the <strong>Terminal Suite (CLI)</strong>.</p>
+<hr />
+<h2 id="table-of-contents">📑 Table of Contents</h2>
+<ol>
+<li><a href="#-1-overview--cockpit-layout">🚀 Overview &amp; Cockpit Layout</a></li>
+<li><a href="#-2-finding-what-needs-attention--browsing">🎯 Finding What Needs Attention &amp; Browsing</a></li>
+<li><a href="#-3-upgrading-a-package-to-a-new-upstream-release">⚙️ Upgrading a Package to a New Upstream Release</a></li>
+<li><a href="#-4-auditing--fixing-meson-dependency-drift">🔧 Auditing &amp; Fixing Meson Dependency Drift</a></li>
+<li><a href="#-5-promoting-next-pre-releases-to-factory-gitea-prs">🔀 Promoting Next Pre-Releases to Factory (Gitea PRs)</a></li>
+<li><a href="#-6-synchronizing-multi-branch-workspaces">🔄 Synchronizing Multi-Branch Workspaces</a></li>
+<li><a href="#-7-committing-packaging-changes--whitespace-sanitization">💾 Committing Packaging Changes &amp; Whitespace Sanitization</a></li>
+<li><a href="#-8-hands-off-the-mouse-keyboard-navigation">⌨️ Hands-Off-The-Mouse Keyboard Navigation</a></li>
+</ol>
+<hr />
+<h2 id="1-overview-cockpit-layout">🚀 1. Overview &amp; Cockpit Layout</h2>
+<p>Geckopit provides two complementary interfaces:
+* <strong>Cockpit GUI (<code>geckopit</code>)</strong>: A responsive desktop application with real-time multi-branch tracking, embedded terminal tabs, 1-click update/merge/PR actions, and syntax-highlighted code diffing.
+* <strong>Terminal CLI (<code>geckopit-cli</code>)</strong>: A fast command-line suite for single-package inspection, batch audits, headless upgrades, and whitespace-sanitized commits.</p>
+<h3 id="figure-1-full-cockpit-layout-overview">Figure 1: Full Cockpit Layout Overview</h3>
+<p><img alt="Geckopit Cockpit Layout Overview" src="./docs/images/figure1_cockpit_overview.png" /></p>
+<p>The Cockpit is organized into four main functional regions:
+1. <strong>HeaderBar</strong>: Switch workspace profiles, run background multi-workspace sync, and adjust preferences.
+2. <strong>Package Master Sidebar</strong>: Search bar, linked filter toolbar, and real-time package list with status badges.
+3. <strong>Detail Workspace</strong>: Dual pipeline cards (<code>Stable</code> and <code>Unstable</code>), inline Meson drift repair, and code-diff viewer.
+4. <strong>Embedded Console Drawer</strong>: Multi-tab terminal drawer with draggable tabs, font zooming, and auto-scroll pause.</p>
+<hr />
+<h2 id="2-finding-what-needs-attention-browsing">🎯 2. Finding What Needs Attention &amp; Browsing</h2>
+<h3 id="understanding-status-badges">Understanding Status Badges</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Badge</th>
+<th style="text-align: left;">Meaning</th>
+<th style="text-align: left;">Action Recommended</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>Local -N</code></td>
+<td style="text-align: left;">Local checkout is behind <code>origin</code> by <em>N</em> commits.</td>
+<td style="text-align: left;">Fast-forward pull from origin.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>Local +N</code></td>
+<td style="text-align: left;">Local checkout has unpushed commits on disk.</td>
+<td style="text-align: left;">Push commits to origin.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>Update Av.</code></td>
+<td style="text-align: left;">Upstream has released a newer version on release-monitoring.org.</td>
+<td style="text-align: left;">Run package upgrade.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>Fwd.</code></td>
+<td style="text-align: left;">Developmental commits on <code>next</code> ready to promote to <code>factory</code>.</td>
+<td style="text-align: left;">Review diff and create PR.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>Pool Ahead</code></td>
+<td style="text-align: left;">Local Factory has commits waiting to be submitted to Gitea pool.</td>
+<td style="text-align: left;">Run pool submission.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>Pool Behind</code></td>
+<td style="text-align: left;">Central Gitea pool has updates that need to be pulled down.</td>
+<td style="text-align: left;">Pull down pool updates into Factory.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>No Pool</code></td>
+<td style="text-align: left;">Package is not hosted in central Gitea pool.</td>
+<td style="text-align: left;">Informational (suppressed from default sync table).</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>Conflict</code></td>
+<td style="text-align: left;">Automated sync encountered git merge conflicts.</td>
+<td style="text-align: left;">Resolve in console drawer shell.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="in-the-cockpit-gui">🖥️ In the Cockpit (GUI)</h3>
+<p>The linked toolbar at the top of the sidebar lets you switch between focused work queues and full catalog browsing:</p>
+<h3 id="figure-2-quick-filter-tracks-action-queue">Figure 2: Quick Filter Tracks &amp; Action Queue</h3>
+<p><img alt="Linked Filter Tracks Toolbar" src="./docs/images/figure2_filter_toolbar.png" /></p>
+<ul>
+<li><strong>Action Queue Mode (<code>⚠️ Needs</code> ON — Default)</strong>:</li>
+<li>Only packages requiring maintainer attention are displayed.</li>
+<li>Click one or more track buttons (<strong><code>📡 Pool</code></strong>, <strong><code>🟢 Stable</code></strong>, <strong><code>🟠 Unst.</code></strong>, <strong><code>🔀 Fwd.</code></strong>) to narrow your work queue down to that specific task set (or their combined union).</li>
+<li>If no track buttons are active, all actionable packages across all tracks are shown.</li>
+<li><strong>Catalog Browse Mode (<code>⚠️ Needs</code> OFF)</strong>:</li>
+<li>Toggling <code>⚠️ Needs</code> off switches the sidebar to browse all packages across the checkout tree.</li>
+<li>The four track filter buttons are automatically dimmed (<code>sensitive=False</code>), and track shortcuts (<code>Ctrl+2</code>..<code>Ctrl+5</code>) are ignored.</li>
+<li>Your previous track selections are remembered and immediately restored when you toggle <code>⚠️ Needs</code> back on.</li>
+<li><strong>Ignoring Stagnant Versions</strong>:</li>
+<li>If an upstream project has an abandoned pre-release tag cluttering your queue, hold <strong><code>Ctrl</code> + <code>Alt</code></strong> and <strong>right-click</strong> directly on the version label in the Unstable Pipeline card.</li>
+<li>Select <strong><code>🚫 Ignore Version {Version}</code></strong>. The package will slide out of your filtered sidebar list. (Repeat and click <strong><code>🔄 Unignore</code></strong> to restore).</li>
+</ul>
+<hr />
+<h3 id="in-the-terminal-cli">💻 In the Terminal (CLI)</h3>
+<p>Run high-throughput parallel batch audits across all packages in your workspace:</p>
+<pre><code class="language-bash"># Default audit: Shows only packages requiring action (hides up-to-date and non-pool items)
+geckopit-cli
+
+# Upstream release monitor: Query release-monitoring.org for new stable and unstable versions
+geckopit-cli -v
+
+# Forwarding audit: List next branches with commits ready to merge to factory
+geckopit-cli -f
+
+# Gitea pool presence audit: List packages not registered in the central Gitea pool
+geckopit-cli --not-in-pool
+
+# Include packages not in central pool in the main downstream sync table
+geckopit-cli --include-not-in-pool
+
+# Comprehensive single-package dashboard (run inside package checkout or pass directory)
+geckopit-cli zenity
+</code></pre>
+<hr />
+<h2 id="3-upgrading-a-package-to-a-new-upstream-release">⚙️ 3. Upgrading a Package to a New Upstream Release</h2>
+<p>When an upstream project releases a new version, Geckopit automates the entire upgrade:
+fetching new sources ➔ bumping the version in <code>.spec</code> ➔ extracting upstream release notes ➔ wrapping changelog bullets at standard 67 columns ➔ dropping merged patches ➔ checking for Meson dependency bumps.</p>
+<p>Geckopit automatically adapts to how the package is maintained:
+* <strong>Service-managed packages (<code>_service</code>)</strong>: Fetches upstream Git commits, drops merged patches, and updates packaging metadata.
+* <strong>Direct tarball packages (<code>.spec</code>)</strong>: Reads downloaded source archives, extracts changelogs, and updates spec files.</p>
+<hr />
+<h3 id="in-the-cockpit-gui_1">🖥️ In the Cockpit (GUI)</h3>
+<h3 id="figure-3-dual-pipeline-action-cards-dynamic-upgrade-button">Figure 3: Dual Pipeline Action Cards &amp; Dynamic Upgrade Button</h3>
+<p><img alt="Pipeline Cards and Update Button" src="./docs/images/figure3_pipeline_cards.png" /></p>
+<ol>
+<li>Select a package showing the orange <strong><code>Update Av.</code></strong> badge (e.g. <code>zenity</code> or <code>libgsf</code>).</li>
+<li>In the Pipeline card, review the version comparison (e.g. <code>4.2.0 ➔ 4.2.2</code>).</li>
+<li>Click the dynamic update button (e.g. <strong><code>Update Next to 4.2.2</code></strong> or <strong><code>Update Factory to 4.2.2</code></strong>).</li>
+<li>An embedded terminal tab opens in the bottom drawer, executing the upgrade engine, bumping the spec version, wrapping the <code>.changes</code> entry at 67 columns, and dropping merged patches.</li>
+<li>Upon completion, the update button transitions to <strong><code>Up-To-Date</code></strong> and illuminates the <strong><code>Push</code></strong> button.</li>
+<li>Click <strong><code>Push</code></strong> to push your packaging commits to <code>origin</code>.</li>
+</ol>
+<hr />
+<h3 id="in-the-terminal-cli_1">💻 In the Terminal (CLI)</h3>
+<p>Run <code>geckopit-cli --upgrade</code> directly inside the package directory:</p>
+<pre><code class="language-bash"># Upgrade package to target revision (default: @PARENT_TAG@)
+geckopit-cli --upgrade 4.2.2
+
+# Or simulate the entire upgrade without modifying any files (dry-run)
+geckopit-cli --upgrade 4.2.2 --dry-run
+</code></pre>
+<hr />
+<h2 id="4-auditing-fixing-meson-dependency-drift">🔧 4. Auditing &amp; Fixing Meson Dependency Drift</h2>
+<p>Upstream projects often bump minimum dependency constraints in <code>meson.build</code> without maintainers noticing. Geckopit automatically inspects upstream <code>meson.build</code> declarations and audits them against your <code>.spec</code> <code>BuildRequires:</code>.</p>
+<hr />
+<h3 id="in-the-cockpit-gui_2">🖥️ In the Cockpit (GUI)</h3>
+<ol>
+<li>When a package has dependency drift, a compact yellow warning banner appears on the detail card:
+   <code>text
+   ⚠️ Meson Drift: 1 unversioned  [🔧 Fix in .spec]</code></li>
+<li>Hover over the banner or right-click to view the exact requirements.</li>
+<li>Click <strong><code>🔧 Fix in .spec</code></strong>.</li>
+<li>Geckopit immediately updates the <code>BuildRequires:</code> declaration in the <code>.spec</code> file (or updates the corresponding <code>%define</code> macro if defined), appends the standard changelog entry (<code>- Update version dependencies according to meson.build.</code>), and refreshes the view.</li>
+</ol>
+<hr />
+<h3 id="in-the-terminal-cli_2">💻 In the Terminal (CLI)</h3>
+<p>Audit and fix dependencies directly from your shell:</p>
+<pre><code class="language-bash"># Audit dependencies against .spec BuildRequires
+geckopit-cli --audit-deps
+
+# Automatically update .spec BuildRequires / %define macros and record changelog
+geckopit-cli --fix-deps
+</code></pre>
+<p><strong>Sample Output (<code>--audit-deps</code>):</strong></p>
+<pre><code class="language-text">=&gt; Auditing Meson dependencies for 'zenity'...
+
+⚠️  Meson Dependency Drift Detected:
+   • pkgconfig(libadwaita-1) &gt;= 1.2 (spec currently has unversioned BuildRequires)
+
+💡 Recommended Action: Update BuildRequires in zenity.spec to match upstream requirements.
+</code></pre>
+<hr />
+<h2 id="5-promoting-next-pre-releases-to-factory-gitea-prs">🔀 5. Promoting Next Pre-Releases to Factory (Gitea PRs)</h2>
+<p>During development cycles, maintainers test pre-releases on <code>next</code> before promoting them to <code>factory</code>.</p>
+<hr />
+<h3 id="in-the-cockpit-gui_3">🖥️ In the Cockpit (GUI)</h3>
+<h3 id="figure-4-integrated-code-diff-viewer-patch-clipboard-export">Figure 4: Integrated Code-Diff Viewer &amp; Patch Clipboard Export</h3>
+<p><img alt="Integrated Code-Diff Viewer" src="./docs/images/figure4_diff_reviewer.png" /></p>
+<ol>
+<li>In the sidebar, click the <strong><code>🔀 Fwd.</code></strong> track filter (or press <code>Ctrl+5</code>).</li>
+<li>Select a package showing forwardable commits (e.g. <code>Ahead by 1 commits</code>).</li>
+<li>The integrated syntax-highlighted code-diff viewer displays the exact Git diff between <code>next</code> and <code>factory</code>.</li>
+<li><strong>Copying Patches</strong>: Click the <strong><code>edit-copy-symbolic</code> (📋 Copy)</strong> icon in the diff header to copy the raw Git patch directly to your clipboard, confirmed by a floating toast notification.</li>
+<li><strong>Creating Pull Requests</strong>: Click <strong><code>Create Pull Request</code></strong> on the Pipeline card:</li>
+<li><strong>Smart Changelog PR Prefiller</strong>: Geckopit automatically constructs the PR title (e.g. <code>Update to version 4.2.2</code>) and extracts the newly added <code>.changes</code> entries directly into the PR description body.</li>
+<li>Click <strong><code>Submit Pull Request</code></strong> to publish the PR on Gitea.</li>
+</ol>
+<hr />
+<h3 id="in-the-terminal-cli_3">💻 In the Terminal (CLI)</h3>
+<p>Audit forwardable branches and pull request states:</p>
+<pre><code class="language-bash"># List all checkouts with developmental commits on next ahead of factory
+geckopit-cli --forward
+
+# Include active Gitea pull request status
+geckopit-cli --forward --pr
+
+# Only display packages ready for forward that do NOT yet have an active PR
+geckopit-cli --forward --no-pr
+</code></pre>
+<hr />
+<h2 id="6-synchronizing-multi-branch-workspaces">🔄 6. Synchronizing Multi-Branch Workspaces</h2>
+<p>Synchronize your local workspace trees with remote tracking branches across all profile checkouts.</p>
+<hr />
+<h3 id="in-the-cockpit-gui_4">🖥️ In the Cockpit (GUI)</h3>
+<h3 id="figure-5-embedded-multi-tab-console-drawer">Figure 5: Embedded Multi-Tab Console Drawer</h3>
+<p><img alt="Embedded Multi-Tab Console Drawer" src="./docs/images/figure5_console_drawer.png" /></p>
+<ol>
+<li>Click the <strong><code>🔄 Sync Workspace</code></strong> button in the HeaderBar.</li>
+<li>Geckopit synchronizes all package checkouts in the background. A spinner animates on the button while working.</li>
+<li>The console drawer remains hidden if the sync completes cleanly.</li>
+<li><strong>Notifications</strong>:</li>
+<li>Clean sync: <code>✅ Synced 12 package(s): glib2, gtk4, gvfs, mutter...</code></li>
+<li>Up-to-date: <code>✅ Workspace is already up to date</code></li>
+<li>Merge conflicts: The console drawer automatically springs open focusing the shell tab, and the notification shows:
+     <code>⚠️ Workspace sync encountered warnings or conflicts (glib2, gtk4)</code></li>
+</ol>
+<hr />
+<h3 id="in-the-terminal-cli_4">💻 In the Terminal (CLI)</h3>
+<p>Run workspace synchronization from the command line:</p>
+<pre><code class="language-bash"># Parallel fast-forward workspace synchronization
+geckopit-cli --sync
+
+# Fetch remote objects only without merging
+geckopit-cli --fetch
+</code></pre>
+<hr />
+<h2 id="7-committing-packaging-changes-whitespace-sanitization">💾 7. Committing Packaging Changes &amp; Whitespace Sanitization</h2>
+<p>Geckopit includes a modernized packaging commit helper (replacing legacy <code>gc.sh</code>). It ensures clean Git history by sanitizing trailing whitespace and preventing review artifacts from being accidentally committed.</p>
+<hr />
+<h3 id="in-the-cockpit-gui_5">🖥️ In the Cockpit (GUI)</h3>
+<ul>
+<li>Each pipeline card provides dedicated one-click terminal launchers:</li>
+<li><strong><code>🖥️ Terminal (factory)</code></strong>: Launches an embedded console drawer tab navigated to the package's local stable worktree.</li>
+<li><strong><code>🖥️ Terminal (next)</code></strong>: Launches an embedded console drawer tab navigated to the package's local unstable worktree.</li>
+<li>Review your working tree changes and run your packaging commit directly in the drawer.</li>
+</ul>
+<hr />
+<h3 id="in-the-terminal-cli_5">💻 In the Terminal (CLI)</h3>
+<p>Run <code>geckopit-cli --commit</code> inside any package directory:</p>
+<pre><code class="language-bash"># Stages packaging files, strips trailing whitespace, and pre-fills $EDITOR with .changes diff
+geckopit-cli --commit
+
+# Commit without opening an interactive editor (uses .changes diff directly)
+geckopit-cli --commit --no-edit
+</code></pre>
+<p><strong>Defensive Protections:</strong>
+* Automatically strips trailing whitespace from modified <code>.spec</code>, <code>.changes</code>, and packaging files before staging.
+* Stages only packaging files and source services, ignoring untracked build artifacts, cloned upstream directories, and temporary review logs.
+* Extracts newly added entries from <code>*.changes</code> and pre-populates your <code>$EDITOR</code> commit template.</p>
+<hr />
+<h2 id="8-hands-off-the-mouse-keyboard-navigation">⌨️ 8. Hands-Off-The-Mouse Keyboard Navigation</h2>
+<p>Power users never need to reach for the mouse. Geckopit provides full keyboard control with defensive input guards:</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Shortcut</th>
+<th style="text-align: left;">Action</th>
+<th style="text-align: left;">Scope / Context</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong><code>/</code></strong> or <strong><code>Ctrl</code> + <code>P</code></strong></td>
+<td style="text-align: left;">Focus the package search entry</td>
+<td style="text-align: left;">Anywhere in Cockpit</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong><code>Enter</code></strong> or <strong><code>Down</code></strong></td>
+<td style="text-align: left;">Confirm search and select first matching package</td>
+<td style="text-align: left;">Inside search entry</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong><code>j</code></strong> or <strong><code>Down</code></strong></td>
+<td style="text-align: left;">Step to the next package in the list</td>
+<td style="text-align: left;">Package list navigation</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong><code>k</code></strong> or <strong><code>Up</code></strong></td>
+<td style="text-align: left;">Step to the previous package in the list</td>
+<td style="text-align: left;">Package list navigation</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong><code>Ctrl</code> + <code>1</code></strong></td>
+<td style="text-align: left;">Toggle <strong>Action Queue</strong> vs. <strong>Catalog Browse</strong> mode</td>
+<td style="text-align: left;">Sidebar toolbar</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong><code>Ctrl</code> + <code>2</code></strong></td>
+<td style="text-align: left;">Toggle <strong>📡 Pool Sync</strong> track filter</td>
+<td style="text-align: left;">Action Queue mode</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong><code>Ctrl</code> + <code>3</code></strong></td>
+<td style="text-align: left;">Toggle <strong>🟢 Stable Updates</strong> track filter</td>
+<td style="text-align: left;">Action Queue mode</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong><code>Ctrl</code> + <code>4</code></strong></td>
+<td style="text-align: left;">Toggle <strong>🟠 Unstable Updates</strong> track filter</td>
+<td style="text-align: left;">Action Queue mode</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong><code>Ctrl</code> + <code>5</code></strong></td>
+<td style="text-align: left;">Toggle <strong>🔀 Forwarding</strong> track filter</td>
+<td style="text-align: left;">Action Queue mode</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong><code>Ctrl</code> + <code>F</code></strong></td>
+<td style="text-align: left;">Activate inline search inside the diff viewer</td>
+<td style="text-align: left;">When viewing diffs</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong><code>Ctrl</code> + <code>+</code> / <code>-</code> / <code>0</code></strong></td>
+<td style="text-align: left;">Zoom console terminal font (with floating <code>%</code> badge)</td>
+<td style="text-align: left;">In terminal drawer</td>
+</tr>
+</tbody>
+</table>
+<p><em>Note: Defensive input guards prevent shortcuts from intercepting keystrokes while you are actively typing inside an embedded terminal shell or text field.</em></p>
+<hr />
+<p><em>For technical architecture, command-line reference, and helper internals, see <a href="MAINTAINERS_GUIDE.md">MAINTAINERS_GUIDE.md</a>.</em></p>
+</div>
+</body>
+</html>

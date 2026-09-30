@@ -888,6 +888,7 @@ def print_help():
     print(f"  {sb.BOLD}-v, --version [b]{sb.RESET}  Compares package versions against release-monitoring.org.")
     print(f"  {sb.BOLD}-f, --forward{sb.RESET}      Identifies forwardable next branches.")
     print(f"  {sb.BOLD}--not-in-pool{sb.RESET}     Lists packages in checkout not registered in the central Gitea pool.")
+    print(f"  {sb.BOLD}--guide, --docs{sb.RESET}    Opens the Geckopit User Guide in your default browser.")
     print(f"  {sb.BOLD}-d, --audit-deps{sb.RESET}   Audits Meson dependencies against .spec BuildRequires.")
     print(f"  {sb.BOLD}--fix-deps{sb.RESET}         Audits and fixes .spec BuildRequires according to meson.build, recording a changelog entry.")
     print(f"  {sb.BOLD}--todo{sb.RESET}             Alias for default sync checking mode.")
@@ -912,6 +913,12 @@ def main():
         else:
             print(f"Error: Completion script not found at {comp_file}", file=sys.stderr)
             sys.exit(1)
+    if "--guide" in sys.argv or "--docs" in sys.argv:
+        import docs_builder
+        print("Opening Geckopit User Guide in default browser...")
+        docs_builder.open_user_guide()
+        sys.exit(0)
+
     if "-h" in sys.argv or "--help" in sys.argv:
         print_help()
         sys.exit(0)

@@ -517,6 +517,34 @@ class TestSyncWindow(unittest.TestCase):
         mock_dialog.parent.toast_overlay.add_toast.assert_called()
 
 
+    def test_user_guide_html_not_drifted(self):
+        import os
+        import docs_builder
+
+        repo_dir = os.path.dirname(os.path.abspath(__file__))
+        md_path = os.path.join(repo_dir, "USER_GUIDE.md")
+        html_path = os.path.join(repo_dir, "USER_GUIDE.html")
+
+        self.assertTrue(os.path.isfile(md_path), f"Missing {md_path}")
+        self.assertTrue(os.path.isfile(html_path), f"Missing {html_path}. Run docs_builder.py to compile.")
+
+        with open(md_path, "r", encoding="utf-8") as f:
+            md_text = f.read()
+
+        expected_html = docs_builder.render_markdown_to_html(
+            md_text, title="Geckopit User Guide: Packaging Workflow Cockpit"
+        )
+
+        with open(html_path, "r", encoding="utf-8") as f:
+            actual_html = f.read()
+
+        self.assertEqual(
+            actual_html,
+            expected_html,
+            "geckopit/USER_GUIDE.html has drifted from USER_GUIDE.md! "
+            "Run 'python3 geckopit/helpers/docs_builder.py' to synchronize."
+        )
+
     def test_check_repo_sync_pool_status_classification(self):
         import subprocess
         import sync_backend as sb

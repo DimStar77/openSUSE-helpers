@@ -2,11 +2,13 @@
 
 Welcome to **Geckopit** (formerly the GNOME Sync Dashboard) — the unified, multi-profile openSUSE packaging cockpit and release engineering suite designed for modern, rapid, and dependable maintenance.
 
-This guidebook is the official manual for package maintainers and release engineers coordinating openSUSE pipelines. It covers workstation setup, repository profile configuration, and standard packaging workflows to keep hundreds of SCM checkouts synchronized between upstream releases, local checkouts, Gitea, and the Open Build Service (OBS).
+This guidebook is the reference manual for package maintainers and release engineers coordinating openSUSE pipelines. It covers workstation setup, repository profile configuration, and standard packaging workflows to keep hundreds of SCM checkouts synchronized between upstream releases, local checkouts, Gitea, and the Open Build Service (OBS).
 
 The Geckopit suite provides two unified interfaces:
 *   **Desktop Cockpit (`geckopit`)**: A fast GTK 4 / Libadwaita application featuring real-time multi-branch tracking, embedded terminal tabs, 1-click update/merge/PR actions, and syntax-highlighted code diffing.
 *   **Terminal Suite (`geckopit-cli`)**: A high-throughput CLI tool providing single-package dashboards, headless strategy-based upgrades (`--upgrade`), and whitespace-sanitized commit workflows (`--commit`).
+
+*👉 **Looking for a daily packaging guide?** See [USER_GUIDE.md](USER_GUIDE.md) for step-by-step workflow tutorials, keyboard navigation cheat sheets, and video plans.*
 
 ---
 
@@ -161,7 +163,7 @@ geckopit
 ```
 
 ### 🧪 1. Strategy-Based Package Upgrades
-In the package detail workspace, review the **🟢 STABLE PIPELINE** and **🟡 UNSTABLE PIPELINE** cards. If an update is detected from upstream, click **`⚙️ Run SCM Update`** (or execute `geckopit-cli --upgrade` in your terminal).
+In the package detail workspace, review the **🟢 STABLE PIPELINE** and **🟡 UNSTABLE PIPELINE** cards. If an update is detected from upstream, click the dynamic update button (e.g. **`Update Factory to <version>`** or **`Update Next to <version>`**, or execute `geckopit-cli --upgrade` in your terminal).
 
 Geckopit inspects the package directory and automatically executes the appropriate upgrade engine (`geckopit/helpers/upgrade/`):
 
@@ -347,7 +349,7 @@ Some upstream projects have abandoned, broken, or unusable unstable versions rep
     Hold **`Ctrl` + `Alt`** and **right-click** directly on the **Version Alignment** label inside the Unstable Pipeline card.
 2.  **Toggle Ignore State**:
     *   In the popup menu, click **`🚫 Ignore Version {Version}`**.
-    *   The version label transitions to an italicized gray **`(Ignored)`** badge, and the SCM Update button disables.
+    *   The version label transitions to an italicized gray **`(Ignored)`** badge, and the update button disables (displaying **`Ignored Unstable Update`**).
     *   The package smoothly slides out of your filtered sidebar list in real time.
 3.  **To Unignore**:
     Perform the same gesture (**`Ctrl` + `Alt` + Right Click**) on the ignored label and select **`🔄 Unignore Version {Version}`**.

@@ -1401,6 +1401,13 @@ class SyncWindow(Adw.ApplicationWindow):
         title_lbl.set_markup("<span weight='bold'>Geckopit</span>")
         self.header_bar.set_title_widget(title_lbl)
 
+        # Right: Help / Documentation Button (F1)
+        import docs_builder
+        help_btn = Gtk.Button.new_from_icon_name("help-browser-symbolic")
+        help_btn.set_tooltip_text("Open User Guide in Browser (F1)")
+        help_btn.connect("clicked", lambda btn: docs_builder.open_user_guide(self))
+        self.header_bar.pack_end(help_btn)
+
         # Apply profile configuration UI states dynamically on startup
         self.apply_active_profile_ui()
 
@@ -3710,6 +3717,12 @@ class SyncWindow(Adw.ApplicationWindow):
         # 4. Search bar shortcut: '/'
         if keyval == Gdk.KEY_slash:
             self.sidebar_search.grab_focus()
+            return True
+
+        # 5. Help documentation: F1
+        if keyval == Gdk.KEY_F1:
+            import docs_builder
+            docs_builder.open_user_guide(self)
             return True
 
         # 5. Vim-style / Arrow navigation across packages
