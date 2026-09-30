@@ -2629,10 +2629,26 @@ class SyncWindow(Adw.ApplicationWindow):
         GLib.idle_add(self.trigger_bulk_scans)
 
     def trigger_bulk_scans(self):
-        self.start_sync_scan()
-        self.start_version_scan()
-        if self.unstable_b:
-            self.start_forwarding_scan()
+        if not self.repos:
+            self.sidebar_progress_label.set_text("No packages found")
+            return
+
+        self.sync_completed_count = 0
+        self.ver_completed_count = 0
+        self.fwd_completed_count = 0
+        self.update_progress_ui()
+
+        # Interleave task submission across packages so distinct subsystems
+        # (local Git / Gitea pool vs external release-monitoring.org REST API)
+        # execute in parallel across worker threads, refreshing each package end-to-end
+        for repo in self.repos:
+            try:
+                self.executor.submit(self.run_bg_sync, repo)
+                self.executor.submit(self.run_bg_version, repo)
+                if self.unstable_b:
+                    self.executor.submit(self.run_bg_forward, repo)
+            except RuntimeError:
+                break
 
     def refresh_single_package(self, pkg_name):
         """Asynchronously triggers background checks for a single package and updates its row in all relevant lists."""
