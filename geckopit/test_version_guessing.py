@@ -517,6 +517,51 @@ class TestSyncWindow(unittest.TestCase):
         mock_dialog.parent.toast_overlay.add_toast.assert_called()
 
 
+    def test_workspace_sync_completed_toast_capping(self):
+        from geckopit import SyncWindow
+        import gi
+        gi.require_version('Adw', '1')
+        from gi.repository import Adw
+
+        mock_win = mock.Mock()
+        mock_win.sync_spinner = mock.Mock()
+        mock_win.sync_stack = mock.Mock()
+        mock_win.sync_btn = mock.Mock()
+        mock_win.terminal_drawer = mock.Mock()
+        mock_win.terminal_drawer.get_visible.return_value = False
+        mock_win.toast_overlay = mock.Mock()
+        mock_win.refresh_single_package = mock.Mock()
+        mock_win.close_terminal_tab = mock.Mock()
+        mock_win.notebook = mock.Mock()
+        mock_win.notebook.page_num.return_value = 0
+
+        tab_state = {"scroll_widget": mock.Mock(), "terminal": mock.Mock()}
+
+        # 1. Success with > 4 updated packages -> capped with ...
+        updated_10 = [f"pkg{i:02d}" for i in range(10)]
+        SyncWindow.on_workspace_sync_completed(mock_win, True, updated_10, [], [], ["/path"], tab_state)
+        toast = mock_win.toast_overlay.add_toast.call_args[0][0]
+        self.assertEqual(toast.get_title(), "✅ Synced 10 package(s): pkg00, pkg01, pkg02, pkg03...")
+
+        # 2. Failure with <= 4 failed packages -> lists packages
+        mock_win.toast_overlay.reset_mock()
+        SyncWindow.on_workspace_sync_completed(mock_win, False, [], ["glib2", "gtk4"], [], ["/path"], tab_state)
+        toast = mock_win.toast_overlay.add_toast.call_args[0][0]
+        self.assertEqual(toast.get_title(), "⚠️ Workspace sync encountered warnings or conflicts (glib2, gtk4)")
+
+        # 3. Failure with > 4 failed packages (e.g. 100 packages) -> capped with +N more
+        mock_win.toast_overlay.reset_mock()
+        failed_100 = [f"pkg{i:03d}" for i in range(100)]
+        SyncWindow.on_workspace_sync_completed(mock_win, False, [], failed_100, [], ["/path"], tab_state)
+        toast = mock_win.toast_overlay.add_toast.call_args[0][0]
+        self.assertEqual(toast.get_title(), "⚠️ Workspace sync encountered warnings or conflicts (pkg000, pkg001, pkg002, pkg003... +96 more)")
+
+        # 4. Failure with 0 specific packages failed -> generic warning
+        mock_win.toast_overlay.reset_mock()
+        SyncWindow.on_workspace_sync_completed(mock_win, False, [], [], [], ["/path"], tab_state)
+        toast = mock_win.toast_overlay.add_toast.call_args[0][0]
+        self.assertEqual(toast.get_title(), "⚠️ Workspace sync encountered warnings or conflicts")
+
     def test_track_filters_sensitivity_toggle(self):
         from geckopit import SyncWindow
 

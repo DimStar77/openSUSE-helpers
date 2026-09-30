@@ -1823,13 +1823,14 @@ class SyncWindow(Adw.ApplicationWindow):
 
         if ok and not failed:
             if updated:
-                pkg_str = ", ".join(updated[:4])
-                if len(updated) > 4:
+                sorted_updated = sorted(updated)
+                pkg_str = ", ".join(sorted_updated[:4])
+                if len(sorted_updated) > 4:
                     pkg_str += "..."
-                toast = Adw.Toast.new(f"✅ Synced {len(updated)} package(s): {pkg_str}")
+                toast = Adw.Toast.new(f"✅ Synced {len(sorted_updated)} package(s): {pkg_str}")
                 self.toast_overlay.add_toast(toast)
                 # Targeted refresh ONLY for the packages that actually changed!
-                for pkg in updated:
+                for pkg in sorted_updated:
                     self.refresh_single_package(pkg)
             else:
                 toast = Adw.Toast.new("✅ Workspace is already up to date")
@@ -1843,7 +1844,14 @@ class SyncWindow(Adw.ApplicationWindow):
                     self.close_terminal_tab(scroll)
         else:
             # Errors or merge conflicts occurred!
-            fail_info = f" ({', '.join(failed)})" if failed else ""
+            if failed:
+                failed_list = sorted(failed)
+                fail_pkgs = ", ".join(failed_list[:4])
+                if len(failed_list) > 4:
+                    fail_pkgs += f"... +{len(failed_list) - 4} more"
+                fail_info = f" ({fail_pkgs})"
+            else:
+                fail_info = ""
             toast = Adw.Toast.new(f"⚠️ Workspace sync encountered warnings or conflicts{fail_info}")
             self.toast_overlay.add_toast(toast)
 
