@@ -239,5 +239,124 @@ BuildRequires:  pkgconfig(libadwaita-1) >= %{min_adw}
                 new_changes = f.read()
             self.assertIn("- Update version dependencies according to meson.build.", new_changes)
 
+    def test_detect_package_build_system(self):
+        # 1. RPM 4.20+ Declarative BuildSystem tag
+        self.assertEqual(meson_drift.detect_package_build_system("Name: foo\nBuildSystem: meson\n"), "meson")
+        self.assertEqual(meson_drift.detect_package_build_system("Name: foo\nBuildSystem: cmake\n"), "cmake")
+        self.assertEqual(meson_drift.detect_package_build_system("Name: foo\nBuildSystem: autotools\n"), "autotools")
+
+        # 2. Build invocation macros
+        self.assertEqual(meson_drift.detect_package_build_system("Name: foo\n%build\n%meson\n%meson_build\n"), "meson")
+        self.assertEqual(meson_drift.detect_package_build_system("Name: foo\n%build\n%cmake\n%cmake_build\n"), "cmake")
+        self.assertEqual(meson_drift.detect_package_build_system("Name: foo\n%build\n%configure\nmake\n"), "autotools")
+
+        # 3. Build isolation: when spec has %meson, ignore any legacy autotools/cmake files
+        spec_multi = """Name: multi
+BuildRequires: meson
+%build
+%meson
+%meson_build
+"""
+        self.assertEqual(meson_drift.detect_package_build_system(spec_multi), "meson")
+
+    def test_cmake_dependency_drift_and_spec_fix(self):
+        cmake_code = """
+        set(soup_minimum_version 3.1.1)
+        pkg_check_modules(PLATFORM REQUIRED libsoup-3.0>=${soup_minimum_version})
+        """
+        spec_code = """Name: cmakepkg
+Version: 1.0.0
+Release: 0
+BuildRequires:  pkgconfig(libsoup-3.0) >= 2.58
+%build
+%cmake
+%cmake_build
+"""
+        with tempfile.TemporaryDirectory() as td:
+            spec_file = os.path.join(td, "cmakepkg.spec")
+            changes_file = os.path.join(td, "cmakepkg.changes")
+            with open(spec_file, "w", encoding="utf-8") as f:
+                f.write(spec_code)
+            with open(changes_file, "w", encoding="utf-8") as f:
+                f.write("-------------------------------------------------------------------\nWed Sep 23 12:00:00 UTC 2026 - test@opensuse.org\n\n- Initial packaging.\n\n")
+            with open(os.path.join(td, "CMakeLists.txt"), "w", encoding="utf-8") as f:
+                f.write(cmake_code)
+
+            # Audit
+            drifts = meson_drift.audit_meson_drift(td)
+            self.assertEqual(len(drifts), 1)
+            self.assertEqual(drifts[0]["package"], "libsoup-3.0")
+            self.assertEqual(drifts[0]["type"], "bump")
+            self.assertEqual(drifts[0]["upstream_version"], "3.1.1")
+            self.assertEqual(drifts[0]["build_system"], "cmake")
+
+            # Verify report header
+            report = meson_drift.format_drift_cli_report(drifts)
+            self.assertIn("CMake Dependency Drift Detected", report)
+
+            # Fix
+            fixed = meson_drift.fix_meson_drift(td)
+            self.assertEqual(len(fixed), 1)
+            with open(spec_file, "r", encoding="utf-8") as f:
+                new_spec = f.read()
+            self.assertIn("BuildRequires:  pkgconfig(libsoup-3.0) >= 3.1.1", new_spec)
+
+            # Record changelog
+            ok = meson_drift.record_drift_changelog(td, fixed)
+            self.assertTrue(ok)
+            with open(changes_file, "r", encoding="utf-8") as f:
+                new_changes = f.read()
+            self.assertIn("- Update version dependencies according to CMakeLists.txt.", new_changes)
+
+    def test_autotools_dependency_drift_and_spec_fix(self):
+        conf_code = """
+        GLIB_REQ=2.50.0
+        PKG_CHECK_MODULES(FOO, [glib-2.0 >= $GLIB_REQ])
+        """
+        spec_code = """Name: autopkg
+Version: 1.0.0
+Release: 0
+BuildRequires:  pkgconfig(glib-2.0)
+%build
+%configure
+make %{?_smp_mflags}
+"""
+        with tempfile.TemporaryDirectory() as td:
+            spec_file = os.path.join(td, "autopkg.spec")
+            changes_file = os.path.join(td, "autopkg.changes")
+            with open(spec_file, "w", encoding="utf-8") as f:
+                f.write(spec_code)
+            with open(changes_file, "w", encoding="utf-8") as f:
+                f.write("-------------------------------------------------------------------\nWed Sep 23 12:00:00 UTC 2026 - test@opensuse.org\n\n- Initial packaging.\n\n")
+            with open(os.path.join(td, "configure.ac"), "w", encoding="utf-8") as f:
+                f.write(conf_code)
+
+            # Audit
+            drifts = meson_drift.audit_meson_drift(td)
+            self.assertEqual(len(drifts), 1)
+            self.assertEqual(drifts[0]["package"], "glib-2.0")
+            self.assertEqual(drifts[0]["type"], "unversioned")
+            self.assertEqual(drifts[0]["upstream_version"], "2.50.0")
+            self.assertEqual(drifts[0]["build_system"], "autotools")
+
+            # Verify report header
+            report = meson_drift.format_drift_cli_report(drifts)
+            self.assertIn("Autotools Dependency Drift Detected", report)
+
+            # Fix
+            fixed = meson_drift.fix_meson_drift(td)
+            self.assertEqual(len(fixed), 1)
+            with open(spec_file, "r", encoding="utf-8") as f:
+                new_spec = f.read()
+            self.assertIn("BuildRequires:  pkgconfig(glib-2.0) >= 2.50.0", new_spec)
+
+            # Record changelog
+            ok = meson_drift.record_drift_changelog(td, fixed)
+            self.assertTrue(ok)
+            with open(changes_file, "r", encoding="utf-8") as f:
+                new_changes = f.read()
+            self.assertIn("- Update version dependencies according to configure.ac.", new_changes)
+
+
 if __name__ == "__main__":
     unittest.main()

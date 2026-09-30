@@ -11,7 +11,7 @@ This guide is organized by packaging tasks. Each section provides dedicated, ste
 1. [🚀 Overview & Cockpit Layout](#-1-overview--cockpit-layout)
 2. [🎯 Finding What Needs Attention & Browsing](#-2-finding-what-needs-attention--browsing)
 3. [⚙️ Upgrading a Package to a New Upstream Release](#-3-upgrading-a-package-to-a-new-upstream-release)
-4. [🔧 Auditing & Fixing Meson Dependency Drift](#-4-auditing--fixing-meson-dependency-drift)
+4. [🔧 Auditing & Fixing Build Dependency Drift (Meson, CMake, Autotools)](#-4-auditing--fixing-build-dependency-drift-meson-cmake-autotools)
 5. [🔀 Promoting Next Pre-Releases to Factory (Gitea PRs)](#-5-promoting-next-pre-releases-to-factory-gitea-prs)
 6. [🔄 Synchronizing Multi-Branch Workspaces](#-6-synchronizing-multi-branch-workspaces)
 7. [💾 Committing Packaging Changes & Whitespace Sanitization](#-7-committing-packaging-changes--whitespace-sanitization)
@@ -142,9 +142,9 @@ geckopit-cli --upgrade 4.2.2 --dry-run
 
 ---
 
-## 🔧 4. Auditing & Fixing Meson Dependency Drift
+## 🔧 4. Auditing & Fixing Build Dependency Drift (Meson, CMake, Autotools)
 
-Upstream projects often bump minimum dependency constraints in `meson.build` without maintainers noticing. Geckopit automatically inspects upstream `meson.build` declarations and audits them against your `.spec` `BuildRequires:`.
+Upstream projects often bump minimum dependency constraints in `meson.build`, `CMakeLists.txt`, or `configure.ac` without maintainers noticing. Geckopit inspects the `.spec` file to identify the active build system (supporting declarative `BuildSystem:` tags, build invocation macros, and BuildRequires), and audits upstream declarations against your `.spec` `BuildRequires:`.
 
 ---
 
