@@ -845,14 +845,18 @@ def run_fix_deps_action(pkg_dir="."):
     pkg_dir = os.path.abspath(pkg_dir)
     pkg_name = sb.get_package_name_from_dir(pkg_dir)
     print(f"{sb.BOLD}=> Auditing and fixing upstream build dependencies for '{pkg_name}'...{sb.RESET}")
-    fixed = meson_drift.fix_meson_drift(pkg_dir, on_log=print)
+    fixed = meson_drift.fix_meson_drift(pkg_dir, on_log=None)
     if fixed:
-        print(f"\n{sb.GREEN}✨ Successfully updated {len(fixed)} dependency declaration{'s' if len(fixed) != 1 else ''} in spec file:{sb.RESET}")
+        spec_files = [f for f in os.listdir(pkg_dir) if f.endswith(".spec")]
+        spec_name = spec_files[0] if spec_files else f"{pkg_name}.spec"
+        print(f"\n{sb.GREEN}✨ Successfully updated {len(fixed)} dependency declaration{'s' if len(fixed) != 1 else ''} in {spec_name}:{sb.RESET}")
         for fd in fixed:
             decl = fd.get("fixed_declaration") or f"{fd['package']} >= {fd['upstream_version']}"
             print(f"   • {decl}")
-        if meson_drift.record_drift_changelog(pkg_dir, fixed, on_log=print):
-            print(f"{sb.GREEN}📝 Recorded changelog entry in .changes{sb.RESET}")
+        if meson_drift.record_drift_changelog(pkg_dir, fixed, on_log=None):
+            changes_files = [f for f in os.listdir(pkg_dir) if f.endswith(".changes")]
+            changes_name = changes_files[0] if changes_files else f"{pkg_name}.changes"
+            print(f"{sb.GREEN}📝 Recorded changelog entry in {changes_name}{sb.RESET}")
         return 0
     else:
         print(f"\n{sb.GREEN}✅ All build dependencies are already in sync. No changes needed.{sb.RESET}")
