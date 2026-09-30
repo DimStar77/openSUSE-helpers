@@ -296,6 +296,9 @@ geckopit-cli -f
 # Pool presence audit: List packages not registered in central Gitea pool
 geckopit-cli --not-in-pool
 
+# Include packages not registered in central pool in downstream sync table
+geckopit-cli --include-not-in-pool
+
 # Filter for packages requiring maintainer action
 geckopit-cli --todo
 ```

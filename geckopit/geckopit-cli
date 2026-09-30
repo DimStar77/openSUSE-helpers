@@ -593,7 +593,7 @@ def run_sync_check(repos, include_not_in_pool=False):
 
     print(f"\n*Total packages requiring sync action: {len(rows)}*")
     if not_in_pool_count > 0 and not include_not_in_pool:
-        print(f"\n💡 {sb.BOLD}Note:{sb.RESET} {not_in_pool_count} package(s) not in central Gitea pool (hidden to avoid noise; use '--not-in-pool' to list).")
+        print(f"\n💡 {sb.BOLD}Note:{sb.RESET} {not_in_pool_count} package(s) not in central Gitea pool (hidden to avoid noise; use '--include-not-in-pool' to include in table, or '--not-in-pool' for dedicated audit list).")
     print(f"\n💡 {sb.BOLD}Tip:{sb.RESET} Try './geckopit-cli --version' to check upstream releases, or '--forward' to find forwardable next branches.")
 
 
@@ -989,7 +989,7 @@ def print_help():
     print(f"  {sb.BOLD}-c, --commit{sb.RESET}       Stages packaging files, cleans whitespaces, and commits via $EDITOR.")
     print(f"  {sb.BOLD}-v, --version [b]{sb.RESET}  Compares package versions against release-monitoring.org.")
     print(f"  {sb.BOLD}-f, --forward{sb.RESET}      Identifies forwardable next branches.")
-    print(f"  {sb.BOLD}--not-in-pool{sb.RESET}     Lists packages in checkout not registered in the central Gitea pool.")
+    print(f"  {sb.BOLD}--not-in-pool{sb.RESET}      Dedicated audit mode: lists only packages not registered in central Gitea pool.")
     print(f"  {sb.BOLD}--guide, --docs{sb.RESET}    Opens the Geckopit User Guide in your default browser.")
     print(f"  {sb.BOLD}--check-setup{sb.RESET}      Verifies readiness of Git identity, SSH keys, OBS, and Gitea.")
     print(f"  {sb.BOLD}--setup{sb.RESET}            Interactively configures missing packaging tools and credentials.")
