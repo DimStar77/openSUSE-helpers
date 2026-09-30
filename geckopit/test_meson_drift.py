@@ -119,8 +119,9 @@ class TestMesonDriftAuditor(unittest.TestCase):
             # libadwaita-1 is identical (1.5.0 vs 1.5.0) -> no drift
             self.assertNotIn("libadwaita-1", drift_types)
 
-            # gio-2.0 was unversioned in spec -> excluded in bumps_only mode to prevent noise
-            self.assertNotIn("gio-2.0", drift_types)
+            # gio-2.0 was unversioned in spec -> detected as unversioned by default
+            self.assertIn("gio-2.0", drift_types)
+            self.assertEqual(drift_types["gio-2.0"], "unversioned")
 
             # libxml-2.0 mapped to libxml2-devel bumped from 2.10.0 to 2.12.0
             self.assertIn("libxml-2.0", drift_types)
@@ -131,12 +132,63 @@ class TestMesonDriftAuditor(unittest.TestCase):
 
             summary = meson_drift.format_drift_short_summary(drifts)
             self.assertIn("2 version bumps", summary)
+            self.assertIn("1 unversioned", summary)
 
-            # Test bumps_only=False (comprehensive mode)
+            # Test include_unversioned=False
+            strict_bumps = meson_drift.audit_meson_drift(td, meson_content=meson_code, bumps_only=True, include_unversioned=False)
+            strict_drift_types = {d["package"]: d["type"] for d in strict_bumps}
+            self.assertNotIn("gio-2.0", strict_drift_types)
+            self.assertIn("gtk4", strict_drift_types)
+
+            # Test bumps_only=False (comprehensive mode, includes missing)
             all_drifts = meson_drift.audit_meson_drift(td, meson_content=meson_code, bumps_only=False)
             all_drift_types = {d["package"]: d["type"] for d in all_drifts}
             self.assertIn("gio-2.0", all_drift_types)
             self.assertIn("json-glib-1.0", all_drift_types)
+
+    def test_audit_meson_drift_obs_scm_clone_subdir(self):
+        service_code = """<services>
+  <service name="obs_scm">
+    <param name="url">https://gitlab.gnome.org/GNOME/zenity.git</param>
+    <param name="scm">git</param>
+    <param name="versionformat">@PARENT_TAG@</param>
+  </service>
+</services>"""
+        spec_code = """Name: zenity
+Version: 4.2.0
+Release: 0
+BuildRequires:  pkgconfig(gtk4) >= 4.14.0
+BuildRequires:  pkgconfig(libadwaita-1)
+"""
+        meson_code = """
+        dependency('gtk4', version: '>= 4.14.0')
+        dependency('libadwaita-1', version: '>= 1.2')
+        """
+        with tempfile.TemporaryDirectory() as td:
+            with open(os.path.join(td, "_service"), "w", encoding="utf-8") as f:
+                f.write(service_code)
+            with open(os.path.join(td, "zenity.spec"), "w", encoding="utf-8") as f:
+                f.write(spec_code)
+
+            clone_dir = os.path.join(td, "zenity")
+            os.makedirs(clone_dir)
+            with open(os.path.join(clone_dir, "meson.build"), "w", encoding="utf-8") as f:
+                f.write(meson_code)
+
+            # Verify audit detects libadwaita-1 unversioned from zenity/meson.build
+            drifts = meson_drift.audit_meson_drift(td)
+            self.assertEqual(len(drifts), 1)
+            self.assertEqual(drifts[0]["package"], "libadwaita-1")
+            self.assertEqual(drifts[0]["type"], "unversioned")
+            self.assertEqual(drifts[0]["upstream_version"], "1.2")
+
+            # Verify fix_meson_drift updates zenity.spec
+            fixed = meson_drift.fix_meson_drift(td)
+            self.assertEqual(len(fixed), 1)
+            with open(os.path.join(td, "zenity.spec"), "r", encoding="utf-8") as f:
+                new_spec = f.read()
+            self.assertIn("BuildRequires:  pkgconfig(libadwaita-1) >= 1.2\n", new_spec)
+            self.assertNotIn("\x01", new_spec)
 
 
     def test_fix_meson_drift_and_changelog(self):

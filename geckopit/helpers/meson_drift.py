@@ -91,13 +91,21 @@ def parse_meson_dependencies(content: str) -> Dict[str, Tuple[str, str, bool]]:
     else:
         content_clean = content
 
-    # 2. Extract Meson string and version variables
+    # 2. Extract Meson string and version variables (including .format() resolution)
     vars_map = {}
     for line in content_clean.splitlines():
         line = line.strip()
-        m_var = re.match(r"^([a-zA-Z0-9_]+)\s*=\s*['\"](.*?)['\"]", line)
+        m_var = re.match(r"^([a-zA-Z0-9_]+)\s*=\s*['\"](.*?)['\"](?:\.format\((.*?)\))?", line)
         if m_var:
-            vars_map[m_var.group(1)] = m_var.group(2)
+            v_name = m_var.group(1)
+            v_fmt = m_var.group(2)
+            v_args = m_var.group(3)
+            if v_args:
+                arg_tokens = [arg.strip().strip("'\"") for arg in v_args.split(",")]
+                for idx, arg_val in enumerate(arg_tokens):
+                    resolved_val = vars_map.get(arg_val, arg_val)
+                    v_fmt = v_fmt.replace(f"@{idx}@", resolved_val)
+            vars_map[v_name] = v_fmt
 
     # 3. Extract dependency(...) calls
     deps = {}
@@ -142,6 +150,10 @@ def parse_meson_dependencies(content: str) -> Dict[str, Tuple[str, str, bool]]:
                 ver = m_norm.group(2).strip()
             else:
                 ver = ver_str.strip()
+
+        # Guard against unexpanded Meson template placeholders (e.g. '@0@')
+        if "@" in ver:
+            ver = ""
 
         if name in deps:
             existing_op, existing_ver, existing_req = deps[name]
@@ -227,7 +239,77 @@ def parse_spec_build_requires(spec_content: str) -> Dict[str, Tuple[str, str, st
     return spec_deps
 
 
-def audit_meson_drift(package_dir: str, meson_content: Optional[str] = None, bumps_only: bool = True) -> List[Dict]:
+def find_obs_scm_clone_dir(package_dir: str) -> Optional[str]:
+    """
+    Locates the directory where obs_scm / tar_scm cloned the upstream repository, if present.
+    Strictly limited to the directory of the first obs_scm clone.
+    """
+    service_file = os.path.join(package_dir, "_service")
+    if not os.path.isfile(service_file):
+        return None
+
+    repo_name = None
+    try:
+        import xml.etree.ElementTree as ET
+        tree = ET.parse(service_file)
+        root = tree.getroot()
+        for service in root.findall("service"):
+            if service.get("name") in ("obs_scm", "tar_scm"):
+                vfmt = None
+                url_text = None
+                for p in service.findall("param"):
+                    p_name = p.get("name")
+                    if p_name == "versionformat":
+                        vfmt = p.text.strip() if p.text else ""
+                    elif p_name == "url":
+                        url_text = p.text.strip() if p.text else ""
+
+                if vfmt == "0.gitmodule":
+                    continue
+
+                if url_text:
+                    u = re.sub(r"\.git/?$", "", url_text.strip())
+                    repo_name = u.rstrip("/").split("/")[-1]
+                    break
+    except Exception:
+        pass
+
+    if not repo_name:
+        try:
+            with open(service_file, "r", encoding="utf-8", errors="replace") as f:
+                c = f.read()
+            m = re.search(r'<param\s+name=["\']url["\']>([^<]+)</param>', c)
+            if m:
+                u = re.sub(r"\.git/?$", "", m.group(1).strip())
+                repo_name = u.rstrip("/").split("/")[-1]
+        except Exception:
+            pass
+
+    pkg_name = os.path.basename(os.path.abspath(package_dir))
+    candidates = []
+    if repo_name:
+        candidates.append(repo_name)
+    if pkg_name and pkg_name not in candidates:
+        candidates.append(pkg_name)
+
+    # 1. Check candidate directory paths with .git
+    for cand in candidates:
+        cand_path = os.path.join(package_dir, cand)
+        if os.path.isdir(cand_path):
+            git_entry = os.path.join(cand_path, ".git")
+            if os.path.isdir(git_entry) or os.path.isfile(git_entry):
+                return cand_path
+
+    # 2. Check candidate directory paths with meson.build
+    for cand in candidates:
+        cand_path = os.path.join(package_dir, cand)
+        if os.path.isdir(cand_path) and os.path.isfile(os.path.join(cand_path, "meson.build")):
+            return cand_path
+
+    return None
+
+
+def audit_meson_drift(package_dir: str, meson_content: Optional[str] = None, bumps_only: bool = True, include_unversioned: bool = True) -> List[Dict]:
     """
     Audits upstream Meson dependencies against the local .spec file BuildRequires.
     Returns a list of detected drift records.
@@ -252,6 +334,17 @@ def audit_meson_drift(package_dir: str, meson_content: Optional[str] = None, bum
                     content = f.read()
             except Exception:
                 pass
+        else:
+            # Check for meson.build in the first obs_scm clone directory
+            clone_dir = find_obs_scm_clone_dir(package_dir)
+            if clone_dir:
+                clone_meson = os.path.join(clone_dir, "meson.build")
+                if os.path.isfile(clone_meson):
+                    try:
+                        with open(clone_meson, "r", encoding="utf-8", errors="replace") as f:
+                            content = f.read()
+                    except Exception:
+                        pass
 
     if not content:
         # Check source archives in package_dir (safely resolving Git-LFS pointers)
@@ -316,7 +409,7 @@ def audit_meson_drift(package_dir: str, meson_content: Optional[str] = None, bum
                     "comparator": u_op,
                     "type": "bump"
                 })
-            elif not bumps_only and u_ver and not s_ver:
+            elif u_ver and not s_ver and (include_unversioned or not bumps_only):
                 drifts.append({
                     "package": dep_name,
                     "spec_name": spec_decl_name,
@@ -393,7 +486,7 @@ def fix_meson_drift(package_dir: str, on_log: Optional[any] = None) -> List[Dict
     if not package_dir or not os.path.isdir(package_dir):
         return []
 
-    drifts = audit_meson_drift(package_dir, bumps_only=True)
+    drifts = audit_meson_drift(package_dir, bumps_only=True, include_unversioned=True)
     if not drifts:
         return []
 
@@ -470,7 +563,7 @@ def fix_meson_drift(package_dir: str, on_log: Optional[any] = None) -> List[Dict
                             )
                         else:
                             # Append operator and version before any trailing comments
-                            lines[idx] = re.sub(r"(\s*(?:#.*)?)$", f" {op} {u_ver}\1", line, count=1)
+                            lines[idx] = re.sub(r"(\s*(?:#.*)?)$", rf" {op} {u_ver}\g<1>", line, count=1)
 
                         d["fixed_declaration"] = f"{d.get('spec_name') or c} {op} {u_ver}"
                         fixed_drifts.append(d)
