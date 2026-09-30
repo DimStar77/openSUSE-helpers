@@ -299,7 +299,21 @@ def check_repo_sync(repo_name, stable_branch="factory", unstable_branch="next", 
             pool_status = "Error"
     except subprocess.CalledProcessError as e:
         stderr_lower = (e.stderr or "").lower()
-        if "cannot find repository" in stderr_lower or "could not read from remote repository" in stderr_lower or "repository not found" in stderr_lower or "404" in stderr_lower:
+        # When unauthenticated git fetch hits a non-existent repo on Gitea (src.opensuse.org/pool),
+        # Gitea issues HTTP 401 Basic Auth (to prevent repository enumeration), causing Git with
+        # disabled terminal prompts to fail with "could not read Username" or "Authentication failed".
+        # Public pool repositories never require authentication, so any authentication or not-found
+        # response confirms the package is not hosted in the central Gitea pool.
+        if (
+            "cannot find repository" in stderr_lower
+            or "could not read from remote repository" in stderr_lower
+            or "repository not found" in stderr_lower
+            or "404" in stderr_lower
+            or "not found" in stderr_lower
+            or "could not read username" in stderr_lower
+            or "terminal prompts disabled" in stderr_lower
+            or "authentication failed" in stderr_lower
+        ):
             pool_status = "Not in Pool"
         elif f"couldn't find remote ref {stable_branch}" in stderr_lower or "no such ref" in stderr_lower or "fatal: couldn't find remote ref" in stderr_lower:
             pool_status = f"No {stable_branch} in Pool"

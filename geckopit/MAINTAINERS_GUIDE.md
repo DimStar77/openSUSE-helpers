@@ -291,6 +291,9 @@ geckopit-cli -v
 # Forwarding audit: Identify next branches ready to merge to factory
 geckopit-cli -f
 
+# Pool presence audit: List packages not registered in central Gitea pool
+geckopit-cli --not-in-pool
+
 # Filter for packages requiring maintainer action
 geckopit-cli --todo
 ```

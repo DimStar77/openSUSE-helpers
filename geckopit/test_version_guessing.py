@@ -517,6 +517,63 @@ class TestSyncWindow(unittest.TestCase):
         mock_dialog.parent.toast_overlay.add_toast.assert_called()
 
 
+    def test_check_repo_sync_pool_status_classification(self):
+        import subprocess
+        import sync_backend as sb
+
+        with mock.patch('os.path.isdir', return_value=True), \
+             mock.patch('sync_backend.run_tracked') as mock_run:
+
+            # 1. Gitea 401 on non-existent repo (prompts disabled) -> Not in Pool, needs_action=False
+            def fake_run_not_in_pool(cmd, *args, **kwargs):
+                if 'fetch' in cmd and 'origin' in cmd:
+                    return mock.Mock(stdout="", returncode=0)
+                elif 'rev-parse' in cmd:
+                    return mock.Mock(stdout="hash", returncode=0)
+                elif 'fetch' in cmd and 'src.opensuse.org/pool' in cmd[5]:
+                    raise subprocess.CalledProcessError(128, cmd, stderr="fatal: could not read Username for 'https://src.opensuse.org': terminal prompts disabled\n")
+                elif 'rev-list' in cmd:
+                    return mock.Mock(stdout="0 0\n", returncode=0)
+                return mock.Mock(stdout="", returncode=0)
+
+            mock_run.side_effect = fake_run_not_in_pool
+            _, data = sb.check_repo_sync('mypkg')
+            self.assertEqual(data['pool_status'], 'Not in Pool')
+            self.assertFalse(data['needs_action'])
+
+            # 2. Network resolution failure -> Fetch failed, needs_action=True
+            def fake_run_net_error(cmd, *args, **kwargs):
+                if 'fetch' in cmd and 'origin' in cmd:
+                    return mock.Mock(stdout="", returncode=0)
+                elif 'rev-parse' in cmd:
+                    return mock.Mock(stdout="hash", returncode=0)
+                elif 'fetch' in cmd and 'src.opensuse.org/pool' in cmd[5]:
+                    raise subprocess.CalledProcessError(128, cmd, stderr="fatal: unable to access 'https://src.opensuse.org/pool/mypkg.git': Could not resolve host: src.opensuse.org\n")
+                elif 'rev-list' in cmd:
+                    return mock.Mock(stdout="0 0\n", returncode=0)
+                return mock.Mock(stdout="", returncode=0)
+
+            mock_run.side_effect = fake_run_net_error
+            _, data = sb.check_repo_sync('mypkg')
+            self.assertEqual(data['pool_status'], 'Fetch failed')
+            self.assertTrue(data['needs_action'])
+
+            # 3. Missing factory branch in pool -> No factory in Pool
+            def fake_run_missing_ref(cmd, *args, **kwargs):
+                if 'fetch' in cmd and 'origin' in cmd:
+                    return mock.Mock(stdout="", returncode=0)
+                elif 'rev-parse' in cmd:
+                    return mock.Mock(stdout="hash", returncode=0)
+                elif 'fetch' in cmd and 'src.opensuse.org/pool' in cmd[5]:
+                    raise subprocess.CalledProcessError(128, cmd, stderr="fatal: couldn't find remote ref factory\n")
+                elif 'rev-list' in cmd:
+                    return mock.Mock(stdout="0 0\n", returncode=0)
+                return mock.Mock(stdout="", returncode=0)
+
+            mock_run.side_effect = fake_run_missing_ref
+            _, data = sb.check_repo_sync('mypkg')
+            self.assertEqual(data['pool_status'], 'No factory in Pool')
+
     def test_workspace_sync_completed_toast_capping(self):
         from geckopit import SyncWindow
         import gi
