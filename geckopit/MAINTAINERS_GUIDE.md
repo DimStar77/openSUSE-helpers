@@ -323,11 +323,11 @@ Navigate and filter your packages rapidly without taking your hands off the keyb
 *   **Select First Match**: Press `Enter` or `Down` inside the search bar to immediately focus and select the first matching package in the list.
 *   **Navigate Package List**: Press `j` or `Down` to step to the next package; press `k` or `Up` to step to the previous package, loading details and diffs in real time.
 *   **Toggle Filter Tracks**:
-    *   `Ctrl` + `1`: Toggle **⚠️ Needs Action** global filter
-    *   `Ctrl` + `2`: Toggle **📡 Pool Sync** track
-    *   `Ctrl` + `3`: Toggle **🟢 Stable Updates** track
-    *   `Ctrl` + `4`: Toggle **🟠 Unstable Updates** track
-    *   `Ctrl` + `5`: Toggle **🔀 Forwarding** track
+    *   `Ctrl` + `1`: Toggle **⚠️ Needs Action** mode (when disabled, displays all packages in browse mode and dims track filters)
+    *   `Ctrl` + `2`: Toggle **📡 Pool Sync** track (active when Needs Action is enabled)
+    *   `Ctrl` + `3`: Toggle **🟢 Stable Updates** track (active when Needs Action is enabled)
+    *   `Ctrl` + `4`: Toggle **🟠 Unstable Updates** track (active when Needs Action is enabled)
+    *   `Ctrl` + `5`: Toggle **🔀 Forwarding** track (active when Needs Action is enabled)
 *   *Note: Defensive input guards prevent shortcuts from intercepting keystrokes while you are typing inside a terminal shell or text field.*
 
 ### 📋 5. One-Click Diff Copying

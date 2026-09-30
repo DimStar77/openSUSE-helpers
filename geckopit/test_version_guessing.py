@@ -517,6 +517,87 @@ class TestSyncWindow(unittest.TestCase):
         mock_dialog.parent.toast_overlay.add_toast.assert_called()
 
 
+    def test_track_filters_sensitivity_toggle(self):
+        from geckopit import SyncWindow
+
+        mock_win = mock.Mock()
+        mock_win.filter_needs_action = mock.Mock()
+        mock_win.filter_pool_sync = mock.Mock()
+        mock_win.filter_stable = mock.Mock()
+        mock_win.filter_unstable = mock.Mock()
+        mock_win.filter_forwarding = mock.Mock()
+
+        # Needs action active -> sensitive=True
+        mock_win.filter_needs_action.get_active.return_value = True
+        SyncWindow.update_track_filters_sensitivity(mock_win)
+        mock_win.filter_pool_sync.set_sensitive.assert_called_with(True)
+        mock_win.filter_stable.set_sensitive.assert_called_with(True)
+        mock_win.filter_unstable.set_sensitive.assert_called_with(True)
+        mock_win.filter_forwarding.set_sensitive.assert_called_with(True)
+
+        # Needs action inactive -> sensitive=False
+        mock_win.filter_needs_action.get_active.return_value = False
+        SyncWindow.update_track_filters_sensitivity(mock_win)
+        mock_win.filter_pool_sync.set_sensitive.assert_called_with(False)
+        mock_win.filter_stable.set_sensitive.assert_called_with(False)
+        mock_win.filter_unstable.set_sensitive.assert_called_with(False)
+        mock_win.filter_forwarding.set_sensitive.assert_called_with(False)
+
+    def test_keyboard_shortcuts_ignore_tracks_when_needs_action_disabled(self):
+        import gi
+        gi.require_version('Gtk', '4.0')
+        gi.require_version('Gdk', '4.0')
+        from gi.repository import Gtk, Gdk
+        from geckopit import SyncWindow
+
+        mock_win = mock.Mock()
+        mock_win.get_focus.return_value = None
+
+        # When filter_needs_action is False (Browse All mode)
+        mock_win.filter_needs_action = mock.Mock()
+        mock_win.filter_needs_action.get_active.return_value = False
+
+        mock_win.filter_pool_sync = mock.Mock()
+        mock_win.filter_stable = mock.Mock()
+        mock_win.filter_unstable = mock.Mock()
+        mock_win.filter_forwarding = mock.Mock()
+
+        for keyval in (Gdk.KEY_2, Gdk.KEY_3, Gdk.KEY_4, Gdk.KEY_5):
+            res = SyncWindow.on_window_key_pressed(
+                mock_win, None, keyval, 0, Gdk.ModifierType.CONTROL_MASK
+            )
+            self.assertTrue(res)
+
+        mock_win.filter_pool_sync.set_active.assert_not_called()
+        mock_win.filter_stable.set_active.assert_not_called()
+        mock_win.filter_unstable.set_active.assert_not_called()
+        mock_win.filter_forwarding.set_active.assert_not_called()
+
+    def test_sidebar_filter_func_browse_all_mode(self):
+        from geckopit import SyncWindow
+
+        mock_win = mock.Mock()
+        mock_win.sidebar_search = mock.Mock()
+        mock_win.sidebar_search.get_text.return_value = ""
+
+        # Row representing a package
+        mock_row = mock.Mock()
+        mock_row.package_name = "test-pkg"
+
+        # Even with empty package_data (no actions needed)
+        mock_win.package_data = {"test-pkg": {}}
+
+        # When Needs Action is False (Browse All mode), returns True
+        mock_win.filter_needs_action = mock.Mock()
+        mock_win.filter_needs_action.get_active.return_value = False
+
+        self.assertTrue(SyncWindow.sidebar_filter_func(mock_win, mock_row))
+
+        # But if search text does not match, returns False
+        mock_win.sidebar_search.get_text.return_value = "nomatch"
+        self.assertFalse(SyncWindow.sidebar_filter_func(mock_win, mock_row))
+
+
 class TestPRPrefill(unittest.TestCase):
     def test_parse_changes_diff_single_entry(self):
         import sync_backend as sb

@@ -2429,8 +2429,19 @@ class SyncWindow(Adw.ApplicationWindow):
         return False # Run once and terminate
 
     def on_filter_toggled(self, btn):
+        if btn == getattr(self, "filter_needs_action", None):
+            self.update_track_filters_sensitivity()
         self.master_list_box.invalidate_filter()
         GLib.idle_add(self.scroll_selected_row_to_view)
+
+    def update_track_filters_sensitivity(self):
+        if not hasattr(self, "filter_needs_action"):
+            return
+        needs_active = self.filter_needs_action.get_active()
+        for attr in ("filter_pool_sync", "filter_stable", "filter_unstable", "filter_forwarding"):
+            btn = getattr(self, attr, None)
+            if btn:
+                btn.set_sensitive(needs_active)
 
     def scroll_selected_row_to_view(self):
         """Ensures the currently selected package row remains visible on screen after toggling track filters."""
@@ -2521,12 +2532,12 @@ class SyncWindow(Adw.ApplicationWindow):
         self.filter_needs_action = Gtk.ToggleButton(label="⚠️ Needs")
         self.filter_needs_action.set_active(True)
         self.filter_needs_action.set_tooltip_text(
-            "⚠️ FILTER: NEEDS ACTION ONLY (Global Modifier) [Shortcut: Ctrl+1]\n"
-            "─────────────────────────────────────────────\n"
-            "When enabled, the package list is strictly filtered to display only those\n"
-            "repositories that require immediate attention (e.g. have pending upstream\n"
-            "updates, unforwarded commits, or are out of sync with Gitea Pool).\n\n"
-            "Toggle OFF to view all matching repositories on your active tracks regardless of action status."
+            "⚠️ FILTER: ACTION QUEUE MODE [Shortcut: Ctrl+1]\n"
+            "────────────────────────────────────────────\n"
+            "When enabled (default), the sidebar displays only packages that require attention\n"
+            "(filtered by your selected track buttons, or all actionable items if none selected).\n\n"
+            "Toggle OFF to switch to Browse All mode: displays all packages in the repository\n"
+            "and disables track filters."
         )
         self.filter_needs_action.connect("toggled", self.on_filter_toggled)
         filters_box.append(self.filter_needs_action)
@@ -2541,7 +2552,8 @@ class SyncWindow(Adw.ApplicationWindow):
             "Includes repositories that are:\n"
             "• Behind Pool: Central changes exist on Gitea that need to be pulled.\n"
             "• Ahead of Pool: Local Factory checkouts have commits waiting to be pushed.\n"
-            "• Not in Pool: Repositories not yet registered in Gitea's pool."
+            "• Not in Pool: Repositories not yet registered in Gitea's pool.\n\n"
+            "(Active when '⚠️ Needs' is enabled)"
         )
         self.filter_pool_sync.connect("toggled", self.on_filter_toggled)
         filters_box.append(self.filter_pool_sync)
@@ -2555,7 +2567,9 @@ class SyncWindow(Adw.ApplicationWindow):
             "Filters the package checkout list to track GNOME's stable releases.\n\n"
             "Includes packages matching:\n"
             "• Stable Upstream: Verifies if Factory aligns with the latest stable releases\n"
-            "  on release-monitoring.org (e.g., getting 45.1 to 45.2)."
+            "  on release-monitoring.org (e.g., getting 45.1 to 45.2).\n"
+            "• Local Worktree Behind: Checks if local stable branch needs a pull from origin.\n\n"
+            "(Active when '⚠️ Needs' is enabled)"
         )
         self.filter_stable.connect("toggled", self.on_filter_toggled)
         filters_box.append(self.filter_stable)
@@ -2569,7 +2583,9 @@ class SyncWindow(Adw.ApplicationWindow):
             "Filters the package checkout list to track unstable pre-release development.\n\n"
             "Includes packages matching:\n"
             "• Next Branch: Verifies if your local unstable branch aligns with alpha, beta, and\n"
-            "  release candidates (RC) upstream (e.g., tracking GNOME 46.beta)."
+            "  release candidates (RC) upstream (e.g., tracking GNOME 46.beta).\n"
+            "• Local Worktree Behind: Checks if local unstable branch needs a pull from origin.\n\n"
+            "(Active when '⚠️ Needs' is enabled)"
         )
         self.filter_unstable.connect("toggled", self.on_filter_toggled)
         filters_box.append(self.filter_unstable)
@@ -2583,10 +2599,13 @@ class SyncWindow(Adw.ApplicationWindow):
             "Filters the package checkout list to display GNOME unstable promotion tracks.\n\n"
             "Includes packages matching:\n"
             "• Next Ahead of Factory: Shows checkouts with unsubmitted developmental commits\n"
-            "  sitting on the 'next' branch that need to be merged/cherry-picked to stable 'factory'."
+            "  sitting on the 'next' branch that need to be merged/cherry-picked to stable 'factory'.\n\n"
+            "(Active when '⚠️ Needs' is enabled)"
         )
         self.filter_forwarding.connect("toggled", self.on_filter_toggled)
         filters_box.append(self.filter_forwarding)
+
+        self.update_track_filters_sensitivity()
 
         control_bar.append(filters_box)
 
@@ -2616,6 +2635,10 @@ class SyncWindow(Adw.ApplicationWindow):
         if search_text and search_text not in package_name.lower():
             return False
 
+        # 2. Browse All mode: when "Needs Action" is toggled OFF, show all matching packages
+        if not self.filter_needs_action.get_active():
+            return True
+
         pkg_data = self.package_data.get(package_name, {})
         sync = pkg_data.get("sync") or {}
         ver = pkg_data.get("version") or {}
@@ -2625,19 +2648,16 @@ class SyncWindow(Adw.ApplicationWindow):
         pool_behind = sync.get("pool_behind", 0)
         pool_ahead = sync.get("pool_ahead", 0)
         pool_status = sync.get("pool_status", "unknown")
-        is_pool_track = (pool_status != "unknown")
         pool_needs_action = (pool_behind > 0) or (pool_ahead > 0) or (pool_status in ("Not in Pool", "Fetch failed", "Error"))
 
         # B. Stable Tracking state
         factory_ver = ver.get("factory_ver", "N/A")
         upstream_stable = ver.get("upstream_stable", "N/A")
-        is_stable_track = (factory_ver != "N/A")
         stable_needs_action = is_version_newer(upstream_stable, factory_ver, row.package_name)
 
         # C. Unstable/Next Tracking state
         next_ver = ver.get("next_ver", "—")
         upstream_latest = ver.get("upstream_latest", "—")
-        is_unstable_track = (next_ver != "—")
 
         # We defensively check if this found unstable update matches our active profile's ignore list!
         ignored_ver = getattr(self, "ignored_unstable_versions", {}).get(row.package_name)
@@ -2646,7 +2666,6 @@ class SyncWindow(Adw.ApplicationWindow):
 
         # D. Forwarding state
         next_ahead = sync.get("next_ahead", 0)
-        is_forwarding_track = (next_ver != "—")
         forwarding_needs_action = (next_ahead > 0)
 
         # E. Local Worktree state
@@ -2657,7 +2676,6 @@ class SyncWindow(Adw.ApplicationWindow):
         unstable_wt_needs_action = (unstable_wt.get("behind", 0) > 0)
 
         # Determine if we match any of the selected tracks
-        # If no tracks are selected, we treat it as matching all tracks!
         any_track_selected = (
             self.filter_pool_sync.get_active() or
             self.filter_stable.get_active() or
@@ -2665,47 +2683,9 @@ class SyncWindow(Adw.ApplicationWindow):
             self.filter_forwarding.get_active()
         )
 
-        matches_track = False
         if not any_track_selected:
-            matches_track = True
-        else:
-            # Check individual selected tracks
-            if self.filter_pool_sync.get_active():
-                if self.filter_needs_action.get_active():
-                    if pool_needs_action:
-                        matches_track = True
-                else:
-                    if is_pool_track:
-                        matches_track = True
-
-            if self.filter_stable.get_active():
-                if self.filter_needs_action.get_active():
-                    if stable_needs_action or stable_wt_needs_action:
-                        matches_track = True
-                else:
-                    if is_stable_track:
-                        matches_track = True
-
-            if self.filter_unstable.get_active():
-                if self.filter_needs_action.get_active():
-                    if unstable_needs_action or unstable_wt_needs_action:
-                        matches_track = True
-                else:
-                    if is_unstable_track:
-                        matches_track = True
-
-            if self.filter_forwarding.get_active():
-                if self.filter_needs_action.get_active():
-                    if forwarding_needs_action:
-                        matches_track = True
-                else:
-                    if is_forwarding_track:
-                        matches_track = True
-
-        # If no tracks are checked, but "Needs Action Only" is checked:
-        # We must make sure the package has SOME action pending on ANY track!
-        if not any_track_selected and self.filter_needs_action.get_active():
-            has_any_action = (
+            # If no tracks are selected, display packages with ANY pending action
+            return bool(
                 pool_needs_action or
                 stable_needs_action or
                 unstable_needs_action or
@@ -2713,8 +2693,17 @@ class SyncWindow(Adw.ApplicationWindow):
                 stable_wt_needs_action or
                 unstable_wt_needs_action
             )
-            if not has_any_action:
-                return False
+
+        # Check individual selected tracks (Union / OR)
+        matches_track = False
+        if self.filter_pool_sync.get_active() and pool_needs_action:
+            matches_track = True
+        if self.filter_stable.get_active() and (stable_needs_action or stable_wt_needs_action):
+            matches_track = True
+        if self.filter_unstable.get_active() and (unstable_needs_action or unstable_wt_needs_action):
+            matches_track = True
+        if self.filter_forwarding.get_active() and forwarding_needs_action:
+            matches_track = True
 
         return matches_track
 
@@ -3678,16 +3667,20 @@ class SyncWindow(Adw.ApplicationWindow):
                 self.filter_needs_action.set_active(not self.filter_needs_action.get_active())
                 return True
             elif keyval in (Gdk.KEY_2, Gdk.KEY_KP_2):
-                self.filter_pool_sync.set_active(not self.filter_pool_sync.get_active())
+                if self.filter_needs_action.get_active():
+                    self.filter_pool_sync.set_active(not self.filter_pool_sync.get_active())
                 return True
             elif keyval in (Gdk.KEY_3, Gdk.KEY_KP_3):
-                self.filter_stable.set_active(not self.filter_stable.get_active())
+                if self.filter_needs_action.get_active():
+                    self.filter_stable.set_active(not self.filter_stable.get_active())
                 return True
             elif keyval in (Gdk.KEY_4, Gdk.KEY_KP_4):
-                self.filter_unstable.set_active(not self.filter_unstable.get_active())
+                if self.filter_needs_action.get_active():
+                    self.filter_unstable.set_active(not self.filter_unstable.get_active())
                 return True
             elif keyval in (Gdk.KEY_5, Gdk.KEY_KP_5):
-                self.filter_forwarding.set_active(not self.filter_forwarding.get_active())
+                if self.filter_needs_action.get_active():
+                    self.filter_forwarding.set_active(not self.filter_forwarding.get_active())
                 return True
             elif keyval in (Gdk.KEY_p, Gdk.KEY_P):
                 self.sidebar_search.grab_focus()
