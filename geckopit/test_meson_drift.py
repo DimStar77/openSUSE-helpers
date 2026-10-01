@@ -211,7 +211,7 @@ BuildRequires:  pkgconfig(libadwaita-1) >= %{min_adw}
             with open(changes_file, "w", encoding="utf-8") as f:
                 f.write("-------------------------------------------------------------------\nWed Sep 23 12:00:00 UTC 2026 - test@opensuse.org\n\n- Initial packaging.\n\n")
 
-            with open(os.path.join(td, "osc-collab.meson"), "w", encoding="utf-8") as f:
+            with open(os.path.join(td, "meson.build"), "w", encoding="utf-8") as f:
                 f.write(meson_code)
 
             # Audit before fix: 2 bumps
@@ -238,6 +238,40 @@ BuildRequires:  pkgconfig(libadwaita-1) >= %{min_adw}
             with open(changes_file, "r", encoding="utf-8") as f:
                 new_changes = f.read()
             self.assertIn("- Update version dependencies according to meson.build.", new_changes)
+
+    def test_audit_ignores_osc_collab_diff(self):
+        """Verifies audit does not get misled by partial diff hunks in osc-collab.meson."""
+        spec_code = """Name: testpkg
+Version: 1.0.1
+Release: 0
+BuildRequires:  pkgconfig(gtk4) >= 4.14.0
+BuildRequires:  pkgconfig(libadwaita-1) >= 1.5.0
+"""
+        full_meson = """
+        dependency('gtk4', version: '>= 4.16.0')
+        dependency('libadwaita-1', version: '>= 1.5.0')
+"""
+        # osc-collab.meson only has version bump hunk, omitting unchanged dependency lines
+        diff_hunk = """--- meson.build.old
++++ meson.build
+@@ -1,3 +1,3 @@
+ project('testpkg', 'c',
+-  version: '1.0.0'
++  version: '1.0.1'
+ )
+"""
+        with tempfile.TemporaryDirectory() as td:
+            with open(os.path.join(td, "testpkg.spec"), "w", encoding="utf-8") as f:
+                f.write(spec_code)
+            with open(os.path.join(td, "meson.build"), "w", encoding="utf-8") as f:
+                f.write(full_meson)
+            with open(os.path.join(td, "osc-collab.meson"), "w", encoding="utf-8") as f:
+                f.write(diff_hunk)
+
+            drifts = meson_drift.audit_meson_drift(td)
+            self.assertEqual(len(drifts), 1)
+            self.assertEqual(drifts[0]["package"], "gtk4")
+            self.assertEqual(drifts[0]["upstream_version"], "4.16.0")
 
     def test_detect_package_build_system(self):
         # 1. RPM 4.20+ Declarative BuildSystem tag

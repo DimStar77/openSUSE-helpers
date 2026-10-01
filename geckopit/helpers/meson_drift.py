@@ -655,15 +655,8 @@ def audit_meson_drift(package_dir: str, meson_content: Optional[str] = None, bum
     content = meson_content
     if not content:
         if active_build_system == "meson":
-            collab_path = os.path.join(package_dir, "osc-collab.meson")
             meson_path = os.path.join(package_dir, "meson.build")
-            if os.path.isfile(collab_path):
-                try:
-                    with open(collab_path, "r", encoding="utf-8", errors="replace") as f:
-                        content = f.read()
-                except Exception:
-                    pass
-            elif os.path.isfile(meson_path):
+            if os.path.isfile(meson_path):
                 try:
                     with open(meson_path, "r", encoding="utf-8", errors="replace") as f:
                         content = f.read()
