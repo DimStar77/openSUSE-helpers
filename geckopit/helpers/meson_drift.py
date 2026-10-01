@@ -43,6 +43,14 @@ DEVEL_PACKAGE_MAP = {
     "wayland-protocols": "wayland-protocols-devel",
     "gcr-4": "gcr-devel",
     "gcr-3": "gcr3-devel",
+    "cairo": "cairo-devel",
+    "pango": "pango-devel",
+    "fontconfig": "fontconfig-devel",
+    "freetype2": "freetype2-devel",
+    "atk": "atk-devel",
+    "gdk-pixbuf-2.0": "gdk-pixbuf-devel",
+    "gdk-pixbuf": "gdk-pixbuf-devel",
+    "libcurl": "libcurl-devel",
 }
 
 # Python package alias map: maps PyPI module names to openSUSE %{python_module ...} candidate names
@@ -406,12 +414,23 @@ def parse_autotools_dependencies(content: str) -> Dict[str, Tuple[str, str, bool
     vars_map = {}
     for line in clean_content.splitlines():
         line_s = line.strip()
-        m_var = re.match(r"""^([a-zA-Z0-9_]+)\s*=\s*['"]?([0-9]+(?:\.[0-9]+)*)['"]?""", line_s)
+        m_var = re.match(r"""^([a-zA-Z0-9_]+)\s*=\s*['"]?([a-zA-Z0-9_.\-+]+)['"]?""", line_s)
         if m_var:
             vars_map[m_var.group(1)] = m_var.group(2)
-        m_m4 = re.match(r"""^m4_define\s*\(\s*\[([a-zA-Z0-9_]+)\]\s*,\s*\[([0-9]+(?:\.[0-9]+)*)\]\s*\)""", line_s)
+        m_m4 = re.match(r"""^m4_define\s*\(\s*\[?([a-zA-Z0-9_]+)\]?\s*,\s*\[?([a-zA-Z0-9_.\-+]+)\]?\s*\)""", line_s)
         if m_m4:
             vars_map[m_m4.group(1)] = m_m4.group(2)
+
+    for _ in range(3):
+        changed = False
+        for k, v in list(vars_map.items()):
+            nv = re.sub(r"\$([a-zA-Z0-9_]+)", lambda m: vars_map.get(m.group(1), m.group(0)), v)
+            nv = re.sub(r"\$\{([a-zA-Z0-9_]+)\}", lambda m: vars_map.get(m.group(1), m.group(0)), nv)
+            if nv != v:
+                vars_map[k] = nv
+                changed = True
+        if not changed:
+            break
 
     deps = {}
     pkg_calls = re.findall(r"PKG_CHECK_(?:MODULES|EXISTS)\s*\(\s*\[?[a-zA-Z0-9_]+\]?\s*,\s*\[?(.*?)\]?\s*(?:,\s*.*?)?\)", clean_content, re.DOTALL)
@@ -425,22 +444,28 @@ def parse_autotools_dependencies(content: str) -> Dict[str, Tuple[str, str, bool
             if not tok:
                 idx += 1
                 continue
-            m_full = re.match(r"^([a-zA-Z0-9_\-+.]+)\s*([><=]+)\s*([0-9]+(?:\.[0-9]+)*.*)$", tok)
+            m_full = re.match(r"^([a-zA-Z0-9_\-+.]+)\s*([><=]+)\s*(.*)$", tok)
             if m_full:
-                pkg, op, ver = m_full.group(1), m_full.group(2), m_full.group(3)
-                if "@" not in ver and not ver.startswith("$"):
+                pkg, op, raw_ver = m_full.group(1), m_full.group(2), m_full.group(3).strip('[]\"\'')
+                ver = vars_map.get(raw_ver, raw_ver)
+                if re.match(r"^[0-9]+(?:\.[0-9]+)*", ver):
                     if pkg not in deps or (ver and not deps[pkg][1]):
                         deps[pkg] = (op, ver, True)
+                elif pkg not in deps:
+                    deps[pkg] = (op, "", True)
                 idx += 1
                 continue
             m_pkg = re.match(r"^([a-zA-Z0-9_\-+.]+)$", tok)
             if m_pkg and idx + 2 < len(tokens) and re.match(r"^[><=]+$", tokens[idx+1].strip()):
                 pkg = m_pkg.group(1)
                 op = tokens[idx+1].strip()
-                ver = tokens[idx+2].strip().strip('[]\"\'')
-                if "@" not in ver and not ver.startswith("$"):
+                raw_ver = tokens[idx+2].strip().strip('[]\"\'')
+                ver = vars_map.get(raw_ver, raw_ver)
+                if re.match(r"^[0-9]+(?:\.[0-9]+)*", ver):
                     if pkg not in deps or (ver and not deps[pkg][1]):
                         deps[pkg] = (op, ver, True)
+                elif pkg not in deps:
+                    deps[pkg] = (op, "", True)
                 idx += 3
                 continue
             idx += 1
@@ -973,6 +998,9 @@ def fix_meson_drift(package_dir: str, on_log: Optional[any] = None) -> List[Dict
         u_ver = d["upstream_version"]
         op = d.get("comparator") or ">="
         b_sys = d.get("build_system", "meson")
+
+        if not u_ver or not re.match(r"^[0-9]", u_ver):
+            continue
 
         if b_sys == "python":
             cands = [pkg, pkg.replace("-", "_")]

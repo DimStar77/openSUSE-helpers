@@ -344,13 +344,20 @@ BuildRequires:  pkgconfig(libsoup-3.0) >= 2.58
 
     def test_autotools_dependency_drift_and_spec_fix(self):
         conf_code = """
+        m4_define([atk_req_ver], [1.29.2])
         GLIB_REQ=2.50.0
-        PKG_CHECK_MODULES(FOO, [glib-2.0 >= $GLIB_REQ])
+        PKG_CHECK_MODULES(FOO, [
+            glib-2.0 >= $GLIB_REQ
+            atk >= atk_req_ver
+            unknown >= unresolvable_variable
+        ])
         """
         spec_code = """Name: autopkg
 Version: 1.0.0
 Release: 0
 BuildRequires:  pkgconfig(glib-2.0)
+BuildRequires:  atk-devel
+BuildRequires:  unknown
 %build
 %configure
 make %{?_smp_mflags}
@@ -365,13 +372,18 @@ make %{?_smp_mflags}
             with open(os.path.join(td, "configure.ac"), "w", encoding="utf-8") as f:
                 f.write(conf_code)
 
-            # Audit
+            # Audit: glib-2.0 ($GLIB_REQ) and atk (bareword m4 atk_req_ver), unresolvable_variable is ignored
             drifts = meson_drift.audit_meson_drift(td)
-            self.assertEqual(len(drifts), 1)
-            self.assertEqual(drifts[0]["package"], "glib-2.0")
-            self.assertEqual(drifts[0]["type"], "unversioned")
-            self.assertEqual(drifts[0]["upstream_version"], "2.50.0")
-            self.assertEqual(drifts[0]["build_system"], "autotools")
+            self.assertEqual(len(drifts), 2)
+            d_pkgs = {d["package"]: d for d in drifts}
+            self.assertIn("glib-2.0", d_pkgs)
+            self.assertEqual(d_pkgs["glib-2.0"]["upstream_version"], "2.50.0")
+            self.assertIn("atk", d_pkgs)
+            self.assertEqual(d_pkgs["atk"]["spec_name"], "atk-devel")
+            self.assertEqual(d_pkgs["atk"]["upstream_version"], "1.29.2")
+
+            # Verify unresolvable_variable was not accepted as a version
+            self.assertNotIn("unknown", d_pkgs)
 
             # Verify report header
             report = meson_drift.format_drift_cli_report(drifts)
@@ -379,10 +391,12 @@ make %{?_smp_mflags}
 
             # Fix
             fixed = meson_drift.fix_meson_drift(td)
-            self.assertEqual(len(fixed), 1)
+            self.assertEqual(len(fixed), 2)
             with open(spec_file, "r", encoding="utf-8") as f:
                 new_spec = f.read()
             self.assertIn("BuildRequires:  pkgconfig(glib-2.0) >= 2.50.0", new_spec)
+            self.assertIn("BuildRequires:  atk-devel >= 1.29.2", new_spec)
+            self.assertIn("BuildRequires:  unknown", new_spec)
 
             # Record changelog
             ok = meson_drift.record_drift_changelog(td, fixed)
