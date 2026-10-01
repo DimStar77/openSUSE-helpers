@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.opensuse.geckopit</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Geckopit</name>
+  <summary>openSUSE Multi-Profile Workspace SCM Cockpit</summary>
+  <description>
+    <p>
+      Geckopit is a high-performance GTK4 and Libadwaita SCM cockpit and CLI dashboard designed for openSUSE packaging maintainers.
+    </p>
+    <p>
+      It integrates downstream repository tracking, upstream version monitoring (via Anitya / Release Monitoring), branch promotion and forwarding diffs, automated Meson/CMake dependency drift auditing, and embedded multi-tab VTE terminal workflows.
+    </p>
+  </description>
+  <launchable type="desktop-id">org.opensuse.geckopit.desktop</launchable>
+  <url type="homepage">https://github.com/openSUSE/openSUSE-helpers</url>
+  <url type="bugtracker">https://github.com/openSUSE/openSUSE-helpers/issues</url>
+  <developer id="org.opensuse">
+    <name>openSUSE Maintainers</name>
+  </developer>
+  <branding>
+    <color type="primary" scheme_preference="light">#173f35</color>
+    <color type="primary" scheme_preference="dark">#173f35</color>
+  </branding>
+</component>

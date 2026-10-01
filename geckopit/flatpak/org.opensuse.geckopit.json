@@ -1,0 +1,191 @@
+{
+  "app-id": "org.opensuse.geckopit",
+  "runtime": "org.gnome.Platform",
+  "runtime-version": "50",
+  "sdk": "org.gnome.Sdk",
+  "command": "geckopit",
+  "finish-args": [
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--share=ipc",
+    "--device=dri",
+    "--share=network",
+    "--socket=ssh-auth",
+    "--filesystem=host",
+    "--filesystem=~/.config/osc",
+    "--filesystem=~/.config/tea",
+    "--filesystem=~/.ssh",
+    "--filesystem=~/.gitconfig",
+    "--filesystem=~/.config/git",
+    "--talk-name=org.freedesktop.Flatpak"
+  ],
+  "modules": [
+    {
+      "name": "vte",
+      "buildsystem": "meson",
+      "config-opts": [
+        "-Dgtk3=false",
+        "-Dgtk4=true",
+        "-Dgir=true",
+        "-Dvapi=false",
+        "-Ddocs=false",
+        "-Dfribidi=true",
+        "-D_systemd=false",
+        "-Dglade=false"
+      ],
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://download.gnome.org/sources/vte/0.82/vte-0.82.0.tar.xz",
+          "sha256": "b0718db3254730701b43bf5e113cbf8cdb2c14715d32ee1e8a707dc6eb70535f"
+        }
+      ]
+    },
+    {
+      "name": "git",
+      "config-opts": [
+        "--with-curl",
+        "--with-openssl",
+        "--without-tcltk"
+      ],
+      "make-args": [
+        "NO_PERL=1",
+        "NO_TCLTK=1",
+        "NO_GETTEXT=1",
+        "NO_INSTALL_HARDLINKS=1"
+      ],
+      "make-install-args": [
+        "NO_PERL=1",
+        "NO_TCLTK=1",
+        "NO_GETTEXT=1",
+        "NO_INSTALL_HARDLINKS=1"
+      ],
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://mirrors.edge.kernel.org/pub/software/scm/git/git-2.48.1.tar.xz",
+          "sha256": "1c5d545f5dc1eb51e95d2c50d98fdf88b1a36ba1fa30e9ae5d5385c6024f82ad"
+        }
+      ]
+    },
+    {
+      "name": "tea",
+      "buildsystem": "simple",
+      "build-commands": [
+        "install -D -m 755 tea /app/bin/tea"
+      ],
+      "sources": [
+        {
+          "type": "file",
+          "url": "https://gitea.com/gitea/tea/releases/download/v0.9.2/tea-0.9.2-linux-amd64",
+          "dest-filename": "tea",
+          "sha256": "be10cdf9a619e3c0f121df874960ed19b53e62d1c7036cf60313a28b5227d54d"
+        }
+      ]
+    },
+    {
+      "name": "git-lfs",
+      "buildsystem": "simple",
+      "build-commands": [
+        "install -D -m 755 git-lfs /app/bin/git-lfs"
+      ],
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://github.com/git-lfs/git-lfs/releases/download/v3.6.0/git-lfs-linux-amd64-v3.6.0.tar.gz",
+          "sha256": "fff4746159aa7a7b42ef1aa30fed03b534df48a7dbe116d65296c0f0c43c594d"
+        }
+      ]
+    },
+    {
+      "name": "python-deps",
+      "buildsystem": "simple",
+      "build-commands": [
+        "pip3 install --verbose --no-index --no-deps --find-links=. --prefix=/app *.whl"
+      ],
+      "sources": [
+        {
+          "type": "file",
+          "url": "https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl",
+          "sha256": "b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992"
+        },
+        {
+          "type": "file",
+          "url": "https://files.pythonhosted.org/packages/95/95/86342356ff5953b3fb06f7ef7c5bee212d45e770abc7218d451b9148313c/cffi-2.1.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+          "sha256": "a931079504ecc49efed7744c476a5c343a92fabf66dec2db95edb1b2fdc770e2"
+        },
+        {
+          "type": "file",
+          "url": "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl",
+          "sha256": "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775"
+        },
+        {
+          "type": "file",
+          "url": "https://files.pythonhosted.org/packages/fc/ad/d07d7862a62ffa6d79d68074d14823243dd235a77c45262acbf6adeb28bf/charset_normalizer-3.5.2-py3-none-any.whl",
+          "sha256": "b6b751274acb69d77b3323d6b7dbaa3c7fdfc1eb829b7eb61d262f32e1af9685"
+        },
+        {
+          "type": "file",
+          "url": "https://files.pythonhosted.org/packages/58/a2/bb081bab032533a855d44de1d56f8e8426114ff1ba5d1f07a438a0a654f8/idna-3.20-py3-none-any.whl",
+          "sha256": "ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c"
+        },
+        {
+          "type": "file",
+          "url": "https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl",
+          "sha256": "0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3"
+        },
+        {
+          "type": "file",
+          "url": "https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl",
+          "sha256": "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0"
+        },
+        {
+          "type": "file",
+          "url": "https://files.pythonhosted.org/packages/21/69/64cef1f702bf6657e0cc186ed1a2891d50d29fb41586b254e1c07adea261/cryptography-50.0.2-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+          "sha256": "630ebfea3bf689d075f82316324ff7433dc447fe6bc1bfc76524b74b4a9567d2"
+        },
+        {
+          "type": "file",
+          "url": "https://files.pythonhosted.org/packages/b8/0c/51f6841f1d84f404f92463fc2b1ba0da357ca1e3db6b7fbda26956c3b82a/ruamel_yaml-0.19.1-py3-none-any.whl",
+          "sha256": "27592957fedf6e0b62f281e96effd28043345e0e66001f97683aa9a40c667c93"
+        },
+        {
+          "type": "file",
+          "url": "https://files.pythonhosted.org/packages/ff/5d/e4f84c9c448613e12bd62e90b23aa127ea4c46b697f3d760acc32cb94f25/ruamel_yaml_clib-0.2.15-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+          "sha256": "4d1032919280ebc04a80e4fb1e93f7a738129857eaec9448310e638c8bccefcf"
+        },
+        {
+          "type": "file",
+          "url": "https://files.pythonhosted.org/packages/73/9e/01e6294021f263961e16da1b5c2829e8cb1b75567f90c891f9b4e01c17f4/osc-1.27.3-py3-none-any.whl",
+          "sha256": "c29d80c3d956886a8e817784ca3835dc9856f1f863958299b3640234e2d82a71"
+        }
+      ]
+    },
+    {
+      "name": "geckopit",
+      "buildsystem": "simple",
+      "build-commands": [
+        "mkdir -p /app/lib/geckopit/helpers",
+        "cp -a geckopit/geckopit.py geckopit/geckopit-cli geckopit/geckopit-upgrade geckopit/USER_GUIDE.md geckopit/USER_GUIDE.html /app/lib/geckopit/",
+        "cp -a geckopit/helpers/* /app/lib/geckopit/helpers/",
+        "if [ -d geckopit/docs ]; then cp -a geckopit/docs /app/lib/geckopit/; fi",
+        "mkdir -p /app/bin",
+        "ln -sf /app/lib/geckopit/geckopit.py /app/bin/geckopit",
+        "ln -sf /app/lib/geckopit/geckopit-cli /app/bin/geckopit-cli",
+        "ln -sf /app/lib/geckopit/geckopit-upgrade /app/bin/geckopit-upgrade",
+        "install -D -m 755 git-helpers/git-project-sync /app/bin/git-project-sync",
+        "install -D -m 755 GNOME-maintainer-scripts/resolve-changes /app/bin/resolve-changes",
+        "install -D -m 755 GNOME-maintainer-scripts/resolve-spec /app/bin/resolve-spec",
+        "install -D -m 644 geckopit/org.opensuse.geckopit.desktop /app/share/applications/org.opensuse.geckopit.desktop",
+        "install -D -m 644 geckopit/org.opensuse.geckopit.svg /app/share/icons/hicolor/scalable/apps/org.opensuse.geckopit.svg",
+        "install -D -m 644 geckopit/flatpak/org.opensuse.geckopit.metainfo.xml /app/share/metainfo/org.opensuse.geckopit.metainfo.xml"
+      ],
+      "sources": [
+        {
+          "type": "dir",
+          "path": "../.."
+        }
+      ]
+    }
+  ]
+}
