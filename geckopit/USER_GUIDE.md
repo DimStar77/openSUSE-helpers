@@ -320,6 +320,10 @@ Power users never need to reach for the mouse. Geckopit provides full keyboard c
 | **`Ctrl` + `5`** | Toggle **🔀 Forwarding** track filter | Action Queue mode |
 | **`Ctrl` + `F`** | Activate inline search inside the diff viewer | When viewing diffs |
 | **`Ctrl` + `+` / `-` / `0`** | Zoom console terminal font (with floating `%` badge) | In terminal drawer |
+| **`F5`** or **`Ctrl` + `R`** | Refresh currently selected package (instant priority scan) | Active package |
+| **`Ctrl` + `Shift` + `R`** | Rescan all packages in the workspace | Global |
+| **`Ctrl` + `Shift` + `S`** | Fetch & Sync workspace (`git-project-sync`) | Global |
+| **`F1`** | Open User Guide in browser | Anywhere in Cockpit |
 
 *Note: Defensive input guards prevent shortcuts from intercepting keystrokes while you are actively typing inside an embedded terminal shell or text field.*
 

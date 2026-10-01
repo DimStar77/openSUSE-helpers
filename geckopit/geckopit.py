@@ -1651,19 +1651,21 @@ class SyncWindow(Adw.ApplicationWindow):
 
         # Left: Settings/Workspace Manager Button
         settings_btn = Gtk.Button.new_from_icon_name("emblem-system-symbolic")
+        settings_btn.set_focusable(False)
         settings_btn.set_tooltip_text("Workspace Profile Manager Settings")
         settings_btn.connect("clicked", self.on_settings_clicked)
         self.header_bar.pack_start(settings_btn)
 
         # Left: Workspace SCM Sync Button (git-project-sync)
         self.sync_btn = Gtk.Button()
+        self.sync_btn.set_focusable(False)
         self.sync_stack = Gtk.Stack()
         self.sync_icon = Gtk.Image.new_from_icon_name("emblem-synchronizing-symbolic")
         self.sync_spinner = Gtk.Spinner()
         self.sync_stack.add_named(self.sync_icon, "icon")
         self.sync_stack.add_named(self.sync_spinner, "spinner")
         self.sync_btn.set_child(self.sync_stack)
-        self.sync_btn.set_tooltip_text("Synchronize Workspace via git-project-sync")
+        self.sync_btn.set_tooltip_text("Fetch & Sync Workspace via git-project-sync (Ctrl+Shift+S)")
         self.sync_btn.connect("clicked", self.on_workspace_sync_clicked)
         self.header_bar.pack_start(self.sync_btn)
 
@@ -1675,12 +1677,14 @@ class SyncWindow(Adw.ApplicationWindow):
         # Right: Help / Documentation Button (F1)
         import docs_builder
         help_btn = Gtk.Button.new_from_icon_name("help-browser-symbolic")
+        help_btn.set_focusable(False)
         help_btn.set_tooltip_text("Open User Guide in Browser (F1)")
         help_btn.connect("clicked", lambda btn: docs_builder.open_user_guide(self))
         self.header_bar.pack_end(help_btn)
 
         # Right: Packaging Environment Setup Button
         setup_btn = Gtk.Button.new_from_icon_name("avatar-default-symbolic")
+        setup_btn.set_focusable(False)
         setup_btn.set_tooltip_text("Packaging Environment Setup & Verification")
         setup_btn.connect("clicked", self.on_environment_setup_clicked)
         self.header_bar.pack_end(setup_btn)
@@ -1778,6 +1782,9 @@ class SyncWindow(Adw.ApplicationWindow):
 
         # Kick off background loading
         self.refresh_all()
+
+        # Set initial focus on the search entry to ensure keyboard input begins safely
+        GLib.idle_add(lambda: self.sidebar_search.grab_focus())
 
         # If no stable path is configured, trigger the onboarding setup dialog immediately!
         if not active_prof.get("stable_path"):
@@ -2811,9 +2818,10 @@ class SyncWindow(Adw.ApplicationWindow):
         sb_title.set_markup("<span weight='bold' size='medium'>Packages</span>")
         sidebar_header.append(sb_title)
 
-        # Refresh All Button
+        # Refresh All Button (set focusable=False to prevent accidental activation on Enter on startup)
         refresh_btn = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
-        refresh_btn.set_tooltip_text("Refresh All Package Scans")
+        refresh_btn.set_focusable(False)
+        refresh_btn.set_tooltip_text("Rescan All Packages (Ctrl+Shift+R)")
         refresh_btn.connect("clicked", lambda btn: self.refresh_all())
         sidebar_header.append(refresh_btn)
 
@@ -4034,7 +4042,34 @@ class SyncWindow(Adw.ApplicationWindow):
             docs_builder.open_user_guide(self)
             return True
 
-        # 5. Vim-style / Arrow navigation across packages
+        # 6. Action Shortcuts:
+        shift_pressed = (state & Gdk.ModifierType.SHIFT_MASK) != 0
+
+        # Ctrl+Shift+S: Fetch & Sync workspace via git-project-sync
+        if ctrl_pressed and shift_pressed and keyval in (Gdk.KEY_s, Gdk.KEY_S):
+            self.on_workspace_sync_clicked()
+            return True
+
+        # Ctrl+Shift+R: Rescan all packages in workspace
+        if ctrl_pressed and shift_pressed and keyval in (Gdk.KEY_r, Gdk.KEY_R):
+            self.refresh_all()
+            return True
+
+        # F5 or Ctrl+R: Refresh currently selected package (or all if none selected)
+        if keyval == Gdk.KEY_F5 or (ctrl_pressed and not shift_pressed and keyval in (Gdk.KEY_r, Gdk.KEY_R)):
+            if getattr(self, "current_selected_package", None):
+                pkg_name = self.current_selected_package
+                self.update_detail_worktree_ui(pkg_name)
+                self.update_detail_drift_ui(pkg_name, force_reload=True)
+                self.refresh_single_package_priority(pkg_name)
+                self.refresh_active_diff()
+                toast = Adw.Toast.new(f"🔄 Refreshed {pkg_name}")
+                self.toast_overlay.add_toast(toast)
+            else:
+                self.refresh_all()
+            return True
+
+        # 7. Vim-style / Arrow navigation across packages
         if keyval in (Gdk.KEY_j, Gdk.KEY_J, Gdk.KEY_Down):
             return self.navigate_package_list(1)
         elif keyval in (Gdk.KEY_k, Gdk.KEY_K, Gdk.KEY_Up):

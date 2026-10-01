@@ -375,6 +375,33 @@ class TestSyncWindow(unittest.TestCase):
         res = SyncWindow.on_window_key_pressed(mock_win, None, Gdk.KEY_j, 0, 0)
         self.assertFalse(res)
 
+        # 5. Distinct Sync and Refresh Shortcuts
+        mock_win.get_focus.return_value = None
+        mock_win.current_selected_package = "pkg1"
+        mock_win.update_detail_worktree_ui = mock.Mock()
+        mock_win.update_detail_drift_ui = mock.Mock()
+        mock_win.refresh_single_package_priority = mock.Mock()
+        mock_win.refresh_active_diff = mock.Mock()
+        mock_win.toast_overlay = mock.Mock()
+
+        # F5 -> Refresh selected package
+        res = SyncWindow.on_window_key_pressed(mock_win, None, Gdk.KEY_F5, 0, 0)
+        self.assertTrue(res)
+        mock_win.refresh_single_package_priority.assert_called_with("pkg1")
+        mock_win.refresh_active_diff.assert_called()
+
+        # Ctrl+Shift+R -> Rescan all packages
+        mock_win.refresh_all = mock.Mock()
+        res = SyncWindow.on_window_key_pressed(mock_win, None, Gdk.KEY_r, 0, Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK)
+        self.assertTrue(res)
+        mock_win.refresh_all.assert_called()
+
+        # Ctrl+Shift+S -> Workspace sync (git-project-sync)
+        mock_win.on_workspace_sync_clicked = mock.Mock()
+        res = SyncWindow.on_window_key_pressed(mock_win, None, Gdk.KEY_s, 0, Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK)
+        self.assertTrue(res)
+        mock_win.on_workspace_sync_clicked.assert_called()
+
     def test_search_key_pressed_hand_off(self):
         import gi
         gi.require_version('Gtk', '4.0')
