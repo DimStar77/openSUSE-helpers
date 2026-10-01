@@ -113,9 +113,33 @@ sync_project() {
             if [[ "$REMOTE_HASH" == "$LOCAL_HASH" && "$FORCE_SYNC" == false ]]; then
                 echo "✅ No changes detected on $CURRENT_BRANCH. (Use -f to force audit)"
             else
+                # 1. Identify dropped submodules (mode 160000 -> 000000)
+                DROPPED_SUBMODULES=$(git diff --raw "$LOCAL_HASH" "$REMOTE_HASH" | awk '$1 ~ /^:160000/ && $2 == "000000" { print $NF }')
+                # 2. Identify active/updated submodules in remote hash (mode -> 160000)
+                UPDATED_SUBMODULES=$(git diff --raw "$LOCAL_HASH" "$REMOTE_HASH" | awk '$2 == "160000" { print $NF }')
+
+                # De-initialize dropped submodules before reset while they are still tracked in .gitmodules
+                if [[ -n "$DROPPED_SUBMODULES" ]]; then
+                    DROPPED_COUNT=$(echo "$DROPPED_SUBMODULES" | grep -v '^[[:space:]]*$' | wc -l)
+                    echo "🗑️  Dropped $DROPPED_COUNT submodule(s) detected: $(echo $DROPPED_SUBMODULES | tr '\n' ' '). De-initializing..."
+                    for sm in $DROPPED_SUBMODULES; do
+                        git submodule deinit -f -- "$sm" 2>/dev/null || true
+                    done
+                fi
+
                 if [[ "$FORCE_SYNC" == true ]]; then
                     echo "🔄 Force audit requested. Deep-scanning submodules with SSH multiplexing..."
                     git reset --hard "origin/$CURRENT_BRANCH"
+
+                    # Clean up directories and configs for dropped submodules
+                    if [[ -n "$DROPPED_SUBMODULES" ]]; then
+                        for sm in $DROPPED_SUBMODULES; do
+                            [[ -d "$sm" ]] && rm -rf "$sm"
+                            git config --remove-section "submodule.$sm" 2>/dev/null || true
+                            rm -rf ".git/modules/$sm" 2>/dev/null || true
+                        done
+                    fi
+
                     git submodule sync --recursive --quiet
                     git submodule update --init --recursive --jobs "$JOBS"
 
@@ -129,17 +153,25 @@ sync_project() {
                     git submodule update --remote --merge --jobs "$JOBS"
                     git clean -dff
                 else
-                    # Targeted differential sync: identify submodules actually updated by the bot!
-                    CHANGED_SUBMODULES=$(git diff --raw "$LOCAL_HASH" "$REMOTE_HASH" | awk '$1 ~ /^:160000/ || $2 == "160000" { print $NF }')
-                    COUNT=$(echo "$CHANGED_SUBMODULES" | grep -v '^[[:space:]]*$' | wc -l)
+                    git reset --hard "origin/$CURRENT_BRANCH"
+
+                    # Clean up directories and configs for dropped submodules
+                    if [[ -n "$DROPPED_SUBMODULES" ]]; then
+                        for sm in $DROPPED_SUBMODULES; do
+                            [[ -d "$sm" ]] && rm -rf "$sm"
+                            git config --remove-section "submodule.$sm" 2>/dev/null || true
+                            rm -rf ".git/modules/$sm" 2>/dev/null || true
+                        done
+                    fi
+
+                    COUNT=$(echo "$UPDATED_SUBMODULES" | grep -v '^[[:space:]]*$' | wc -l)
 
                     if [[ "$COUNT" -gt 0 ]]; then
-                        echo "🚀 Bot update detected ($COUNT package(s) changed: $(echo $CHANGED_SUBMODULES | tr '\n' ' ')). Fast-syncing..."
-                        git reset --hard "origin/$CURRENT_BRANCH"
-                        git submodule sync --quiet -- $CHANGED_SUBMODULES
-                        git submodule update --init --merge --jobs "$JOBS" -- $CHANGED_SUBMODULES
+                        echo "🚀 Bot update detected ($COUNT package(s) changed: $(echo $UPDATED_SUBMODULES | tr '\n' ' ')). Fast-syncing..."
+                        git submodule sync --quiet -- $UPDATED_SUBMODULES
+                        git submodule update --init --merge --jobs "$JOBS" -- $UPDATED_SUBMODULES
 
-                        for sm in $CHANGED_SUBMODULES; do
+                        for sm in $UPDATED_SUBMODULES; do
                             if [[ -d "$sm" ]]; then
                                 (
                                     cd "$sm" || exit
@@ -152,7 +184,6 @@ sync_project() {
                         wait
                     else
                         echo "🚀 Superproject metadata updated ($LOCAL_HASH -> $REMOTE_HASH). Fast-syncing..."
-                        git reset --hard "origin/$CURRENT_BRANCH"
                         git submodule sync --quiet
                     fi
                 fi
