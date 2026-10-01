@@ -9,6 +9,13 @@ sync checking, upstream upgrades, and defensive commits.
 import os
 import sys
 import concurrent.futures
+import locale
+
+# Gracefully handle container environments missing host regional locale files
+try:
+    locale.setlocale(locale.LC_ALL, '')
+except locale.Error:
+    os.environ['LC_ALL'] = 'C.UTF-8'
 
 # Make sure we can import helpers by resolving symlinks
 HELPERS_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'helpers')
@@ -939,6 +946,20 @@ def run_interactive_setup_action():
             tea_ans = input("   Enter Gitea API token (or press Enter to skip): ").strip()
             if tea_ans:
                 ok, msg = onboarding.configure_gitea_login(tea_ans)
+                print(f"   {sb.GREEN}✓ {msg}{sb.RESET}" if ok else f"   {sb.RED}✗ {msg}{sb.RESET}")
+        except (KeyboardInterrupt, EOFError):
+            print("\nSetup cancelled.")
+            return 1
+
+    # 5. openSUSE Git Merge Drivers (.changes and .spec)
+    drivers_st = readiness.get("drivers", {})
+    if not drivers_st.get("configured"):
+        print(f"\n{sb.BOLD}5. openSUSE Git Merge Drivers Setup{sb.RESET}")
+        print("   Enables automated 3-way merge conflict resolution for .changes, .spec, and _service files.")
+        try:
+            drv_ans = input("   Configure automated Git merge drivers now? [Y/n]: ").strip().lower()
+            if drv_ans in ("", "y", "yes"):
+                ok, msg = onboarding.configure_git_merge_drivers()
                 print(f"   {sb.GREEN}✓ {msg}{sb.RESET}" if ok else f"   {sb.RED}✗ {msg}{sb.RESET}")
         except (KeyboardInterrupt, EOFError):
             print("\nSetup cancelled.")

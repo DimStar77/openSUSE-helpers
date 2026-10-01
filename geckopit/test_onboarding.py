@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Unit tests for openSUSE Maintainer Environment Readiness Auditor & Onboarding Assistant.
-Tests Git identity, SSH key generation, OBS credentials, Gitea configuration, and report formatting.
+Tests Git identity, SSH key generation, OBS credentials, Gitea configuration, Git merge drivers, and report formatting.
 """
 
 import os
@@ -27,12 +27,47 @@ class TestOnboarding(unittest.TestCase):
             self.assertTrue(ok)
             self.assertIn("Gecko Tester", msg)
 
-            # 2. Verify with mock gitconfig_path
-            with patch("os.path.expanduser", return_value=cfg_file):
-                res = onboarding.check_git_identity()
-                self.assertTrue(res["configured"])
-                self.assertEqual(res["name"], "Gecko Tester")
-                self.assertEqual(res["email"], "gecko@opensuse.org")
+            # 2. Verify with explicit gitconfig_path
+            res = onboarding.check_git_identity(gitconfig_path=cfg_file)
+            self.assertTrue(res["configured"])
+            self.assertEqual(res["name"], "Gecko Tester")
+            self.assertEqual(res["email"], "gecko@opensuse.org")
+
+    def test_configure_and_check_git_merge_drivers(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg_file = os.path.join(td, "test.gitconfig")
+            attr_file = os.path.join(td, "test.attributes")
+
+            # Initially unconfigured
+            st1 = onboarding.check_git_merge_drivers(
+                gitconfig_path=cfg_file, attributes_path=attr_file
+            )
+            self.assertFalse(st1["configured"])
+
+            # Configure drivers
+            ok, msg = onboarding.configure_git_merge_drivers(
+                gitconfig_path=cfg_file, attributes_path=attr_file
+            )
+            self.assertTrue(ok)
+            self.assertIn("Configured openSUSE Git merge drivers", msg)
+
+            # Verify configured status
+            st2 = onboarding.check_git_merge_drivers(
+                gitconfig_path=cfg_file, attributes_path=attr_file
+            )
+            self.assertTrue(st2["configured"])
+            self.assertTrue(st2["has_changes_driver"])
+            self.assertTrue(st2["has_spec_driver"])
+            self.assertTrue(st2["has_keep_ours"])
+            self.assertTrue(st2["has_attributes"])
+
+            # Verify attributes content
+            with open(attr_file) as f:
+                content = f.read()
+                self.assertIn("*.changes merge=merge-changes", content)
+                self.assertIn("*.spec merge=spec-merge", content)
+                self.assertIn("_service merge=keep-ours", content)
+                self.assertIn("*.obsinfo merge=keep-ours", content)
 
     def test_generate_ssh_key(self):
         with tempfile.TemporaryDirectory() as td:
@@ -120,11 +155,13 @@ class TestOnboarding(unittest.TestCase):
             "git": {"configured": True, "name": "Jane Maintainer", "email": "jane@opensuse.org"},
             "ssh": {"configured": True, "authenticated": True, "username": "jane", "has_keys": True, "keys": ["id_ed25519.pub"]},
             "obs": {"configured": True, "user": "jane", "apiurl": "https://api.opensuse.org"},
-            "tea": {"configured": True, "user": "jane", "url": "https://src.opensuse.org"}
+            "tea": {"configured": True, "user": "jane", "url": "https://src.opensuse.org"},
+            "drivers": {"configured": True}
         }
         report = onboarding.format_readiness_cli_report(ready_data)
         self.assertIn("Jane Maintainer <jane@opensuse.org>", report)
         self.assertIn("Connected to src.opensuse.org as 'jane'", report)
+        self.assertIn("Git Merge Drivers", report)
         self.assertIn("fully configured and ready", report)
 
         # 2. Incomplete state
@@ -133,7 +170,8 @@ class TestOnboarding(unittest.TestCase):
             "git": {"configured": False, "name": "", "email": ""},
             "ssh": {"configured": False, "authenticated": False, "username": None, "has_keys": False, "keys": []},
             "obs": {"configured": False, "user": None, "apiurl": None},
-            "tea": {"configured": False, "user": None, "url": None}
+            "tea": {"configured": False, "user": None, "url": None},
+            "drivers": {"configured": False}
         }
         rep2 = onboarding.format_readiness_cli_report(missing_data)
         self.assertIn("Not configured", rep2)

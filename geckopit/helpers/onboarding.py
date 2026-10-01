@@ -22,26 +22,30 @@ GITEA_WEB_URL = "https://src.opensuse.org"
 OBS_API_URL = "https://api.opensuse.org"
 
 
-def check_git_identity() -> Dict[str, any]:
-    """Checks whether Git user.name and user.email are configured."""
+def check_git_identity(gitconfig_path: Optional[str] = None) -> Dict[str, any]:
+    """Checks whether Git user.name and user.email are configured globally or in specified config."""
     name = ""
     email = ""
 
-    # 1. Try standard git config
+    cmd = ["git", "config"]
+    if gitconfig_path:
+        cmd += ["--file", gitconfig_path]
+    else:
+        cmd += ["--global"]
+
     try:
-        proc_name = subprocess.run(["git", "config", "user.name"], capture_output=True, text=True)
+        proc_name = subprocess.run(cmd + ["user.name"], capture_output=True, text=True)
         name = proc_name.stdout.strip()
-        proc_email = subprocess.run(["git", "config", "user.email"], capture_output=True, text=True)
+        proc_email = subprocess.run(cmd + ["user.email"], capture_output=True, text=True)
         email = proc_email.stdout.strip()
     except Exception:
         pass
 
-    # 2. Check ~/.gitconfig directly if subshell environment overrode GIT_CONFIG_GLOBAL
-    gitconfig_path = os.path.expanduser("~/.gitconfig")
-    if (not name or not email) and os.path.isfile(gitconfig_path):
+    cfg_file = gitconfig_path or os.path.expanduser("~/.gitconfig")
+    if (not name or not email) and os.path.isfile(cfg_file):
         try:
             cfg = configparser.ConfigParser()
-            cfg.read(gitconfig_path)
+            cfg.read(cfg_file)
             if "user" in cfg:
                 if not name and "name" in cfg["user"]:
                     name = cfg["user"]["name"].strip()
@@ -176,17 +180,19 @@ def check_gitea_tea() -> Dict[str, any]:
 
 
 def check_all_readiness(test_ssh: bool = True) -> Dict[str, any]:
-    """Performs a complete readiness check across all 4 developer pillars."""
+    """Performs a complete readiness check across all developer pillars."""
     git_status = check_git_identity()
     ssh_status = check_ssh_readiness(test_connection=test_ssh)
     obs_status = check_obs_credentials()
     tea_status = check_gitea_tea()
+    drivers_status = check_git_merge_drivers()
 
     all_ready = (
         git_status["configured"]
         and ssh_status["authenticated"]
         and obs_status["configured"]
         and tea_status["configured"]
+        and drivers_status["configured"]
     )
 
     return {
@@ -195,7 +201,153 @@ def check_all_readiness(test_ssh: bool = True) -> Dict[str, any]:
         "ssh": ssh_status,
         "obs": obs_status,
         "tea": tea_status,
+        "drivers": drivers_status,
     }
+
+
+def check_git_merge_drivers(
+    gitconfig_path: Optional[str] = None,
+    attributes_path: Optional[str] = None
+) -> Dict[str, any]:
+    """
+    Checks whether openSUSE Git merge drivers (merge-changes, spec-merge, keep-ours)
+    and global git attributes (~/.config/git/attributes) are configured.
+    """
+    cfg_file = gitconfig_path or os.path.expanduser("~/.gitconfig")
+    attr_file = attributes_path or os.path.expanduser("~/.config/git/attributes")
+
+    has_changes_driver = False
+    has_spec_driver = False
+    has_keep_ours = False
+
+    cmd = ["git", "config"]
+    if gitconfig_path:
+        cmd += ["--file", gitconfig_path]
+    else:
+        cmd += ["--global"]
+
+    try:
+        p1 = subprocess.run(cmd + ["merge.merge-changes.driver"], capture_output=True, text=True)
+        has_changes_driver = bool(p1.stdout.strip())
+        p2 = subprocess.run(cmd + ["merge.spec-merge.driver"], capture_output=True, text=True)
+        has_spec_driver = bool(p2.stdout.strip())
+        p3 = subprocess.run(cmd + ["merge.keep-ours.driver"], capture_output=True, text=True)
+        has_keep_ours = bool(p3.stdout.strip())
+    except Exception:
+        pass
+
+    # Also check cfg file directly if git command failed or for isolated test configs
+    if (not has_changes_driver or not has_spec_driver or not has_keep_ours) and os.path.isfile(cfg_file):
+        try:
+            cfg = configparser.ConfigParser()
+            cfg.read(cfg_file)
+            if 'merge "merge-changes"' in cfg and "driver" in cfg['merge "merge-changes"']:
+                has_changes_driver = True
+            if 'merge "spec-merge"' in cfg and "driver" in cfg['merge "spec-merge"']:
+                has_spec_driver = True
+            if 'merge "keep-ours"' in cfg and "driver" in cfg['merge "keep-ours"']:
+                has_keep_ours = True
+        except Exception:
+            pass
+
+    # Check attributes mapping
+    has_changes_attr = False
+    has_spec_attr = False
+    has_service_attr = False
+    has_obsinfo_attr = False
+
+    if os.path.isfile(attr_file):
+        try:
+            with open(attr_file, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+                if "merge=merge-changes" in content:
+                    has_changes_attr = True
+                if "merge=spec-merge" in content:
+                    has_spec_attr = True
+                if "_service" in content and "merge=keep-ours" in content:
+                    has_service_attr = True
+                if "*.obsinfo" in content and "merge=keep-ours" in content:
+                    has_obsinfo_attr = True
+        except Exception:
+            pass
+
+    configured = (
+        has_changes_driver
+        and has_spec_driver
+        and has_keep_ours
+        and has_changes_attr
+        and has_spec_attr
+        and has_service_attr
+        and has_obsinfo_attr
+    )
+
+    return {
+        "configured": configured,
+        "has_changes_driver": has_changes_driver,
+        "has_spec_driver": has_spec_driver,
+        "has_keep_ours": has_keep_ours,
+        "has_attributes": bool(has_changes_attr and has_spec_attr and has_service_attr and has_obsinfo_attr),
+        "attributes_path": attr_file if os.path.isfile(attr_file) else None,
+        "gitconfig_path": cfg_file if os.path.isfile(cfg_file) else None,
+    }
+
+
+def configure_git_merge_drivers(
+    gitconfig_path: Optional[str] = None,
+    attributes_path: Optional[str] = None
+) -> Tuple[bool, str]:
+    """
+    Configures openSUSE Git merge drivers in git config and maps file patterns in global git attributes.
+    """
+    cfg_file = gitconfig_path or os.path.expanduser("~/.gitconfig")
+    attr_file = attributes_path or os.path.expanduser("~/.config/git/attributes")
+
+    cmd = ["git", "config"]
+    if gitconfig_path:
+        cmd += ["--file", gitconfig_path]
+    else:
+        cmd += ["--global"]
+
+    try:
+        subprocess.run(cmd + ["merge.merge-changes.name", "openSUSE changes file merge driver"], check=True, capture_output=True)
+        subprocess.run(cmd + ["merge.merge-changes.driver", "resolve-changes %O %A %B %P"], check=True, capture_output=True)
+
+        subprocess.run(cmd + ["merge.spec-merge.name", "openSUSE spec file merge driver"], check=True, capture_output=True)
+        subprocess.run(cmd + ["merge.spec-merge.driver", "resolve-spec %O %A %B %P"], check=True, capture_output=True)
+
+        subprocess.run(cmd + ["merge.keep-ours.name", "Keep Ours merge driver"], check=True, capture_output=True)
+        subprocess.run(cmd + ["merge.keep-ours.driver", "true"], check=True, capture_output=True)
+    except subprocess.CalledProcessError as e:
+        err = e.stderr.decode('utf-8', errors='replace') if hasattr(e.stderr, 'decode') else str(e.stderr)
+        return False, f"Failed to set merge driver in git config: {err}"
+    except Exception as e:
+        return False, str(e)
+
+    # Ensure attributes file exists with all required mappings
+    try:
+        os.makedirs(os.path.dirname(attr_file), exist_ok=True)
+        existing = ""
+        if os.path.isfile(attr_file):
+            with open(attr_file, "r", encoding="utf-8", errors="replace") as f:
+                existing = f.read()
+
+        mappings = [
+            "*.changes merge=merge-changes",
+            "*.spec merge=spec-merge",
+            "_service merge=keep-ours",
+            "*.obsinfo merge=keep-ours",
+        ]
+        to_add = [m for m in mappings if m not in existing]
+        if to_add:
+            with open(attr_file, "a" if existing else "w", encoding="utf-8") as f:
+                if existing and not existing.endswith("\n"):
+                    f.write("\n")
+                for m in to_add:
+                    f.write(f"{m}\n")
+    except Exception as e:
+        return False, f"Configured git drivers, but failed to write attributes file: {e}"
+
+    return True, "Configured openSUSE Git merge drivers (.changes, .spec, keep-ours) and global attributes"
 
 
 def configure_git_identity(name: str, email: str, gitconfig_path: Optional[str] = None) -> Tuple[bool, str]:
@@ -370,6 +522,13 @@ def format_readiness_cli_report(readiness: Dict[str, any]) -> str:
         lines.append(f"  \x1b[1;32m[✓]\x1b[0m \x1b[1mGitea API (tea):\x1b[0m Configured for {tea_st.get('url') or GITEA_WEB_URL}")
     else:
         lines.append(f"  \x1b[1;31m[✗]\x1b[0m \x1b[1mGitea API (tea):\x1b[0m Not configured (~/.config/tea/config.yml missing)")
+
+    # 5. Git Merge Drivers
+    drivers_st = readiness.get("drivers", {})
+    if drivers_st.get("configured"):
+        lines.append(f"  [1;32m[✓][0m [1mGit Merge Drivers:[0m Configured (automated 3-way .changes/.spec merge)")
+    else:
+        lines.append(f"  [1;33m[!][0m [1mGit Merge Drivers:[0m Not configured (~/.gitconfig drivers or ~/.config/git/attributes missing)")
 
     if readiness["all_ready"]:
         lines.append("\n\x1b[1;32m🎉 Your packaging environment is fully configured and ready!\x1b[0m")

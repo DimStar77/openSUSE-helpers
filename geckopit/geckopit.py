@@ -17,6 +17,13 @@ import time
 import json
 import html
 from pathlib import Path
+import locale
+
+# Gracefully handle container environments missing host regional locale files
+try:
+    locale.setlocale(locale.LC_ALL, '')
+except locale.Error:
+    os.environ['LC_ALL'] = 'C.UTF-8'
 
 import gi
 gi.require_version('Gtk', '4.0')
@@ -1038,6 +1045,23 @@ class EnvironmentSetupDialog(Adw.PreferencesDialog):
         self.exp_tea.add_row(row_tea_actions)
         grp_tea.add(self.exp_tea)
 
+        # 5. openSUSE Git Merge Drivers Group
+        grp_drivers = Adw.PreferencesGroup(
+            title="openSUSE Git Merge Drivers",
+            description="Automated 3-way conflict resolution for .changes, .spec, and _service files"
+        )
+        page.add(grp_drivers)
+
+        drivers_st = self.readiness.get("drivers", {})
+        self.row_drivers_status = Adw.ActionRow(title="Status")
+        self.btn_drivers_config = Gtk.Button(label="Configure Drivers" if not drivers_st.get("configured") else "Reconfigure")
+        if not drivers_st.get("configured"):
+            self.btn_drivers_config.add_css_class("suggested-action")
+        self.btn_drivers_config.connect("clicked", self.on_configure_git_merge_drivers)
+        self.row_drivers_status.add_suffix(self.btn_drivers_config)
+        self.update_drivers_status_row(drivers_st)
+        grp_drivers.add(self.row_drivers_status)
+
         # Asynchronously verify SSH connection in background without blocking dialog presentation
         if ssh_st.get("has_keys"):
             self.start_async_ssh_test()
@@ -1096,6 +1120,27 @@ class EnvironmentSetupDialog(Adw.PreferencesDialog):
             self.row_ssh_key.set_subtitle("No SSH keys found in ~/.ssh/")
             self.btn_gen_key.set_visible(True)
             self.btn_copy_key.set_visible(False)
+
+    def update_drivers_status_row(self, drivers_st):
+        if drivers_st.get("configured"):
+            self.row_drivers_status.set_subtitle("✅ Configured (.changes, .spec, keep-ours in ~/.gitconfig)")
+            self.btn_drivers_config.set_label("Reconfigure")
+            self.btn_drivers_config.remove_css_class("suggested-action")
+        else:
+            self.row_drivers_status.set_subtitle("⚠️ Not configured (~/.gitconfig or ~/.config/git/attributes missing)")
+            self.btn_drivers_config.set_label("Configure Drivers")
+            self.btn_drivers_config.add_css_class("suggested-action")
+
+    def on_configure_git_merge_drivers(self, btn):
+        ok, msg = self.onboarding.configure_git_merge_drivers()
+        if ok:
+            drivers_st = self.onboarding.check_git_merge_drivers()
+            self.update_drivers_status_row(drivers_st)
+            if hasattr(self.parent_window, "toast_overlay"):
+                self.parent_window.toast_overlay.add_toast(Adw.Toast.new("✅ Configured Git merge drivers"))
+        else:
+            if hasattr(self.parent_window, "toast_overlay"):
+                self.parent_window.toast_overlay.add_toast(Adw.Toast.new(f"❌ {msg}"))
 
     def on_save_git_identity(self, btn):
         name = self.row_git_name.get_text().strip()

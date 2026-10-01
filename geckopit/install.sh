@@ -194,15 +194,19 @@ RESOLVE_SPEC="${REPO_DIR}/GNOME-maintainer-scripts/resolve-spec"
 if [ -f "$RESOLVE_CHANGES" ] && [ -f "$RESOLVE_SPEC" ]; then
     info "Configuring automated Git merge drivers for .changes and .spec..."
 
-    # Configure merge drivers directly referencing repository executables (no symlinks needed)
+    # Install driver symlinks into ~/.local/bin for PATH-based resolution
+    ln -sf "$RESOLVE_CHANGES" "$TARGET_DIR/resolve-changes"
+    ln -sf "$RESOLVE_SPEC" "$TARGET_DIR/resolve-spec"
+
+    # Configure merge drivers using standard command names in PATH (portable across host and Flatpak)
     GIT_CONFIG_TARGET="$HOME/.gitconfig"
     GIT_CFG=(git config --file "$GIT_CONFIG_TARGET")
 
     "${GIT_CFG[@]}" merge.merge-changes.name "openSUSE changes file merge driver"
-    "${GIT_CFG[@]}" merge.merge-changes.driver "'$RESOLVE_CHANGES' %O %A %B %P"
+    "${GIT_CFG[@]}" merge.merge-changes.driver "resolve-changes %O %A %B %P"
 
     "${GIT_CFG[@]}" merge.spec-merge.name "openSUSE spec file merge driver"
-    "${GIT_CFG[@]}" merge.spec-merge.driver "'$RESOLVE_SPEC' %O %A %B %P"
+    "${GIT_CFG[@]}" merge.spec-merge.driver "resolve-spec %O %A %B %P"
 
     "${GIT_CFG[@]}" merge.keep-ours.name "Keep Ours merge driver"
     "${GIT_CFG[@]}" merge.keep-ours.driver "true"
