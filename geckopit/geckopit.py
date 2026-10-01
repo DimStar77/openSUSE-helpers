@@ -719,11 +719,11 @@ class SyncDiffDialog(Gtk.Window):
                 gitea_name = sb.get_gitea_repo_name(repo_path, self.package_name)
                 pool_url = f"https://src.opensuse.org/pool/{gitea_name}.git"
                 sb.run_tracked(
-                    ['git', '-C', repo_path, 'fetch', '--quiet', pool_url, 'factory'],
+                    ['git', '-C', repo_path, 'fetch', '--quiet', pool_url, '+refs/heads/factory:refs/pool/factory'],
                     check=True, capture_output=True
                 )
                 res = sb.run_tracked(
-                    ['git', '-C', repo_path, 'diff', 'origin/factory...FETCH_HEAD'],
+                    ['git', '-C', repo_path, 'diff', 'origin/factory...refs/pool/factory'],
                     check=True, capture_output=True, text=True
                 )
                 diff_text = res.stdout
@@ -734,11 +734,11 @@ class SyncDiffDialog(Gtk.Window):
                 gitea_name = sb.get_gitea_repo_name(repo_path, self.package_name)
                 pool_url = f"https://src.opensuse.org/pool/{gitea_name}.git"
                 sb.run_tracked(
-                    ['git', '-C', repo_path, 'fetch', '--quiet', pool_url, 'factory'],
+                    ['git', '-C', repo_path, 'fetch', '--quiet', pool_url, '+refs/heads/factory:refs/pool/factory'],
                     check=True, capture_output=True
                 )
                 res = sb.run_tracked(
-                    ['git', '-C', repo_path, 'diff', 'FETCH_HEAD...origin/factory'],
+                    ['git', '-C', repo_path, 'diff', 'refs/pool/factory...origin/factory'],
                     check=True, capture_output=True, text=True
                 )
                 diff_text = res.stdout
@@ -3777,12 +3777,12 @@ class SyncWindow(Adw.ApplicationWindow):
                 was_fetched = package_name in getattr(self, "refreshed_sync_packages", set())
                 if not was_fetched:
                     sb.run_tracked(
-                        ['git', '-C', repo_path, 'fetch', '--quiet', pool_url, self.stable_b],
+                        ['git', '-C', repo_path, 'fetch', '--quiet', pool_url, f'+refs/heads/{self.stable_b}:refs/pool/{self.stable_b}'],
                         check=True, capture_output=True
                     )
 
                 res = sb.run_tracked(
-                    ['git', '-C', repo_path, 'diff', f'FETCH_HEAD...origin/{self.stable_b}'],
+                    ['git', '-C', repo_path, 'diff', f'refs/pool/{self.stable_b}...origin/{self.stable_b}'],
                     check=True, capture_output=True, text=True
                 )
                 diff_text = res.stdout

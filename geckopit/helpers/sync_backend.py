@@ -274,12 +274,12 @@ def check_repo_sync(repo_name, stable_branch="factory", unstable_branch="next", 
 
     try:
         run_tracked(
-            ['git', '-C', repo_path, 'fetch', '--quiet', pool_url, stable_branch],
+            ['git', '-C', repo_path, 'fetch', '--quiet', pool_url, f'+refs/heads/{stable_branch}:refs/pool/{stable_branch}'],
             check=True, capture_output=True, text=True
         )
-        # Compare origin/{stable_branch} and FETCH_HEAD (pool/{stable_branch})
+        # Compare origin/{stable_branch} and isolated refs/pool/{stable_branch}
         res = run_tracked(
-            ['git', '-C', repo_path, 'rev-list', '--left-right', '--count', f'origin/{stable_branch}...FETCH_HEAD'],
+            ['git', '-C', repo_path, 'rev-list', '--left-right', '--count', f'origin/{stable_branch}...refs/pool/{stable_branch}'],
             check=True, capture_output=True, text=True
         )
         output = res.stdout.strip()
