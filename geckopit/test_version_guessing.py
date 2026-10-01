@@ -402,6 +402,45 @@ class TestSyncWindow(unittest.TestCase):
         self.assertTrue(res)
         mock_win.on_workspace_sync_clicked.assert_called()
 
+        # 6. Global accelerators work EVEN WHEN focusing a text entry (like search bar on startup)
+        mock_entry = mock.Mock()
+        mock_entry.get_name.return_value = "GtkSearchEntry"
+        mock_entry.get_parent.return_value = None
+        mock_win.get_focus.return_value = mock_entry
+
+        with mock.patch("docs_builder.open_user_guide") as mock_guide:
+            res_f1 = SyncWindow.on_window_key_pressed(mock_win, None, Gdk.KEY_F1, 0, 0)
+            self.assertTrue(res_f1)
+            mock_guide.assert_called_with(mock_win)
+
+        mock_win.refresh_single_package_priority.reset_mock()
+        res_f5 = SyncWindow.on_window_key_pressed(mock_win, None, Gdk.KEY_F5, 0, 0)
+        self.assertTrue(res_f5)
+        mock_win.refresh_single_package_priority.assert_called_with("pkg1")
+
+        # But character shortcuts like 'j' or '/' are NOT stolen when typing in the entry
+        res_j = SyncWindow.on_window_key_pressed(mock_win, None, Gdk.KEY_j, 0, 0)
+        self.assertFalse(res_j)
+        res_slash = SyncWindow.on_window_key_pressed(mock_win, None, Gdk.KEY_slash, 0, 0)
+        self.assertFalse(res_slash)
+
+        # 7. Pressing '/' or keypad '/' on read-only views (diff_view) or package list DOES focus search
+        mock_read_only_view = mock.Mock()
+        mock_read_only_view.get_name.return_value = "GtkSourceView"
+        mock_read_only_view.get_editable.return_value = False
+        mock_read_only_view.get_parent.return_value = None
+        mock_win.get_focus.return_value = mock_read_only_view
+        mock_win.sidebar_search.grab_focus.reset_mock()
+
+        res_slash_diff = SyncWindow.on_window_key_pressed(mock_win, None, Gdk.KEY_slash, 0, 0)
+        self.assertTrue(res_slash_diff)
+        mock_win.sidebar_search.grab_focus.assert_called()
+
+        mock_win.sidebar_search.grab_focus.reset_mock()
+        res_kp_slash = SyncWindow.on_window_key_pressed(mock_win, None, Gdk.KEY_KP_Divide, 0, 0)
+        self.assertTrue(res_kp_slash)
+        mock_win.sidebar_search.grab_focus.assert_called()
+
     def test_search_key_pressed_hand_off(self):
         import gi
         gi.require_version('Gtk', '4.0')

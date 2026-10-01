@@ -1784,7 +1784,7 @@ class SyncWindow(Adw.ApplicationWindow):
         self.refresh_all()
 
         # Set initial focus on the search entry to ensure keyboard input begins safely
-        GLib.idle_add(lambda: self.sidebar_search.grab_focus())
+        GLib.idle_add(self.idle_grab_focus, self.sidebar_search)
 
         # If no stable path is configured, trigger the onboarding setup dialog immediately!
         if not active_prof.get("stable_path"):
@@ -2231,7 +2231,7 @@ class SyncWindow(Adw.ApplicationWindow):
                     self.notebook.set_current_page(page_num)
                     if command:
                         tab["terminal"].feed_child(f"{command}\n".encode('utf-8'))
-                    tab["terminal"].grab_focus()
+                    GLib.idle_add(self.idle_grab_focus, tab["terminal"])
                     return
 
         suffix = ""
@@ -2256,7 +2256,12 @@ class SyncWindow(Adw.ApplicationWindow):
         terminal.set_scroll_on_output(autoscroll_active)
 
         scroll = Gtk.ScrolledWindow()
+        scroll.set_focusable(False)
         scroll.set_child(terminal)
+
+        term_click = Gtk.GestureClick.new()
+        term_click.connect("pressed", lambda g, n, x, y: terminal.grab_focus())
+        terminal.add_controller(term_click)
 
         tab_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         tab_label = Gtk.Label(label=label_text)
@@ -2350,7 +2355,7 @@ class SyncWindow(Adw.ApplicationWindow):
             tab_state
         )
         if not is_hidden_sync:
-            terminal.grab_focus()
+            GLib.idle_add(self.idle_grab_focus, terminal)
         return tab_state
 
     def on_term_autoscroll_toggled(self, btn):
@@ -2441,6 +2446,8 @@ class SyncWindow(Adw.ApplicationWindow):
 
             tab_state["shell_pid"] = pid
             def one_shot_monitor():
+                if not tab_state.get("is_hidden_sync"):
+                    self.idle_grab_focus(terminal)
                 self.monitor_terminals()
                 return False
             GLib.idle_add(one_shot_monitor)
@@ -3531,6 +3538,9 @@ class SyncWindow(Adw.ApplicationWindow):
                 elif keyval in (Gdk.KEY_p, Gdk.KEY_P):
                     self.sidebar_search.grab_focus()
                     return True
+            elif keyval in (Gdk.KEY_slash, Gdk.KEY_KP_Divide):
+                self.sidebar_search.grab_focus()
+                return True
             return False
         diff_view_key_ctrl.connect("key-pressed", on_diff_view_key)
         self.diff_view.add_controller(diff_view_key_ctrl)
@@ -3985,15 +3995,101 @@ class SyncWindow(Adw.ApplicationWindow):
                     return True
         return False
 
+    def is_terminal_widget(self, widget):
+        """Checks if the given widget is a VTE terminal or inside the terminal drawer."""
+        if not widget:
+            return False
+        try:
+            if isinstance(widget, Vte.Terminal):
+                return True
+            if hasattr(widget, "get_name"):
+                name = widget.get_name()
+                if isinstance(name, str) and name.startswith("Vte"):
+                    return True
+            w = widget
+            depth = 0
+            while w and depth < 30:
+                depth += 1
+                if hasattr(self, "terminal_drawer") and (w is getattr(self, "terminal_drawer", None) or w is getattr(self, "notebook", None)):
+                    return True
+                if type(w).__module__.startswith("unittest.mock"):
+                    break
+                if hasattr(w, "get_parent") and callable(w.get_parent):
+                    parent = w.get_parent()
+                    if parent is None or parent is w:
+                        break
+                    w = parent
+                else:
+                    break
+        except Exception:
+            pass
+        return False
+
+    def is_text_editing_widget(self, widget):
+        """Checks if the widget is an actively editable text input (excluding read-only views)."""
+        if not widget:
+            return False
+        try:
+            if isinstance(widget, (Gtk.Editable, Gtk.Entry, Gtk.SearchEntry)):
+                if hasattr(widget, "get_editable") and callable(widget.get_editable):
+                    return bool(widget.get_editable())
+                return True
+            if isinstance(widget, Gtk.TextView):
+                return bool(widget.get_editable())
+            if hasattr(widget, "get_name") and callable(widget.get_name):
+                name = str(widget.get_name()).lower()
+                if "entry" in name or "text" in name:
+                    if hasattr(widget, "get_editable") and callable(widget.get_editable):
+                        return bool(widget.get_editable())
+                    return True
+        except Exception:
+            pass
+        return False
+
     def on_window_key_pressed(self, controller, keyval, keycode, state):
         # 1. Defensive Guard: Never steal key inputs from active VTE terminal tabs!
         focused_widget = self.get_focus()
-        if focused_widget and focused_widget.get_name().startswith("Vte"):
+        if SyncWindow.is_terminal_widget(self, focused_widget):
             return False
 
         ctrl_pressed = (state & Gdk.ModifierType.CONTROL_MASK) != 0
+        shift_pressed = (state & Gdk.ModifierType.SHIFT_MASK) != 0
 
-        # 2. Global Shortcuts: Ctrl + 1..5 for filter toggles (active everywhere except VTE)
+        # -------------------------------------------------------------
+        # 2. GLOBAL ACCELERATORS & SHORTCUTS (Active everywhere except VTE)
+        # -------------------------------------------------------------
+
+        # F1: Help documentation
+        if keyval == Gdk.KEY_F1:
+            import docs_builder
+            docs_builder.open_user_guide(self)
+            return True
+
+        # Ctrl+Shift+S: Fetch & Sync workspace via git-project-sync
+        if ctrl_pressed and shift_pressed and keyval in (Gdk.KEY_s, Gdk.KEY_S):
+            self.on_workspace_sync_clicked()
+            return True
+
+        # Ctrl+Shift+R: Rescan all packages in workspace
+        if ctrl_pressed and shift_pressed and keyval in (Gdk.KEY_r, Gdk.KEY_R):
+            self.refresh_all()
+            return True
+
+        # F5 or Ctrl+R: Refresh currently selected package (or all if none selected)
+        if keyval == Gdk.KEY_F5 or (ctrl_pressed and not shift_pressed and keyval in (Gdk.KEY_r, Gdk.KEY_R)):
+            if getattr(self, "current_selected_package", None):
+                pkg_name = self.current_selected_package
+                self.update_detail_worktree_ui(pkg_name)
+                self.update_detail_drift_ui(pkg_name, force_reload=True)
+                self.refresh_single_package_priority(pkg_name)
+                self.refresh_active_diff()
+                toast = Adw.Toast.new(f"🔄 Refreshed {pkg_name}")
+                self.toast_overlay.add_toast(toast)
+            else:
+                self.refresh_all()
+            return True
+
+        # Ctrl + 1..5 for filter toggles
         if ctrl_pressed:
             if keyval in (Gdk.KEY_1, Gdk.KEY_KP_1):
                 self.filter_needs_action.set_active(not self.filter_needs_action.get_active())
@@ -4025,51 +4121,22 @@ class SyncWindow(Adw.ApplicationWindow):
                 self.sidebar_search.grab_focus()
                 return True
 
-        # 3. Defensive Guard: Never steal printable inputs if already editing an entry or PR description
-        if focused_widget and (focused_widget.get_name().startswith("GtkEntry") or
-                               focused_widget.get_name().startswith("GtkText") or
-                               isinstance(focused_widget, (Gtk.Entry, Gtk.SearchEntry, Gtk.TextView))):
+        # -------------------------------------------------------------
+        # 3. TEXT ENTRY GUARD: Never steal printable characters when editing text!
+        # -------------------------------------------------------------
+        if SyncWindow.is_text_editing_widget(self, focused_widget):
             return False
 
-        # 4. Search bar shortcut: '/'
-        if keyval == Gdk.KEY_slash:
+        # -------------------------------------------------------------
+        # 4. UNMODIFIED CHARACTER SHORTCUTS (Only active when NOT editing text)
+        # -------------------------------------------------------------
+
+        # Search bar shortcut: '/' (standard or keypad divide)
+        if keyval in (Gdk.KEY_slash, Gdk.KEY_KP_Divide):
             self.sidebar_search.grab_focus()
             return True
 
-        # 5. Help documentation: F1
-        if keyval == Gdk.KEY_F1:
-            import docs_builder
-            docs_builder.open_user_guide(self)
-            return True
-
-        # 6. Action Shortcuts:
-        shift_pressed = (state & Gdk.ModifierType.SHIFT_MASK) != 0
-
-        # Ctrl+Shift+S: Fetch & Sync workspace via git-project-sync
-        if ctrl_pressed and shift_pressed and keyval in (Gdk.KEY_s, Gdk.KEY_S):
-            self.on_workspace_sync_clicked()
-            return True
-
-        # Ctrl+Shift+R: Rescan all packages in workspace
-        if ctrl_pressed and shift_pressed and keyval in (Gdk.KEY_r, Gdk.KEY_R):
-            self.refresh_all()
-            return True
-
-        # F5 or Ctrl+R: Refresh currently selected package (or all if none selected)
-        if keyval == Gdk.KEY_F5 or (ctrl_pressed and not shift_pressed and keyval in (Gdk.KEY_r, Gdk.KEY_R)):
-            if getattr(self, "current_selected_package", None):
-                pkg_name = self.current_selected_package
-                self.update_detail_worktree_ui(pkg_name)
-                self.update_detail_drift_ui(pkg_name, force_reload=True)
-                self.refresh_single_package_priority(pkg_name)
-                self.refresh_active_diff()
-                toast = Adw.Toast.new(f"🔄 Refreshed {pkg_name}")
-                self.toast_overlay.add_toast(toast)
-            else:
-                self.refresh_all()
-            return True
-
-        # 7. Vim-style / Arrow navigation across packages
+        # Vim-style / Arrow navigation across packages (j/k)
         if keyval in (Gdk.KEY_j, Gdk.KEY_J, Gdk.KEY_Down):
             return self.navigate_package_list(1)
         elif keyval in (Gdk.KEY_k, Gdk.KEY_K, Gdk.KEY_Up):
