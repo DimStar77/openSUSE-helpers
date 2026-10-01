@@ -319,7 +319,13 @@ def run_package_upgrade(pkg_dir=".", revision=None, dry_run=False):
             for rf in result.removed_files:
                 print(f"     • {rf}")
         if getattr(result, "fixed_meson_drifts", None):
-            print("   \033[1mSynced Meson dependencies:\033[0m")
+            build_systems = {d.get("build_system") for d in result.fixed_meson_drifts if d.get("build_system")}
+            if len(build_systems) == 1:
+                bs = list(build_systems)[0]
+                sys_label = "CMake" if bs == "cmake" else ("Autotools" if bs == "autotools" else ("Python" if bs == "python" else "Meson"))
+            else:
+                sys_label = "build"
+            print("   \033[1mSynced " + sys_label + " dependencies:\033[0m")
             for fd in result.fixed_meson_drifts:
                 decl = fd.get("fixed_declaration") or f"{fd['package']} >= {fd['upstream_version']}"
                 print(f"     • {decl}")
@@ -348,7 +354,13 @@ def run_package_upgrade(pkg_dir=".", revision=None, dry_run=False):
             summary_parts.append(f"{num_diffs} review diff{'s' if num_diffs != 1 else ''} generated")
         num_meson_fixed = len(getattr(result, "fixed_meson_drifts", []) or [])
         if num_meson_fixed > 0:
-            summary_parts.append(f"{num_meson_fixed} Meson dep{'s' if num_meson_fixed != 1 else ''} synced")
+            build_systems = {d.get("build_system") for d in result.fixed_meson_drifts if d.get("build_system")}
+            if len(build_systems) == 1:
+                bs = list(build_systems)[0]
+                sys_label = "CMake" if bs == "cmake" else ("Autotools" if bs == "autotools" else ("Python" if bs == "python" else "Meson"))
+            else:
+                sys_label = "build"
+            summary_parts.append(f"{num_meson_fixed} {sys_label} dep{'s' if num_meson_fixed != 1 else ''} synced")
 
         if summary_parts:
             print(f"   \033[1;36m✨ Summary:\033[0m {', '.join(summary_parts)}")

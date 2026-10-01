@@ -1013,16 +1013,15 @@ def fix_meson_drift(package_dir: str, on_log: Optional[any] = None) -> List[Dict
                             if m_def:
                                 lines[def_idx] = f"{m_def.group(1)}{u_ver}"
                                 d["fixed_macro"] = macro_name
+                                d["fixed_declaration"] = f"%{macro_name} ➔ {u_ver}"
                                 fixed_drifts.append(d)
                                 found = True
-                                log(f"Updated macro %{macro_name}: {m_def.group(2)} ➔ {u_ver}")
                                 break
                     if not found:
                         lines[idx] = f"{prefix} {op} {u_ver}{suffix}"
                         d["fixed_declaration"] = f"%{{python_module {c} {op} {u_ver}}}"
                         fixed_drifts.append(d)
                         found = True
-                        log(f"Updated {os.path.basename(spec_path)}: %{{python_module {c} {op} {u_ver}}}")
                     break
 
                 # 2. Standard BuildRequires: <c> [op ver]
@@ -1044,9 +1043,9 @@ def fix_meson_drift(package_dir: str, on_log: Optional[any] = None) -> List[Dict
                             if m_def:
                                 lines[def_idx] = f"{m_def.group(1)}{u_ver}"
                                 d["fixed_macro"] = macro_name
+                                d["fixed_declaration"] = f"%{macro_name} ➔ {u_ver}"
                                 fixed_drifts.append(d)
                                 found = True
-                                log(f"Updated macro %{macro_name}: {m_def.group(2)} ➔ {u_ver}")
                                 break
 
                     if not found:
@@ -1063,7 +1062,6 @@ def fix_meson_drift(package_dir: str, on_log: Optional[any] = None) -> List[Dict
                         d["fixed_declaration"] = f"{d.get('spec_name') or c} {op} {u_ver}"
                         fixed_drifts.append(d)
                         found = True
-                        log(f"Updated {os.path.basename(spec_path)}: {d.get('spec_name') or c} {op} {u_ver}")
                     break
             if found:
                 break
@@ -1072,6 +1070,7 @@ def fix_meson_drift(package_dir: str, on_log: Optional[any] = None) -> List[Dict
         try:
             with open(spec_path, "w", encoding="utf-8") as f:
                 f.write("\n".join(lines) + "\n")
+            log(f"Synced {len(fixed_drifts)} build dependenc{'ies' if len(fixed_drifts) != 1 else 'y'} in {os.path.basename(spec_path)}")
         except Exception as e:
             log(f"Error writing updated spec file: {e}")
             return []
