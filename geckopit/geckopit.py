@@ -565,7 +565,7 @@ class SyncCreatePRDialog(Gtk.Window):
                 toast.connect("button-clicked", lambda t, u: webbrowser.open(u), pr_url)
             self.parent.toast_overlay.add_toast(toast)
             self.destroy()
-            self.parent.refresh_single_package(self.package_name)
+            self.parent.refresh_single_package_priority(self.package_name)
         else:
             # No existing PR, proceed to submit (run on priority thread to bypass background queue)
             threading.Thread(target=self.run_bg_create_pr, args=(title, description), daemon=True).start()
@@ -598,7 +598,7 @@ class SyncCreatePRDialog(Gtk.Window):
 
             self.parent.toast_overlay.add_toast(toast)
             self.destroy()
-            self.parent.refresh_single_package(self.package_name)
+            self.parent.refresh_single_package_priority(self.package_name)
         else:
             self.create_btn.set_sensitive(True)
             self.create_btn.set_label("Create Pull Request")
@@ -2564,7 +2564,11 @@ class SyncWindow(Adw.ApplicationWindow):
                     self.terminal_tabs.remove(tab)
 
                 if pkg_name and pkg_name != "Workspace Sync":
-                    self.refresh_single_package(pkg_name)
+                    self.refresh_single_package_priority(pkg_name)
+                    if getattr(self, "current_selected_package", None) == pkg_name:
+                        self.update_detail_worktree_ui(pkg_name)
+                        self.update_detail_drift_ui(pkg_name, force_reload=True)
+                        self.refresh_active_diff()
                 break
 
         if self.notebook.get_n_pages() == 0:
@@ -2689,6 +2693,10 @@ class SyncWindow(Adw.ApplicationWindow):
             self.refreshed_sync_packages.add(name)
             self.update_row_ui(name)
             self.check_and_mark_package_refreshed(name)
+            if getattr(self, "current_selected_package", None) == name:
+                self.update_detail_sync_ui(name)
+                self.update_detail_worktree_ui(name)
+                self.update_detail_title(name)
 
     def run_bg_version_single(self, repo):
         name, data = sb.check_repo_version(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p, ignored_unstable_versions=self.ignored_unstable_versions)
@@ -2700,6 +2708,9 @@ class SyncWindow(Adw.ApplicationWindow):
             self.refreshed_version_packages.add(name)
             self.update_row_ui(name)
             self.check_and_mark_package_refreshed(name)
+            if getattr(self, "current_selected_package", None) == name:
+                self.update_detail_version_ui(name)
+                self.update_detail_title(name)
 
     def run_bg_forward_single(self, repo):
         _, sync_data = sb.check_repo_sync(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
@@ -2716,7 +2727,8 @@ class SyncWindow(Adw.ApplicationWindow):
         self.package_data[name]["pr"] = pr_data
         self.update_row_ui(name)
         if getattr(self, "current_selected_package", None) == name:
-            self.load_package_detail(name)
+            self.update_detail_sync_ui(name)
+            self.update_detail_title(name)
 
     def update_row_ui(self, name):
         row = self.package_rows.get(name)
@@ -3889,9 +3901,9 @@ class SyncWindow(Adw.ApplicationWindow):
         # 4. Save profile cache so state is preserved across launches instantly
         self.save_profile_cache()
 
-        # 5. Redraw row UI and detail pane instantly!
+        # 5. Redraw row UI and detail pane instantly without reloading diff!
         self.update_row_ui(package_name)
-        self.load_package_detail(package_name)
+        self.update_detail_version_ui(package_name)
 
         # 6. Re-evaluate sidebar list filters in-place!
         self.master_list_box.invalidate_filter()
@@ -4036,12 +4048,10 @@ class SyncWindow(Adw.ApplicationWindow):
             self.current_selected_package = None
             return
         package_name = row.package_name
-        self.load_package_detail(package_name)
+        self.load_package_detail(package_name, reload_diff=True)
 
-        # Trigger an instant, prioritized priority-thread scan for the newly selected package exactly once on manual selection!
-        # Bypasses the thread pool and avoids infinite recursive updates by never triggering from result callbacks.
-        if package_name not in getattr(self, "refreshed_packages", set()):
-            self.refresh_single_package_priority(package_name)
+        # Always trigger prioritized background refresh threads on manual package selection
+        self.refresh_single_package_priority(package_name)
 
     def refresh_single_package_priority(self, pkg_name):
         """Spawns direct, prioritized background threads to bypass the saturated thread pool queue and refresh the selected package instantly."""
@@ -4054,48 +4064,53 @@ class SyncWindow(Adw.ApplicationWindow):
         if self.unstable_b:
             threading.Thread(target=self.run_bg_forward_single, args=(pkg_name,), daemon=True).start()
 
-    def load_package_detail(self, package_name):
-        self.current_selected_package = package_name
-        self.detail_stack.set_visible_child_name("detail")
-
-        # Visual indicator for cached details
+    def update_detail_title(self, package_name):
+        if getattr(self, "current_selected_package", None) != package_name:
+            return
         is_fresh = package_name in getattr(self, "refreshed_packages", set())
         title_suffix = "" if is_fresh else " <span size='small' style='italic' foreground='gray' weight='normal'>(cached)</span>"
         self.detail_title_label.set_markup(f"<span size='large' weight='bold'>{package_name}</span>{title_suffix}")
 
-        pkg_data = self.package_data.get(package_name, {})
-        sync = pkg_data.get("sync") or {}
-        ver = pkg_data.get("version") or {}
-        pr = pkg_data.get("pr") or {}
+    def update_detail_worktree_ui(self, package_name):
+        if getattr(self, "current_selected_package", None) != package_name:
+            return
 
-        # Resolve actual local on-disk versions for detail display
         stable_repo_p = self.get_mapped_worktree_path(package_name, "factory")
         unstable_repo_p = self.get_mapped_worktree_path(package_name, "next") if self.unstable_b else None
 
-        # Maintain stable Meson drift state without animation jitter on background scan updates
-        if package_name in self.meson_drift_cache:
-            s_drifts, u_drifts = self.meson_drift_cache[package_name]
-            self.update_drift_banners(package_name, s_drifts, u_drifts)
-        else:
-            self.stable_drift_revealer.set_reveal_child(False)
-            self.unstable_drift_revealer.set_reveal_child(False)
-            threading.Thread(
-                target=self.run_bg_meson_drift,
-                args=(package_name, stable_repo_p, unstable_repo_p),
-                daemon=True
-            ).start()
-
+        # Re-read actual local on-disk spec versions
         local_stable_ver = sb.get_local_package_version(stable_repo_p)
         local_unstable_ver = sb.get_local_package_version(unstable_repo_p) if unstable_repo_p else None
 
+        ver = self.package_data.setdefault(package_name, {}).setdefault("version", {})
         if local_stable_ver:
             ver["factory_ver"] = local_stable_ver
         if local_unstable_ver:
             ver["next_ver"] = local_unstable_ver
 
-        # -------------------------------------------------------------
-        # 1. POPULATE STABLE CARD
-        # -------------------------------------------------------------
+        stable_wt = sb.check_worktree_status(stable_repo_p, expected_branch=self.stable_b)
+        unstable_wt = sb.check_worktree_status(unstable_repo_p, expected_branch=self.unstable_b) if unstable_repo_p else None
+
+        if "worktree" not in self.package_data[package_name]:
+            self.package_data[package_name]["worktree"] = {}
+        self.package_data[package_name]["worktree"]["stable"] = stable_wt
+        self.package_data[package_name]["worktree"]["unstable"] = unstable_wt
+
+        self.render_worktree_ui(stable_wt, self.stable_b, self.stable_wt_lbl, self.pull_stable_btn, self.push_stable_btn)
+        if self.unstable_b:
+            self.render_worktree_ui(unstable_wt, self.unstable_b, self.unstable_wt_lbl, self.pull_unstable_btn, self.push_unstable_btn)
+
+        self.open_term_fac_btn.set_label(f"🖥️ Terminal ({self.stable_b})")
+        if self.unstable_b:
+            self.open_term_next_btn.set_label(f"🖥️ Terminal ({self.unstable_b})")
+
+        self.update_row_ui(package_name)
+
+    def update_detail_version_ui(self, package_name):
+        if getattr(self, "current_selected_package", None) != package_name:
+            return
+
+        ver = self.package_data.get(package_name, {}).get("version") or {}
         factory_ver = ver.get("factory_ver", "N/A")
         upstream_stable = ver.get("upstream_stable", "N/A")
 
@@ -4114,6 +4129,42 @@ class SyncWindow(Adw.ApplicationWindow):
                 self.stable_ver_lbl.set_text(f"{factory_ver} (Up-To-Date)")
                 self.update_factory_btn.set_sensitive(False)
                 self.update_factory_btn.set_label("Factory Up-To-Date")
+
+        next_ver = ver.get("next_ver", "—")
+        upstream_latest = ver.get("upstream_latest", "—")
+
+        ignored_ver = getattr(self, "ignored_unstable_versions", {}).get(package_name)
+        is_ignored_unstable = bool(ignored_ver and is_version_equal(upstream_latest, ignored_ver, package_name))
+
+        if not ver:
+            self.unstable_ver_lbl.set_text("Loading...")
+            self.update_next_btn.set_sensitive(False)
+            self.update_next_btn.set_label("Run SCM Update")
+        else:
+            if is_version_newer(upstream_latest, next_ver, package_name):
+                if is_ignored_unstable:
+                    self.unstable_ver_lbl.set_markup(f"<span weight='bold'>{next_ver}</span> ➔ <span weight='bold' foreground='gray' style='italic'>{upstream_latest} (Ignored)</span>")
+                    self.update_next_btn.set_sensitive(False)
+                    self.update_next_btn.set_label("Ignored Unstable Update")
+                else:
+                    self.unstable_ver_lbl.set_markup(f"<span weight='bold' foreground='red'>{next_ver}</span> ➔ <span weight='bold' foreground='green'>{upstream_latest} (Update Available)</span>")
+                    self.update_next_btn.set_sensitive(True)
+                    self.update_next_btn.set_label(f"Update Next to {upstream_latest}")
+            else:
+                self.unstable_ver_lbl.set_text(f"{next_ver} (Up-To-Date)" if next_ver != "—" else "—")
+                self.update_next_btn.set_sensitive(False)
+                self.update_next_btn.set_label("Next Up-To-Date")
+
+            if next_ver == "—":
+                self.update_next_btn.set_sensitive(False)
+                self.update_next_btn.set_label("No Next branch")
+
+    def update_detail_sync_ui(self, package_name):
+        if getattr(self, "current_selected_package", None) != package_name:
+            return
+
+        sync = self.package_data.get(package_name, {}).get("sync") or {}
+        pr = self.package_data.get(package_name, {}).get("pr") or {}
 
         pool_status = sync.get("pool_status", "unknown")
         pool_behind = sync.get("pool_behind", 0)
@@ -4146,39 +4197,6 @@ class SyncWindow(Adw.ApplicationWindow):
                 self.pull_pool_btn.set_sensitive(False)
             self.stable_pool_lbl.set_markup(p1_text)
 
-        # -------------------------------------------------------------
-        # 2. POPULATE UNSTABLE CARD
-        # -------------------------------------------------------------
-        next_ver = ver.get("next_ver", "—")
-        upstream_latest = ver.get("upstream_latest", "—")
-
-        # Check if this unstable version is ignored in active profile configs
-        ignored_ver = getattr(self, "ignored_unstable_versions", {}).get(package_name)
-        is_ignored_unstable = bool(ignored_ver and is_version_equal(upstream_latest, ignored_ver, package_name))
-
-        if not ver:
-            self.unstable_ver_lbl.set_text("Loading...")
-            self.update_next_btn.set_sensitive(False)
-            self.update_next_btn.set_label("Run SCM Update")
-        else:
-            if is_version_newer(upstream_latest, next_ver, package_name):
-                if is_ignored_unstable:
-                    self.unstable_ver_lbl.set_markup(f"<span weight='bold'>{next_ver}</span> ➔ <span weight='bold' foreground='gray' style='italic'>{upstream_latest} (Ignored)</span>")
-                    self.update_next_btn.set_sensitive(False)
-                    self.update_next_btn.set_label("Ignored Unstable Update")
-                else:
-                    self.unstable_ver_lbl.set_markup(f"<span weight='bold' foreground='red'>{next_ver}</span> ➔ <span weight='bold' foreground='green'>{upstream_latest} (Update Available)</span>")
-                    self.update_next_btn.set_sensitive(True)
-                    self.update_next_btn.set_label(f"Update Next to {upstream_latest}")
-            else:
-                self.unstable_ver_lbl.set_text(f"{next_ver} (Up-To-Date)" if next_ver != "—" else "—")
-                self.update_next_btn.set_sensitive(False)
-                self.update_next_btn.set_label("Next Up-To-Date")
-
-            if next_ver == "—":
-                self.update_next_btn.set_sensitive(False)
-                self.update_next_btn.set_label("No Next branch")
-
         next_status = sync.get("next_status", "unknown")
         next_behind = sync.get("next_behind", 0)
         next_ahead_val = sync.get("next_ahead", 0)
@@ -4190,7 +4208,6 @@ class SyncWindow(Adw.ApplicationWindow):
             self.catchup_merge_btn.set_sensitive(False)
             self.create_pr_btn.set_sensitive(False)
         else:
-            # Catchup Merge Trigger
             if next_behind > 0:
                 self.catchup_merge_btn.set_sensitive(True)
                 self.catchup_merge_btn.set_label(f"🔀 Catch-up Merge ({next_behind} behind)")
@@ -4198,7 +4215,6 @@ class SyncWindow(Adw.ApplicationWindow):
                 self.catchup_merge_btn.set_sensitive(False)
                 self.catchup_merge_btn.set_label("🔀 Catch-up Merge")
 
-            # PR Forwarding Trigger
             if next_ahead_val > 0:
                 if has_pr:
                     branch_text = f"<span foreground='green' weight='bold'>PR #{pr_number} Active</span> | Next is ahead of Factory by {next_ahead_val} commits."
@@ -4221,41 +4237,51 @@ class SyncWindow(Adw.ApplicationWindow):
 
             if next_behind > 0 and next_ahead_val > 0:
                 branch_text = f"<span weight='bold' foreground='red'>Diverged</span> (Behind: {next_behind} / Ahead: {next_ahead_val} commits)"
-                self.create_pr_btn.set_sensitive(False) # Must merge first!
+                self.create_pr_btn.set_sensitive(False)
 
             self.unstable_branch_lbl.set_markup(branch_text)
 
-        # Dynamically update terminal button labels to match configured branch names!
-        self.open_term_fac_btn.set_label(f"🖥️ Terminal ({self.stable_b})")
-        if self.unstable_b:
-            self.open_term_next_btn.set_label(f"🖥️ Terminal ({self.unstable_b})")
+    def update_detail_drift_ui(self, package_name, force_reload=False):
+        if getattr(self, "current_selected_package", None) != package_name:
+            return
 
-        # -------------------------------------------------------------
-        # POPULATE LOCAL WORKTREE STATUS
-        # -------------------------------------------------------------
         stable_repo_p = self.get_mapped_worktree_path(package_name, "factory")
         unstable_repo_p = self.get_mapped_worktree_path(package_name, "next") if self.unstable_b else None
 
-        stable_wt = sb.check_worktree_status(stable_repo_p, expected_branch=self.stable_b)
-        unstable_wt = sb.check_worktree_status(unstable_repo_p, expected_branch=self.unstable_b) if unstable_repo_p else None
+        if force_reload:
+            self.meson_drift_cache.pop(package_name, None)
 
-        if "worktree" not in self.package_data[package_name]:
-            self.package_data[package_name]["worktree"] = {}
-        self.package_data[package_name]["worktree"]["stable"] = stable_wt
-        self.package_data[package_name]["worktree"]["unstable"] = unstable_wt
-
-        self.render_worktree_ui(stable_wt, self.stable_b, self.stable_wt_lbl, self.pull_stable_btn, self.push_stable_btn)
-        if self.unstable_b:
-            self.render_worktree_ui(unstable_wt, self.unstable_b, self.unstable_wt_lbl, self.pull_unstable_btn, self.push_unstable_btn)
-        self.update_row_ui(package_name)
-
-        # -------------------------------------------------------------
-        # 3. POPULATE DIFF REVIEW
-        # -------------------------------------------------------------
-        if not sync:
-            self.diff_buffer.set_text("")
+        if package_name in self.meson_drift_cache:
+            s_drifts, u_drifts = self.meson_drift_cache[package_name]
+            self.update_drift_banners(package_name, s_drifts, u_drifts)
         else:
-            self.refresh_active_diff()
+            self.stable_drift_revealer.set_reveal_child(False)
+            self.unstable_drift_revealer.set_reveal_child(False)
+            threading.Thread(
+                target=self.run_bg_meson_drift,
+                args=(package_name, stable_repo_p, unstable_repo_p),
+                daemon=True
+            ).start()
+
+    def load_package_detail(self, package_name, reload_diff=True):
+        self.current_selected_package = package_name
+        self.detail_stack.set_visible_child_name("detail")
+
+        self.update_detail_title(package_name)
+        self.update_detail_worktree_ui(package_name)
+        self.update_detail_version_ui(package_name)
+        self.update_detail_sync_ui(package_name)
+        self.update_detail_drift_ui(package_name, force_reload=False)
+
+        # -------------------------------------------------------------
+        # POPULATE DIFF REVIEW (only on package switch or explicit request)
+        # -------------------------------------------------------------
+        if reload_diff:
+            sync = self.package_data.get(package_name, {}).get("sync") or {}
+            if not sync:
+                self.diff_buffer.set_text("")
+            else:
+                self.refresh_active_diff()
 
     def render_worktree_ui(self, wt_info, target_branch, lbl_widget, pull_btn, push_btn):
         if not wt_info or not wt_info.get("exists", False):
@@ -4549,8 +4575,8 @@ class SyncWindow(Adw.ApplicationWindow):
             if name not in self.refreshed_packages:
                 self.refreshed_packages.add(name)
             self.save_profile_cache()
-            if self.current_selected_package == name:
-                self.load_package_detail(name)
+            if getattr(self, "current_selected_package", None) == name:
+                self.update_detail_title(name)
 
     def add_sync_result(self, name, data, wt_data=None):
         self.sync_completed_count += 1
@@ -4562,6 +4588,10 @@ class SyncWindow(Adw.ApplicationWindow):
             self.refreshed_sync_packages.add(name)
             self.update_row_ui(name)
             self.check_and_mark_package_refreshed(name)
+            if getattr(self, "current_selected_package", None) == name:
+                self.update_detail_sync_ui(name)
+                self.update_detail_worktree_ui(name)
+                self.update_detail_title(name)
 
         self.update_progress_ui()
 
@@ -4590,6 +4620,9 @@ class SyncWindow(Adw.ApplicationWindow):
             self.refreshed_version_packages.add(name)
             self.update_row_ui(name)
             self.check_and_mark_package_refreshed(name)
+            if getattr(self, "current_selected_package", None) == name:
+                self.update_detail_version_ui(name)
+                self.update_detail_title(name)
 
         self.update_progress_ui()
 
@@ -4624,7 +4657,8 @@ class SyncWindow(Adw.ApplicationWindow):
         self.update_row_ui(name)
 
         if getattr(self, "current_selected_package", None) == name:
-            self.load_package_detail(name)
+            self.update_detail_sync_ui(name)
+            self.update_detail_title(name)
 
     def run_bg_diff(self, package_name):
         diff_text = sb.get_git_diff(package_name)

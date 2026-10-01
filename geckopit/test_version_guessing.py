@@ -751,6 +751,39 @@ class TestSyncWindow(unittest.TestCase):
         self.assertFalse(SyncWindow.sidebar_filter_func(mock_win, mock_row))
 
 
+    def test_granular_package_selection_and_refresh(self):
+        from geckopit import SyncWindow
+        mock_win = mock.Mock()
+        mock_win.refreshed_packages = {"pkg1"}
+        mock_win.refresh_single_package_priority = mock.Mock()
+        mock_win.load_package_detail = mock.Mock()
+
+        mock_row = mock.Mock()
+        mock_row.package_name = "pkg1"
+
+        # 1. Manual selection should ALWAYS trigger priority refresh even if already in refreshed_packages
+        SyncWindow.on_package_row_selected(mock_win, None, mock_row)
+        mock_win.load_package_detail.assert_called_with("pkg1", reload_diff=True)
+        mock_win.refresh_single_package_priority.assert_called_with("pkg1")
+
+        # 2. Granular background callback does NOT reload diff
+        mock_win.current_selected_package = "pkg1"
+        mock_win.package_data = {"pkg1": {"sync": {"status": "success"}, "version": {}}}
+        mock_win.refreshed_sync_packages = set()
+        mock_win.update_row_ui = mock.Mock()
+        mock_win.check_and_mark_package_refreshed = mock.Mock()
+        mock_win.update_detail_sync_ui = mock.Mock()
+        mock_win.update_detail_worktree_ui = mock.Mock()
+        mock_win.update_detail_title = mock.Mock()
+        mock_win.refresh_active_diff = mock.Mock()
+
+        SyncWindow.update_sync_row_single(mock_win, "pkg1", {"status": "success"})
+        mock_win.update_detail_sync_ui.assert_called_with("pkg1")
+        mock_win.update_detail_worktree_ui.assert_called_with("pkg1")
+        mock_win.update_detail_title.assert_called_with("pkg1")
+        # Diff buffer should NEVER be touched by background sync polling
+        mock_win.refresh_active_diff.assert_not_called()
+
 class TestPRPrefill(unittest.TestCase):
     def test_parse_changes_diff_single_entry(self):
         import sync_backend as sb
