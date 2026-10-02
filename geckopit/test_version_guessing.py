@@ -955,6 +955,99 @@ class TestSyncWindow(unittest.TestCase):
         mock_win.update_detail_worktree_ui.assert_called_with("pkg_test")
         mock_win.update_detail_title.assert_called_with("pkg_test")
 
+    def test_get_http_session_singleton_and_pooling(self):
+        import sync_backend as sb
+        s1 = sb.get_http_session()
+        s2 = sb.get_http_session()
+        self.assertIs(s1, s2)
+        adapter = s1.adapters.get("https://")
+        self.assertIsNotNone(adapter)
+        self.assertEqual(adapter._pool_connections, 35)
+
+    def test_has_git_ref_loose_and_packed(self):
+        import os
+        import tempfile
+        import sync_backend as sb
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # 1. Non-existent ref
+            self.assertFalse(sb.has_git_ref(tmpdir, "refs/remotes/origin/factory"))
+
+            # 2. Loose ref
+            loose_dir = os.path.join(tmpdir, ".git", "refs", "remotes", "origin")
+            os.makedirs(loose_dir, exist_ok=True)
+            loose_file = os.path.join(loose_dir, "factory")
+            with open(loose_file, "w") as f:
+                f.write("1111222233334444555566667777888899990000\n")
+
+            self.assertTrue(sb.has_git_ref(tmpdir, "refs/remotes/origin/factory"))
+            self.assertFalse(sb.has_git_ref(tmpdir, "refs/remotes/origin/next"))
+
+            # 3. Packed ref
+            packed_file = os.path.join(tmpdir, ".git", "packed-refs")
+            with open(packed_file, "w") as f:
+                f.write("# pack-refs with: peeled-tags\n")
+                f.write("aaaabbbbccccddddeeeeffff0000111122223333 refs/remotes/origin/next\n")
+
+            self.assertTrue(sb.has_git_ref(tmpdir, "refs/remotes/origin/next"))
+
+    @mock.patch("sync_backend.run_tracked")
+    @mock.patch("sync_backend.get_http_session")
+    def test_check_repo_version_skip_fetch(self, mock_get_session, mock_run):
+        import os
+        import tempfile
+        import sync_backend as sb
+
+        mock_session = mock.Mock()
+        mock_resp = mock.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"items": [{"name": "testpkg", "stable_version": "1.0", "version": "1.1"}]}
+        mock_session.get.return_value = mock_resp
+        mock_get_session.return_value = mock_session
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            spec_file = os.path.join(tmpdir, "testpkg.spec")
+            with open(spec_file, "w") as f:
+                f.write("Name: testpkg\nVersion: 1.0\n")
+
+            # With skip_fetch=True: git fetch origin should NEVER be invoked
+            mock_run.reset_mock()
+            mock_run.return_value = mock.Mock(stdout="Version: 1.0\n", returncode=0)
+            sb.check_repo_version("testpkg", workspace_path=os.path.dirname(tmpdir), skip_fetch=True)
+
+            for call in mock_run.call_args_list:
+                cmd = call[0][0]
+                self.assertFalse("fetch" in cmd and "origin" in cmd)
+
+            # With skip_fetch=False: git fetch origin MUST be invoked
+            mock_run.reset_mock()
+            mock_run.return_value = mock.Mock(stdout="Version: 1.0\n", returncode=0)
+            sb.check_repo_version("testpkg", workspace_path=os.path.dirname(tmpdir), skip_fetch=False)
+
+            fetch_called = any("fetch" in call[0][0] and "origin" in call[0][0] for call in mock_run.call_args_list)
+            self.assertTrue(fetch_called)
+
+    def test_sidebar_filter_snapshot_caching(self):
+        from geckopit import SyncWindow
+        mock_win = mock.Mock()
+        mock_win._filter_search_text = "mutter"
+        mock_win._filter_needs_action = False
+        mock_win._filter_pool_sync = False
+        mock_win._filter_stable = False
+        mock_win._filter_unstable = False
+        mock_win._filter_forwarding = False
+
+        row_match = mock.Mock()
+        row_match.package_name = "mutter"
+
+        row_no_match = mock.Mock()
+        row_no_match.package_name = "baobab"
+
+        self.assertTrue(SyncWindow.sidebar_filter_func(mock_win, row_match))
+        self.assertFalse(SyncWindow.sidebar_filter_func(mock_win, row_no_match))
+        # When snapshot is present, widget get_text() should never be called
+        mock_win.sidebar_search.get_text.assert_not_called()
+
 class TestPRPrefill(unittest.TestCase):
     def test_parse_changes_diff_single_entry(self):
         import sync_backend as sb

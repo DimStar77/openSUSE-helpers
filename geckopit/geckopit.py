@@ -1658,6 +1658,12 @@ class SyncWindow(Adw.ApplicationWindow):
         self.filter_timeout_id = 0
         self.term_zoom_timeout_id = 0
         self.save_cache_timeout_id = 0
+        self._filter_search_text = ""
+        self._filter_needs_action = True
+        self._filter_pool_sync = False
+        self._filter_stable = False
+        self._filter_unstable = False
+        self._filter_forwarding = False
         self.is_sync_running = False
         self.sync_timeout_id = 0
         self.diff_search_settings = None
@@ -2833,7 +2839,7 @@ class SyncWindow(Adw.ApplicationWindow):
             self.update_row_ui(name)
 
     def run_bg_version_single(self, repo):
-        name, data = sb.check_repo_version(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p, ignored_unstable_versions=self.ignored_unstable_versions)
+        name, data = sb.check_repo_version(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p, ignored_unstable_versions=self.ignored_unstable_versions, skip_fetch=True)
         GLib.idle_add(self.update_version_row_single, name, data)
 
     def update_version_row_single(self, name, data):
@@ -2878,6 +2884,22 @@ class SyncWindow(Adw.ApplicationWindow):
             )
             self.queue_filter_invalidation()
 
+    def snapshot_filter_states(self):
+        """Snapshots active filter control states once per filter pass to avoid repeated GTK widget method lookups."""
+        try:
+            self._filter_search_text = self.sidebar_search.get_text().strip().lower() if hasattr(self, "sidebar_search") else ""
+            self._filter_needs_action = self.filter_needs_action.get_active() if hasattr(self, "filter_needs_action") else True
+            self._filter_pool_sync = self.filter_pool_sync.get_active() if hasattr(self, "filter_pool_sync") else False
+            self._filter_stable = self.filter_stable.get_active() if hasattr(self, "filter_stable") else False
+            self._filter_unstable = self.filter_unstable.get_active() if hasattr(self, "filter_unstable") else False
+            self._filter_forwarding = self.filter_forwarding.get_active() if hasattr(self, "filter_forwarding") else False
+        except Exception:
+            pass
+
+    def on_search_changed(self, entry):
+        self.snapshot_filter_states()
+        self.master_list_box.invalidate_filter()
+
     def queue_filter_invalidation(self):
         if getattr(self, "filter_timeout_id", 0) == 0:
             # Coalesce extremely rapid parallel updates into a single layout pass every 120ms
@@ -2885,12 +2907,14 @@ class SyncWindow(Adw.ApplicationWindow):
 
     def flush_filter_invalidation(self):
         self.filter_timeout_id = 0
+        self.snapshot_filter_states()
         self.master_list_box.invalidate_filter()
         return False # Run once and terminate
 
     def on_filter_toggled(self, btn):
         if btn == getattr(self, "filter_needs_action", None):
             self.update_track_filters_sensitivity()
+        self.snapshot_filter_states()
         self.master_list_box.invalidate_filter()
         GLib.idle_add(self.scroll_selected_row_to_view)
 
@@ -2976,7 +3000,7 @@ class SyncWindow(Adw.ApplicationWindow):
         self.sidebar_search = Gtk.SearchEntry()
         self.sidebar_search.set_placeholder_text("Search packages... (Ctrl+P)")
         self.sidebar_search.set_tooltip_text("Quick-open package search (Press Ctrl+P or / to focus, Enter/Down to select)")
-        self.sidebar_search.connect("search-changed", lambda entry: self.master_list_box.invalidate_filter())
+        self.sidebar_search.connect("search-changed", self.on_search_changed)
         self.sidebar_search.connect("activate", self.on_search_activate)
 
         search_key_ctrl = Gtk.EventControllerKey.new()
@@ -3091,13 +3115,30 @@ class SyncWindow(Adw.ApplicationWindow):
     def sidebar_filter_func(self, row):
         package_name = row.package_name
 
-        # 1. Apply Search Text filter first
-        search_text = self.sidebar_search.get_text().strip().lower()
+        # 1. Apply Search Text filter first (using snapshot if available to avoid widget bridge overhead)
+        raw_search = getattr(self, "_filter_search_text", None)
+        if isinstance(raw_search, str):
+            search_text = raw_search
+        elif hasattr(self, "sidebar_search"):
+            val = self.sidebar_search.get_text()
+            search_text = val.strip().lower() if isinstance(val, str) else ""
+        else:
+            search_text = ""
+
         if search_text and search_text not in package_name.lower():
             return False
 
         # 2. Browse All mode: when "Needs Action" is toggled OFF, show all matching packages
-        if not self.filter_needs_action.get_active():
+        raw_needs_action = getattr(self, "_filter_needs_action", None)
+        if isinstance(raw_needs_action, bool):
+            needs_action_active = raw_needs_action
+        elif hasattr(self, "filter_needs_action"):
+            val = self.filter_needs_action.get_active()
+            needs_action_active = bool(val)
+        else:
+            needs_action_active = True
+
+        if not needs_action_active:
             return True
 
         pkg_data = self.package_data.get(package_name, {})
@@ -3111,19 +3152,23 @@ class SyncWindow(Adw.ApplicationWindow):
         pool_status = sync.get("pool_status", "unknown")
         pool_needs_action = (pool_behind > 0) or (pool_ahead > 0) or (pool_status in ("Not in Pool", "Fetch failed", "Error"))
 
-        # B. Stable Tracking state
-        factory_ver = ver.get("factory_ver", "N/A")
-        upstream_stable = ver.get("upstream_stable", "N/A")
-        stable_needs_action = is_version_newer(upstream_stable, factory_ver, row.package_name)
+        # B. Stable Tracking state (use pre-computed flag when available)
+        if "stable_needs_update" in ver:
+            stable_needs_action = ver["stable_needs_update"]
+        else:
+            factory_ver = ver.get("factory_ver", "N/A")
+            upstream_stable = ver.get("upstream_stable", "N/A")
+            stable_needs_action = is_version_newer(upstream_stable, factory_ver, row.package_name)
 
-        # C. Unstable/Next Tracking state
-        next_ver = ver.get("next_ver", "—")
-        upstream_latest = ver.get("upstream_latest", "—")
-
-        # We defensively check if this found unstable update matches our active profile's ignore list!
-        ignored_ver = getattr(self, "ignored_unstable_versions", {}).get(row.package_name)
-        is_ignored_unstable = bool(ignored_ver and is_version_equal(upstream_latest, ignored_ver, row.package_name))
-        unstable_needs_action = (is_version_newer(upstream_latest, next_ver, row.package_name) and not is_ignored_unstable)
+        # C. Unstable/Next Tracking state (use pre-computed flag when available)
+        if "unstable_needs_update" in ver:
+            unstable_needs_action = ver["unstable_needs_update"]
+        else:
+            next_ver = ver.get("next_ver", "—")
+            upstream_latest = ver.get("upstream_latest", "—")
+            ignored_ver = getattr(self, "ignored_unstable_versions", {}).get(row.package_name)
+            is_ignored_unstable = bool(ignored_ver and is_version_equal(upstream_latest, ignored_ver, row.package_name))
+            unstable_needs_action = (is_version_newer(upstream_latest, next_ver, row.package_name) and not is_ignored_unstable)
 
         # D. Forwarding state
         next_ahead = sync.get("next_ahead", 0)
@@ -3136,16 +3181,25 @@ class SyncWindow(Adw.ApplicationWindow):
         stable_wt_needs_action = (stable_wt.get("behind", 0) > 0)
         unstable_wt_needs_action = (unstable_wt.get("behind", 0) > 0)
 
-        # Determine if we match any of the selected tracks
-        any_track_selected = (
-            self.filter_pool_sync.get_active() or
-            self.filter_stable.get_active() or
-            self.filter_unstable.get_active() or
-            self.filter_forwarding.get_active()
-        )
+        f_pool = getattr(self, "_filter_pool_sync", None)
+        if not isinstance(f_pool, bool):
+            f_pool = bool(self.filter_pool_sync.get_active()) if hasattr(self, "filter_pool_sync") else False
+
+        f_stable = getattr(self, "_filter_stable", None)
+        if not isinstance(f_stable, bool):
+            f_stable = bool(self.filter_stable.get_active()) if hasattr(self, "filter_stable") else False
+
+        f_unstable = getattr(self, "_filter_unstable", None)
+        if not isinstance(f_unstable, bool):
+            f_unstable = bool(self.filter_unstable.get_active()) if hasattr(self, "filter_unstable") else False
+
+        f_fwd = getattr(self, "_filter_forwarding", None)
+        if not isinstance(f_fwd, bool):
+            f_fwd = bool(self.filter_forwarding.get_active()) if hasattr(self, "filter_forwarding") else False
+
+        any_track_selected = f_pool or f_stable or f_unstable or f_fwd
 
         if not any_track_selected:
-            # If no tracks are selected, display packages with ANY pending action
             return bool(
                 pool_needs_action or
                 stable_needs_action or
@@ -3155,15 +3209,14 @@ class SyncWindow(Adw.ApplicationWindow):
                 unstable_wt_needs_action
             )
 
-        # Check individual selected tracks (Union / OR)
         matches_track = False
-        if self.filter_pool_sync.get_active() and pool_needs_action:
+        if f_pool and pool_needs_action:
             matches_track = True
-        if self.filter_stable.get_active() and (stable_needs_action or stable_wt_needs_action):
+        if f_stable and (stable_needs_action or stable_wt_needs_action):
             matches_track = True
-        if self.filter_unstable.get_active() and (unstable_needs_action or unstable_wt_needs_action):
+        if f_unstable and (unstable_needs_action or unstable_wt_needs_action):
             matches_track = True
-        if self.filter_forwarding.get_active() and forwarding_needs_action:
+        if f_fwd and forwarding_needs_action:
             matches_track = True
 
         return matches_track
@@ -4845,7 +4898,7 @@ class SyncWindow(Adw.ApplicationWindow):
                 break
 
     def run_bg_version(self, repo):
-        name, data = sb.check_repo_version(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p, ignored_unstable_versions=self.ignored_unstable_versions)
+        name, data = sb.check_repo_version(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p, ignored_unstable_versions=self.ignored_unstable_versions, skip_fetch=True)
         GLib.idle_add(self.add_version_result, name, data)
 
     def add_version_result(self, name, data):

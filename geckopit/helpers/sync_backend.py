@@ -16,6 +16,38 @@ import concurrent.futures
 import unicodedata
 import configparser
 import requests
+import requests.adapters
+import urllib3.util.retry
+
+_http_session = None
+_http_session_lock = threading.Lock()
+
+def get_http_session():
+    """
+    Returns a thread-safe singleton requests.Session with HTTP Keep-Alive
+    connection pooling to minimize TCP and TLS handshake overhead.
+    """
+    global _http_session
+    if _http_session is None:
+        with _http_session_lock:
+            if _http_session is None:
+                s = requests.Session()
+                s.headers.update({'User-Agent': 'curl/8.0.1'})
+                retries = urllib3.util.retry.Retry(
+                    total=2,
+                    backoff_factor=0.3,
+                    status_forcelist=[502, 503, 504],
+                    raise_on_status=False
+                )
+                adapter = requests.adapters.HTTPAdapter(
+                    pool_connections=35,
+                    pool_maxsize=35,
+                    max_retries=retries
+                )
+                s.mount("https://", adapter)
+                s.mount("http://", adapter)
+                _http_session = s
+    return _http_session
 
 try:
     import rpm
@@ -193,6 +225,67 @@ def get_gitea_owner_and_repo(repo_path, default_name):
         pass
     return owner, repo_name
 
+def has_git_ref(repo_path, ref_name):
+    """
+    Checks whether a git ref exists locally by inspecting .git/refs and packed-refs in Python.
+    Avoids spawning 'git show-ref --verify' processes while falling back gracefully on error.
+    """
+    try:
+        git_path = os.path.join(repo_path, '.git')
+        if not os.path.exists(git_path):
+            # Fall back to git subprocess (handles mock environments, bare repos, or special layouts)
+            try:
+                run_tracked(
+                    ['git', '-C', repo_path, 'show-ref', '--verify', '--quiet', ref_name],
+                    check=True, capture_output=True
+                )
+                return True
+            except subprocess.CalledProcessError:
+                return False
+
+        if os.path.isfile(git_path):
+            with open(git_path, 'r', encoding='utf-8', errors='replace') as f:
+                gitdir_line = f.read().strip()
+            if gitdir_line.startswith('gitdir:'):
+                gitdir = gitdir_line.split(':', 1)[1].strip()
+                if not os.path.isabs(gitdir):
+                    git_dir = os.path.abspath(os.path.join(repo_path, gitdir))
+                else:
+                    git_dir = gitdir
+            else:
+                git_dir = git_path
+        elif os.path.isdir(git_path):
+            git_dir = git_path
+        else:
+            return False
+
+        # 1. Check loose ref file
+        loose_path = os.path.join(git_dir, ref_name)
+        if os.path.isfile(loose_path):
+            return True
+
+        # 2. Check packed-refs file
+        packed_path = os.path.join(git_dir, 'packed-refs')
+        if os.path.isfile(packed_path):
+            with open(packed_path, 'r', encoding='utf-8', errors='replace') as f:
+                for line in f:
+                    if line.startswith('#') or line.startswith('^'):
+                        continue
+                    parts = line.split()
+                    if len(parts) == 2 and parts[1] == ref_name:
+                        return True
+
+        return False
+    except Exception:
+        try:
+            run_tracked(
+                ['git', '-C', repo_path, 'show-ref', '--verify', '--quiet', ref_name],
+                check=True, capture_output=True
+            )
+            return True
+        except subprocess.CalledProcessError:
+            return False
+
 def check_repo_pr(repo_name, stable_branch="factory", unstable_branch="next", workspace_path="."):
     """
     Queries Gitea API to check if there is an open pull request from head to base branch.
@@ -204,7 +297,7 @@ def check_repo_pr(repo_name, stable_branch="factory", unstable_branch="next", wo
     url = f"https://src.opensuse.org/api/v1/repos/{owner}/{gitea_name}/pulls?state=open"
     headers = {'User-Agent': 'curl/8.0.1'}
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = get_http_session().get(url, headers=headers, timeout=10)
         if response.status_code == 200:
             data = response.json()
             if isinstance(data, list):
@@ -238,14 +331,7 @@ def check_repo_sync(repo_name, stable_branch="factory", unstable_branch="next", 
         pass
 
     # 2. Check if origin/{stable_branch} exists locally
-    try:
-        run_tracked(
-            ['git', '-C', repo_path, 'show-ref', '--verify', '--quiet', f'refs/remotes/origin/{stable_branch}'],
-            check=True, capture_output=True
-        )
-        has_origin_stable = True
-    except subprocess.CalledProcessError:
-        has_origin_stable = False
+    has_origin_stable = has_git_ref(repo_path, f'refs/remotes/origin/{stable_branch}')
 
     if not has_origin_stable:
         return repo_name, {
@@ -256,14 +342,7 @@ def check_repo_sync(repo_name, stable_branch="factory", unstable_branch="next", 
     # 3. Check if origin/{unstable_branch} exists locally
     has_origin_unstable = False
     if unstable_branch:
-        try:
-            run_tracked(
-                ['git', '-C', repo_path, 'show-ref', '--verify', '--quiet', f'refs/remotes/origin/{unstable_branch}'],
-                check=True, capture_output=True
-            )
-            has_origin_unstable = True
-        except subprocess.CalledProcessError:
-            has_origin_unstable = False
+        has_origin_unstable = has_git_ref(repo_path, f'refs/remotes/origin/{unstable_branch}')
 
     # 4. Fetch from pool/repo_name.git {stable_branch} branch (src.opensuse.org/pool/<repo>)
     gitea_name = get_gitea_repo_name(repo_path, repo_name)
@@ -514,7 +593,7 @@ def is_version_equal(v1, v2, repo_name=None) -> bool:
         return False
     return compare_versions(v1, v2, repo_name) == 0
 
-def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable_branch="next", workspace_path=".", ignored_unstable_versions=None):
+def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable_branch="next", workspace_path=".", ignored_unstable_versions=None, skip_fetch=False):
     repo_path = os.path.join(workspace_path, repo_name)
 
     if ignored_unstable_versions is None:
@@ -523,13 +602,14 @@ def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable
     ignored_ver = ignored_unstable_versions.get(repo_name)
 
     # 1. Fetch latest state from origin (src.opensuse.org/<devel_project>/<repo>)
-    try:
-        run_tracked(
-            ['git', '-C', repo_path, 'fetch', '--quiet', 'origin'],
-            check=True, capture_output=True
-        )
-    except subprocess.CalledProcessError:
-        pass
+    if not skip_fetch:
+        try:
+            run_tracked(
+                ['git', '-C', repo_path, 'fetch', '--quiet', 'origin'],
+                check=True, capture_output=True
+            )
+        except subprocess.CalledProcessError:
+            pass
 
     # 2. Find spec file locally
     spec_file = None
@@ -585,7 +665,7 @@ def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable
     url = f"https://release-monitoring.org/api/v2/packages/?name={repo_name}&distribution=openSUSE"
     headers = {'User-Agent': 'curl/8.0.1'}
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = get_http_session().get(url, headers=headers, timeout=10)
         if response.status_code == 200:
             data = response.json()
             items = data.get("items", [])
@@ -611,9 +691,12 @@ def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable
 
     # Compare versions using semantic RPM rules: only trigger if upstream is newer than local
     needs_update = False
+    stable_needs_update = False
+    unstable_needs_update = False
 
     if (branch is None or branch == stable_branch or branch == "factory") and factory_ver and upstream_stable:
         if is_version_newer(upstream_stable, factory_ver, repo_name):
+            stable_needs_update = True
             needs_update = True
 
     if unstable_branch and (branch is None or branch == unstable_branch or branch == "next") and next_ver and next_ver != "—" and upstream_latest:
@@ -621,6 +704,7 @@ def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable
             # Check if this specific found unstable version is in our ignore list!
             is_ignored = bool(ignored_ver and is_version_equal(upstream_latest, ignored_ver, repo_name))
             if not is_ignored:
+                unstable_needs_update = True
                 needs_update = True
 
     return repo_name, {
@@ -630,6 +714,8 @@ def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable
         "upstream_stable": upstream_stable or "N/A",
         "upstream_latest": upstream_latest or "—",
         "needs_update": needs_update,
+        "stable_needs_update": stable_needs_update,
+        "unstable_needs_update": unstable_needs_update,
         "project": exact_item.get("project") if exact_item else repo_name
     }
 
@@ -1145,14 +1231,21 @@ def check_single_package_full(pkg_dir=".", stable_branch=None, unstable_branch=N
     wt = check_worktree_status(pkg_dir, expected_branch=unst_branch)
     active_branch = wt.get("head") or "unknown"
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
-        f_sync = ex.submit(check_repo_sync, repo_name, st_branch, unst_branch, parent_dir)
-        f_ver = ex.submit(check_repo_version, repo_name, None, st_branch, unst_branch, parent_dir, ignored_vers)
-        f_pr = ex.submit(check_repo_pr, repo_name, st_branch, unst_branch, parent_dir)
+    # 1. Fetch latest repository state and pool sync metrics once
+    _, sync = check_repo_sync(repo_name, st_branch, unst_branch, parent_dir)
 
-        sync = f_sync.result()[1]
+    # 2. Concurrently check version (reusing origin refs without refetching) and conditional PR check
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+        f_ver = ex.submit(check_repo_version, repo_name, None, st_branch, unst_branch, parent_dir, ignored_vers, True)
+        f_pr = None
+        if unst_branch and sync.get("status") == "success" and sync.get("next_status") != "No next branch" and sync.get("next_ahead", 0) > 0:
+            f_pr = ex.submit(check_repo_pr, repo_name, st_branch, unst_branch, parent_dir)
+
         ver = f_ver.result()[1]
-        pr = f_pr.result()[1]
+        if f_pr:
+            pr = f_pr.result()[1]
+        else:
+            pr = {"has_pr": False, "url": None, "number": None}
 
     # Resolve local on-disk version and re-evaluate needs_update against upstream
     local_ver = get_local_package_version(pkg_dir)
