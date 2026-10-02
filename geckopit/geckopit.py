@@ -1658,6 +1658,8 @@ class SyncWindow(Adw.ApplicationWindow):
         self.filter_timeout_id = 0
         self.term_zoom_timeout_id = 0
         self.save_cache_timeout_id = 0
+        self.diff_debounce_id = 0
+        self.known_not_in_pool = set()
         self._filter_search_text = ""
         self._filter_needs_action = True
         self._filter_pool_sync = False
@@ -1880,6 +1882,13 @@ class SyncWindow(Adw.ApplicationWindow):
             self.save_cache_timeout_id = 0
             self.save_profile_cache()
 
+        diff_timer = getattr(self, "diff_debounce_id", 0)
+        if isinstance(diff_timer, int) and diff_timer != 0:
+            GLib.Source.remove(diff_timer)
+            self.diff_debounce_id = 0
+
+        sb.cleanup_ssh_multiplexing()
+
         for pool in (getattr(self, "sync_executor", None), getattr(self, "ver_executor", None)):
             if pool:
                 try:
@@ -1938,6 +1947,12 @@ class SyncWindow(Adw.ApplicationWindow):
             } for repo in self.repos
         }
         self.load_profile_cache()
+
+        # Collect confirmed packages not hosted in the central Gitea pool from cache
+        self.known_not_in_pool = {
+            pkg for pkg, val in self.package_data.items()
+            if val.get("sync", {}).get("pool_status") == "Not in Pool"
+        }
 
     def get_cache_path(self):
         # Sanitize workspace profile name to only allow safe alphanumeric/dash characters,
@@ -3953,8 +3968,19 @@ class SyncWindow(Adw.ApplicationWindow):
         perspective = "next_factory" if active_idx == 0 else "factory_pool"
         self.diff_buffer.set_text("Loading diff...")
 
-        # Bypasses the slow background thread pool queue to load the diff instantly!
-        threading.Thread(target=self.run_bg_diff_perspective, args=(package_name, perspective), daemon=True).start()
+        diff_timer = getattr(self, "diff_debounce_id", 0)
+        if isinstance(diff_timer, int) and diff_timer != 0:
+            GLib.Source.remove(diff_timer)
+            self.diff_debounce_id = 0
+
+        # Debounce diff background loading by 75ms to eliminate process churn during rapid arrow navigation
+        self.diff_debounce_id = GLib.timeout_add(75, self.flush_diff_perspective, package_name, perspective)
+
+    def flush_diff_perspective(self, package_name, perspective):
+        self.diff_debounce_id = 0
+        if getattr(self, "current_selected_package", None) == package_name:
+            threading.Thread(target=self.run_bg_diff_perspective, args=(package_name, perspective), daemon=True).start()
+        return False
 
     def run_bg_diff_perspective(self, package_name, perspective):
         if perspective == "next_factory":
@@ -3984,7 +4010,7 @@ class SyncWindow(Adw.ApplicationWindow):
             except Exception as e:
                 diff_text = f"Error performing git diff (Factory vs Pool): {str(e)}"
 
-        GLib.idle_add(self.update_diff_text, diff_text)
+        GLib.idle_add(self.update_diff_text, package_name, diff_text)
 
     def on_fix_drift_clicked(self, target_branch):
         """Launches geckopit-cli --fix-deps in the terminal drawer on the target branch and leaves shell open."""
@@ -4845,7 +4871,18 @@ class SyncWindow(Adw.ApplicationWindow):
                 break
 
     def run_bg_sync(self, repo):
-        name, data = sb.check_repo_sync(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
+        kwargs = {
+            "stable_branch": self.stable_b,
+            "unstable_branch": self.unstable_b,
+            "workspace_path": self.stable_p
+        }
+        known_nip = getattr(self, "known_not_in_pool", None)
+        if isinstance(known_nip, (set, list)):
+            kwargs["known_not_in_pool"] = known_nip
+
+        name, data = sb.check_repo_sync(repo, **kwargs)
+        if data.get("pool_status") == "Not in Pool" and isinstance(getattr(self, "known_not_in_pool", None), set):
+            self.known_not_in_pool.add(name)
         wt_data = self.check_worktrees_for_repo(repo)
         pr_data = {"has_pr": False}
         if self.unstable_b and data.get("status") == "success" and data.get("next_status") != "No next branch":
@@ -4955,8 +4992,10 @@ class SyncWindow(Adw.ApplicationWindow):
         diff_text = sb.get_git_diff(package_name)
         GLib.idle_add(self.update_diff_text, diff_text)
 
-    def update_diff_text(self, text):
-        self.diff_buffer.set_text(text)
+    def update_diff_text(self, package_name, text):
+        # Strict race-condition guard: only render the diff if this package is still the active selection
+        if getattr(self, "current_selected_package", None) == package_name:
+            self.diff_buffer.set_text(text)
 
 
 class SyncApp(Adw.Application):

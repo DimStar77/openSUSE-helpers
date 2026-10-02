@@ -19,6 +19,42 @@ import requests
 import requests.adapters
 import urllib3.util.retry
 
+_ssh_mux_dir = None
+_ssh_mux_lock = threading.Lock()
+
+def setup_ssh_multiplexing():
+    """
+    Initializes a session-scoped OpenSSH multiplexing directory and sets GIT_SSH_COMMAND
+    so Git commands over SSH reuse existing authenticated connections automatically.
+    Falls back gracefully if multiplexing is unsupported or already configured by the user.
+    """
+    global _ssh_mux_dir
+    if "GIT_SSH_COMMAND" in os.environ and "ControlPath" in os.environ["GIT_SSH_COMMAND"]:
+        return
+
+    with _ssh_mux_lock:
+        if _ssh_mux_dir is None or not os.path.isdir(_ssh_mux_dir):
+            base_dir = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+            mux_dir = os.path.join(base_dir, f"geckopit-ssh-{os.getuid()}")
+            try:
+                os.makedirs(mux_dir, mode=0o700, exist_ok=True)
+                _ssh_mux_dir = mux_dir
+                ssh_cmd = f"ssh -o ControlMaster=auto -o ControlPath={mux_dir}/%C -o ControlPersist=5m"
+                os.environ["GIT_SSH_COMMAND"] = ssh_cmd
+            except Exception:
+                pass
+
+def cleanup_ssh_multiplexing():
+    """Cleans up the OpenSSH multiplexing directory on application teardown."""
+    global _ssh_mux_dir
+    if _ssh_mux_dir and os.path.isdir(_ssh_mux_dir):
+        try:
+            import shutil
+            shutil.rmtree(_ssh_mux_dir, ignore_errors=True)
+            _ssh_mux_dir = None
+        except Exception:
+            pass
+
 _http_session = None
 _http_session_lock = threading.Lock()
 
@@ -59,6 +95,7 @@ _active_processes = []
 
 def run_tracked(args, **kwargs):
     import subprocess
+    setup_ssh_multiplexing()
     check = kwargs.pop("check", False)
     timeout = kwargs.pop("timeout", None)
     input_data = kwargs.pop("input", None)
@@ -286,6 +323,20 @@ def has_git_ref(repo_path, ref_name):
         except subprocess.CalledProcessError:
             return False
 
+def get_gitea_token():
+    """Reads Gitea personal access token from ~/.config/tea/config.yml if configured."""
+    tea_conf_path = os.path.expanduser("~/.config/tea/config.yml")
+    if os.path.isfile(tea_conf_path):
+        try:
+            with open(tea_conf_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            m_token = re.search(r"token:\s*(\S+)", content)
+            if m_token:
+                return m_token.group(1).strip()
+        except Exception:
+            pass
+    return None
+
 def check_repo_pr(repo_name, stable_branch="factory", unstable_branch="next", workspace_path="."):
     """
     Queries Gitea API to check if there is an open pull request from head to base branch.
@@ -296,6 +347,9 @@ def check_repo_pr(repo_name, stable_branch="factory", unstable_branch="next", wo
 
     url = f"https://src.opensuse.org/api/v1/repos/{owner}/{gitea_name}/pulls?state=open"
     headers = {'User-Agent': 'curl/8.0.1'}
+    token = get_gitea_token()
+    if token:
+        headers['Authorization'] = f'token {token}'
     try:
         response = get_http_session().get(url, headers=headers, timeout=10)
         if response.status_code == 200:
@@ -318,7 +372,7 @@ def check_repo_pr(repo_name, stable_branch="factory", unstable_branch="next", wo
         "number": None
     }
 
-def check_repo_sync(repo_name, stable_branch="factory", unstable_branch="next", workspace_path="."):
+def check_repo_sync(repo_name, stable_branch="factory", unstable_branch="next", workspace_path=".", known_not_in_pool=None):
     repo_path = os.path.join(workspace_path, repo_name)
 
     # 1. Fetch latest state from origin (src.opensuse.org/<devel_project>/<repo>)
@@ -351,53 +405,56 @@ def check_repo_sync(repo_name, stable_branch="factory", unstable_branch="next", 
     pool_ahead = 0
     pool_behind = 0
 
-    try:
-        run_tracked(
-            ['git', '-C', repo_path, 'fetch', '--quiet', pool_url, f'+refs/heads/{stable_branch}:refs/pool/{stable_branch}'],
-            check=True, capture_output=True, text=True
-        )
-        # Compare origin/{stable_branch} and isolated refs/pool/{stable_branch}
-        res = run_tracked(
-            ['git', '-C', repo_path, 'rev-list', '--left-right', '--count', f'origin/{stable_branch}...refs/pool/{stable_branch}'],
-            check=True, capture_output=True, text=True
-        )
-        output = res.stdout.strip()
-        parts = output.split()
-        if len(parts) == 2:
-            pool_ahead = int(parts[0])  # devel is ahead of pool (pending submissions)
-            pool_behind = int(parts[1]) # devel is behind pool (needs catch up)
-            if pool_ahead == 0 and pool_behind == 0:
-                pool_status = "In Sync"
-            elif pool_ahead > 0 and pool_behind > 0:
-                pool_status = f"Diverged"
-            elif pool_ahead > 0:
-                pool_status = f"Ahead"
+    if known_not_in_pool and repo_name in known_not_in_pool:
+        pool_status = "Not in Pool"
+    else:
+        try:
+            run_tracked(
+                ['git', '-C', repo_path, 'fetch', '--quiet', pool_url, f'+refs/heads/{stable_branch}:refs/pool/{stable_branch}'],
+                check=True, capture_output=True, text=True
+            )
+            # Compare origin/{stable_branch} and isolated refs/pool/{stable_branch}
+            res = run_tracked(
+                ['git', '-C', repo_path, 'rev-list', '--left-right', '--count', f'origin/{stable_branch}...refs/pool/{stable_branch}'],
+                check=True, capture_output=True, text=True
+            )
+            output = res.stdout.strip()
+            parts = output.split()
+            if len(parts) == 2:
+                pool_ahead = int(parts[0])  # devel is ahead of pool (pending submissions)
+                pool_behind = int(parts[1]) # devel is behind pool (needs catch up)
+                if pool_ahead == 0 and pool_behind == 0:
+                    pool_status = "In Sync"
+                elif pool_ahead > 0 and pool_behind > 0:
+                    pool_status = f"Diverged"
+                elif pool_ahead > 0:
+                    pool_status = f"Ahead"
+                else:
+                    pool_status = f"Behind"
             else:
-                pool_status = f"Behind"
-        else:
-            pool_status = "Error"
-    except subprocess.CalledProcessError as e:
-        stderr_lower = (e.stderr or "").lower()
-        # When unauthenticated git fetch hits a non-existent repo on Gitea (src.opensuse.org/pool),
-        # Gitea issues HTTP 401 Basic Auth (to prevent repository enumeration), causing Git with
-        # disabled terminal prompts to fail with "could not read Username" or "Authentication failed".
-        # Public pool repositories never require authentication, so any authentication or not-found
-        # response confirms the package is not hosted in the central Gitea pool.
-        if (
-            "cannot find repository" in stderr_lower
-            or "could not read from remote repository" in stderr_lower
-            or "repository not found" in stderr_lower
-            or "404" in stderr_lower
-            or "not found" in stderr_lower
-            or "could not read username" in stderr_lower
-            or "terminal prompts disabled" in stderr_lower
-            or "authentication failed" in stderr_lower
-        ):
-            pool_status = "Not in Pool"
-        elif f"couldn't find remote ref {stable_branch}" in stderr_lower or "no such ref" in stderr_lower or "fatal: couldn't find remote ref" in stderr_lower:
-            pool_status = f"No {stable_branch} in Pool"
-        else:
-            pool_status = "Fetch failed"
+                pool_status = "Error"
+        except subprocess.CalledProcessError as e:
+            stderr_lower = (e.stderr or "").lower()
+            # When unauthenticated git fetch hits a non-existent repo on Gitea (src.opensuse.org/pool),
+            # Gitea issues HTTP 401 Basic Auth (to prevent repository enumeration), causing Git with
+            # disabled terminal prompts to fail with "could not read Username" or "Authentication failed".
+            # Public pool repositories never require authentication, so any authentication or not-found
+            # response confirms the package is not hosted in the central Gitea pool.
+            if (
+                "cannot find repository" in stderr_lower
+                or "could not read from remote repository" in stderr_lower
+                or "repository not found" in stderr_lower
+                or "404" in stderr_lower
+                or "not found" in stderr_lower
+                or "could not read username" in stderr_lower
+                or "terminal prompts disabled" in stderr_lower
+                or "authentication failed" in stderr_lower
+            ):
+                pool_status = "Not in Pool"
+            elif f"couldn't find remote ref {stable_branch}" in stderr_lower or "no such ref" in stderr_lower or "fatal: couldn't find remote ref" in stderr_lower:
+                pool_status = f"No {stable_branch} in Pool"
+            else:
+                pool_status = "Fetch failed"
 
     # 5. Compare devel/{stable_branch} and devel/{unstable_branch}
     next_status = "N/A"
@@ -1387,3 +1444,6 @@ def run_workspace_sync(target_paths, jobs=16, force=False, on_log=None):
             overall_success = False
 
     return overall_success, sorted(updated_submodules), sorted(failed_packages)
+
+
+setup_ssh_multiplexing()

@@ -1048,6 +1048,56 @@ class TestSyncWindow(unittest.TestCase):
         # When snapshot is present, widget get_text() should never be called
         mock_win.sidebar_search.get_text.assert_not_called()
 
+    def test_setup_ssh_multiplexing(self):
+        import os
+        import sync_backend as sb
+        sb.setup_ssh_multiplexing()
+        self.assertIn("GIT_SSH_COMMAND", os.environ)
+        self.assertIn("ControlMaster=auto", os.environ["GIT_SSH_COMMAND"])
+        self.assertIn("ControlPath=", os.environ["GIT_SSH_COMMAND"])
+
+    def test_get_gitea_token(self):
+        import os
+        import sync_backend as sb
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conf_file = os.path.join(tmpdir, "config.yml")
+            with open(conf_file, "w") as f:
+                f.write("logins:\n  - name: test\n    token: my_secret_token_12345\n")
+
+            with mock.patch("os.path.expanduser", return_value=conf_file):
+                token = sb.get_gitea_token()
+                self.assertEqual(token, "my_secret_token_12345")
+
+    @mock.patch("sync_backend.has_git_ref", return_value=True)
+    @mock.patch("sync_backend.run_tracked")
+    def test_check_repo_sync_known_not_in_pool(self, mock_run, mock_ref):
+        import sync_backend as sb
+        mock_run.return_value = mock.Mock(stdout="", returncode=0)
+
+        # When known_not_in_pool contains 'pkg1', pool fetch should NOT be executed
+        _, data = sb.check_repo_sync("pkg1", known_not_in_pool={"pkg1"})
+        self.assertEqual(data["pool_status"], "Not in Pool")
+        # Ensure git fetch against pool_url was never called
+        for call in mock_run.call_args_list:
+            cmd = call[0][0]
+            self.assertFalse("fetch" in cmd and "src.opensuse.org/pool" in cmd[5])
+
+    def test_update_diff_text_race_condition_guard(self):
+        from geckopit import SyncWindow
+        mock_win = mock.Mock()
+        mock_win.current_selected_package = "pkg_selected"
+        mock_win.diff_buffer = mock.Mock()
+
+        # Arrival of diff for a stale/previously selected package should be ignored
+        SyncWindow.update_diff_text(mock_win, "pkg_stale", "stale diff text")
+        mock_win.diff_buffer.set_text.assert_not_called()
+
+        # Arrival of diff for the active package should be rendered
+        SyncWindow.update_diff_text(mock_win, "pkg_selected", "active diff text")
+        mock_win.diff_buffer.set_text.assert_called_with("active diff text")
+
 class TestPRPrefill(unittest.TestCase):
     def test_parse_changes_diff_single_entry(self):
         import sync_backend as sb
