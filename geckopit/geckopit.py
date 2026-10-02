@@ -1643,7 +1643,10 @@ class SyncWindow(Adw.ApplicationWindow):
         self.load_workspace_repositories()
 
         # Background workers configured with daemon threads so they terminate on exit
-        self.executor = DaemonThreadPoolExecutor(max_workers=self.config.max_workers)
+        self.sync_executor = None
+        self.ver_executor = None
+        self.executor = None
+        self.init_executors()
 
         # Open tab registry for active monitoring and deduplication
         self.terminal_tabs = []
@@ -1654,6 +1657,7 @@ class SyncWindow(Adw.ApplicationWindow):
         # Initialize filter timeout and state registries
         self.filter_timeout_id = 0
         self.term_zoom_timeout_id = 0
+        self.save_cache_timeout_id = 0
         self.is_sync_running = False
         self.sync_timeout_id = 0
         self.diff_search_settings = None
@@ -1865,7 +1869,17 @@ class SyncWindow(Adw.ApplicationWindow):
             GLib.Source.remove(self.timeout_id)
             self.timeout_id = 0
 
-        self.executor.shutdown(wait=False, cancel_futures=True)
+        if getattr(self, "save_cache_timeout_id", 0) != 0:
+            GLib.Source.remove(self.save_cache_timeout_id)
+            self.save_cache_timeout_id = 0
+            self.save_profile_cache()
+
+        for pool in (getattr(self, "sync_executor", None), getattr(self, "ver_executor", None)):
+            if pool:
+                try:
+                    pool.shutdown(wait=False, cancel_futures=True)
+                except Exception:
+                    pass
 
         for tab in list(self.terminal_tabs):
             shell_pid = tab.get("shell_pid")
@@ -1938,16 +1952,71 @@ class SyncWindow(Adw.ApplicationWindow):
             except Exception:
                 pass
 
+    def init_executors(self):
+        """Initializes or recreates dedicated worker pools for SCM operations and upstream version queries."""
+        for attr in ("sync_executor", "ver_executor", "executor"):
+            pool = getattr(self, attr, None)
+            if pool:
+                try:
+                    pool.shutdown(wait=False, cancel_futures=True)
+                except Exception:
+                    pass
+
+        scm_workers = getattr(self.config, "max_workers", 50) if hasattr(self, "config") else 50
+        scm_workers = max(5, int(scm_workers or 50))
+        # Release-monitoring pool capped at 30 workers to prevent rate-limiting against public Anitya API
+        ver_workers = min(scm_workers, 30)
+
+        self.sync_executor = DaemonThreadPoolExecutor(max_workers=scm_workers)
+        self.ver_executor = DaemonThreadPoolExecutor(max_workers=ver_workers)
+        self.executor = self.sync_executor
+
     def save_profile_cache(self):
         cache_path = self.get_cache_path()
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
+            active_ws = getattr(self.config, "active_workspace", "Default") if hasattr(self, "config") else "Default"
+            payload = json.dumps({
+                "profile": active_ws,
+                "scanned_at": time.time(),
+                "package_data": self.package_data
+            }, indent=2)
             with open(cache_path, "w", encoding="utf-8") as f:
-                json.dump({
-                    "profile": self.config.active_workspace,
-                    "scanned_at": time.time(),
-                    "package_data": self.package_data
-                }, f, indent=2)
+                f.write(payload)
+        except Exception:
+            pass
+
+    def queue_save_profile_cache(self):
+        """Debounces rapid disk cache writes during bulk scans to at most once per second."""
+        if getattr(self, "save_cache_timeout_id", 0) == 0:
+            self.save_cache_timeout_id = GLib.timeout_add(1000, self.flush_save_profile_cache)
+
+    def flush_save_profile_cache(self):
+        self.save_cache_timeout_id = 0
+        self.save_profile_cache_async()
+        return False
+
+    def save_profile_cache_async(self):
+        """Snapshots in-memory package state on the main thread and writes JSON to disk in a background thread."""
+        try:
+            active_ws = getattr(self.config, "active_workspace", "Default") if hasattr(self, "config") else "Default"
+            data_copy = {k: dict(v) if isinstance(v, dict) else v for k, v in self.package_data.items()}
+            cache_path = self.get_cache_path()
+
+            def _write():
+                try:
+                    cache_path.parent.mkdir(parents=True, exist_ok=True)
+                    payload = json.dumps({
+                        "profile": active_ws,
+                        "scanned_at": time.time(),
+                        "package_data": data_copy
+                    }, indent=2)
+                    with open(cache_path, "w", encoding="utf-8") as f:
+                        f.write(payload)
+                except Exception:
+                    pass
+
+            threading.Thread(target=_write, daemon=True).start()
         except Exception:
             pass
 
@@ -2026,12 +2095,8 @@ class SyncWindow(Adw.ApplicationWindow):
         # Reload repositories
         self.load_workspace_repositories()
 
-        # Recreate executor pool on-the-fly with new concurrency settings!
-        try:
-            self.executor.shutdown(wait=False, cancel_futures=True)
-        except Exception:
-            pass
-        self.executor = DaemonThreadPoolExecutor(max_workers=self.config.max_workers)
+        # Recreate executor pools on-the-fly with new concurrency settings!
+        self.init_executors()
 
         # Update sidebar list row entries dynamically
         self.populate_sidebar_rows()
@@ -2701,17 +2766,18 @@ class SyncWindow(Adw.ApplicationWindow):
         self.fwd_completed_count = 0
         self.update_progress_ui()
 
-        # Interleave task submission across packages so distinct subsystems
-        # (local Git / Gitea pool vs external release-monitoring.org REST API)
-        # execute in parallel across worker threads, refreshing each package end-to-end
+        # Dispatch across dedicated worker pools:
+        # 1. SCM pool for local Git checks, worktrees, and conditional PR detection
+        # 2. Version pool for external release-monitoring.org REST API queries
         for repo in self.repos:
             try:
-                self.executor.submit(self.run_bg_sync, repo)
-                self.executor.submit(self.run_bg_version, repo)
-                if self.unstable_b:
-                    self.executor.submit(self.run_bg_forward, repo)
+                self.sync_executor.submit(self.run_bg_sync, repo)
             except RuntimeError:
-                break
+                pass
+            try:
+                self.ver_executor.submit(self.run_bg_version, repo)
+            except RuntimeError:
+                pass
 
     def refresh_single_package(self, pkg_name):
         """Asynchronously triggers background checks for a single package and updates its row in all relevant lists."""
@@ -2721,9 +2787,8 @@ class SyncWindow(Adw.ApplicationWindow):
         self.meson_drift_cache.pop(pkg_name, None)
 
         try:
-            self.executor.submit(self.run_bg_sync_single, pkg_name)
-            self.executor.submit(self.run_bg_version_single, pkg_name)
-            self.executor.submit(self.run_bg_forward_single, pkg_name)
+            self.sync_executor.submit(self.run_bg_sync_single, pkg_name)
+            self.ver_executor.submit(self.run_bg_version_single, pkg_name)
         except RuntimeError:
             pass
 
@@ -2742,13 +2807,20 @@ class SyncWindow(Adw.ApplicationWindow):
     def run_bg_sync_single(self, repo):
         name, data = sb.check_repo_sync(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
         wt_data = self.check_worktrees_for_repo(repo)
-        GLib.idle_add(self.update_sync_row_single, name, data, wt_data)
+        pr_data = {"has_pr": False}
+        if self.unstable_b and data.get("status") == "success" and data.get("next_status") != "No next branch":
+            next_ahead = data.get("next_ahead", 0)
+            if next_ahead > 0:
+                _, pr_data = sb.check_repo_pr(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
+        GLib.idle_add(self.update_sync_row_single, name, data, wt_data, pr_data)
 
-    def update_sync_row_single(self, name, data, wt_data=None):
+    def update_sync_row_single(self, name, data, wt_data=None, pr_data=None):
         if data.get("status") == "success":
             self.package_data[name]["sync"] = data
             if wt_data:
                 self.package_data[name]["worktree"] = wt_data
+            if pr_data is not None:
+                self.package_data[name]["pr"] = pr_data
             self.refreshed_sync_packages.add(name)
             self.update_row_ui(name)
             self.check_and_mark_package_refreshed(name)
@@ -2756,6 +2828,9 @@ class SyncWindow(Adw.ApplicationWindow):
                 self.update_detail_sync_ui(name)
                 self.update_detail_worktree_ui(name)
                 self.update_detail_title(name)
+        else:
+            self.package_data[name]["sync"] = data
+            self.update_row_ui(name)
 
     def run_bg_version_single(self, repo):
         name, data = sb.check_repo_version(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p, ignored_unstable_versions=self.ignored_unstable_versions)
@@ -2772,7 +2847,9 @@ class SyncWindow(Adw.ApplicationWindow):
                 self.update_detail_title(name)
 
     def run_bg_forward_single(self, repo):
-        _, sync_data = sb.check_repo_sync(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
+        sync_data = self.package_data.get(repo, {}).get("sync")
+        if not sync_data or sync_data.get("status") != "success":
+            _, sync_data = sb.check_repo_sync(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
         pr_data = {"has_pr": False}
         if self.unstable_b and sync_data.get("status") == "success" and sync_data.get("next_status") != "No next branch":
             next_ahead = sync_data.get("next_ahead", 0)
@@ -4205,11 +4282,9 @@ class SyncWindow(Adw.ApplicationWindow):
         if not self.repos or pkg_name not in self.repos:
             return
 
-        # Start direct priority daemon threads to bypass self.executor queue fanning!
+        # Start direct priority daemon threads to bypass executor queues!
         threading.Thread(target=self.run_bg_sync_single, args=(pkg_name,), daemon=True).start()
         threading.Thread(target=self.run_bg_version_single, args=(pkg_name,), daemon=True).start()
-        if self.unstable_b:
-            threading.Thread(target=self.run_bg_forward_single, args=(pkg_name,), daemon=True).start()
 
     def update_detail_title(self, package_name):
         if getattr(self, "current_selected_package", None) != package_name:
@@ -4684,12 +4759,12 @@ class SyncWindow(Adw.ApplicationWindow):
             self.sidebar_spinner.start()
             parts = []
             if sync_running:
-                parts.append(f"Sync: {sync_done}/{sync_total}")
+                parts.append(f"Sync: {min(sync_done, sync_total)}/{sync_total}")
             else:
                 parts.append("Sync: Done")
 
             if ver_running:
-                parts.append(f"Versions: {ver_done}/{sync_total}")
+                parts.append(f"Versions: {min(ver_done, sync_total)}/{sync_total}")
             else:
                 parts.append("Versions: Done")
 
@@ -4697,6 +4772,10 @@ class SyncWindow(Adw.ApplicationWindow):
         else:
             self.sidebar_spinner.stop()
             self.sidebar_progress_label.set_text("Scan Completed")
+            if getattr(self, "save_cache_timeout_id", 0) != 0:
+                GLib.Source.remove(self.save_cache_timeout_id)
+                self.save_cache_timeout_id = 0
+            self.save_profile_cache_async()
 
     def start_sync_scan(self):
         if not self.repos:
@@ -4708,30 +4787,37 @@ class SyncWindow(Adw.ApplicationWindow):
 
         for repo in self.repos:
             try:
-                self.executor.submit(self.run_bg_sync, repo)
+                self.sync_executor.submit(self.run_bg_sync, repo)
             except RuntimeError:
                 break
 
     def run_bg_sync(self, repo):
         name, data = sb.check_repo_sync(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
         wt_data = self.check_worktrees_for_repo(repo)
-        GLib.idle_add(self.add_sync_result, name, data, wt_data)
+        pr_data = {"has_pr": False}
+        if self.unstable_b and data.get("status") == "success" and data.get("next_status") != "No next branch":
+            next_ahead = data.get("next_ahead", 0)
+            if next_ahead > 0:
+                _, pr_data = sb.check_repo_pr(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
+        GLib.idle_add(self.add_sync_result, name, data, wt_data, pr_data)
 
     def check_and_mark_package_refreshed(self, name):
         if name in self.refreshed_sync_packages and name in self.refreshed_version_packages:
             if name not in self.refreshed_packages:
                 self.refreshed_packages.add(name)
-            self.save_profile_cache()
+            self.queue_save_profile_cache()
             if getattr(self, "current_selected_package", None) == name:
                 self.update_detail_title(name)
 
-    def add_sync_result(self, name, data, wt_data=None):
+    def add_sync_result(self, name, data, wt_data=None, pr_data=None):
         self.sync_completed_count += 1
 
         if data.get("status") == "success":
             self.package_data[name]["sync"] = data
             if wt_data:
                 self.package_data[name]["worktree"] = wt_data
+            if pr_data is not None:
+                self.package_data[name]["pr"] = pr_data
             self.refreshed_sync_packages.add(name)
             self.update_row_ui(name)
             self.check_and_mark_package_refreshed(name)
@@ -4739,6 +4825,9 @@ class SyncWindow(Adw.ApplicationWindow):
                 self.update_detail_sync_ui(name)
                 self.update_detail_worktree_ui(name)
                 self.update_detail_title(name)
+        else:
+            self.package_data[name]["sync"] = data
+            self.update_row_ui(name)
 
         self.update_progress_ui()
 
@@ -4751,7 +4840,7 @@ class SyncWindow(Adw.ApplicationWindow):
 
         for repo in self.repos:
             try:
-                self.executor.submit(self.run_bg_version, repo)
+                self.ver_executor.submit(self.run_bg_version, repo)
             except RuntimeError:
                 break
 
@@ -4782,12 +4871,14 @@ class SyncWindow(Adw.ApplicationWindow):
         self.fwd_completed_count = 0
         for repo in self.repos:
             try:
-                self.executor.submit(self.run_bg_forward, repo)
+                self.sync_executor.submit(self.run_bg_forward, repo)
             except RuntimeError:
                 break
 
     def run_bg_forward(self, repo):
-        _, sync_data = sb.check_repo_sync(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
+        sync_data = self.package_data.get(repo, {}).get("sync")
+        if not sync_data or sync_data.get("status") != "success":
+            _, sync_data = sb.check_repo_sync(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
         pr_data = {"has_pr": False}
         if self.unstable_b and sync_data.get("status") == "success" and sync_data.get("next_status") != "No next branch":
             next_ahead = sync_data.get("next_ahead", 0)

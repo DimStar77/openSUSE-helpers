@@ -850,6 +850,111 @@ class TestSyncWindow(unittest.TestCase):
         # Diff buffer should NEVER be touched by background sync polling
         mock_win.refresh_active_diff.assert_not_called()
 
+    def test_init_executors_worker_allocation(self):
+        from geckopit import SyncWindow
+        mock_win = mock.Mock()
+        mock_win.config = mock.Mock()
+        mock_win.config.max_workers = 50
+        mock_win.sync_executor = None
+        mock_win.ver_executor = None
+        mock_win.executor = None
+
+        SyncWindow.init_executors(mock_win)
+        try:
+            self.assertEqual(mock_win.sync_executor._max_workers, 50)
+            self.assertEqual(mock_win.ver_executor._max_workers, 30)
+            self.assertIs(mock_win.executor, mock_win.sync_executor)
+        finally:
+            mock_win.sync_executor.shutdown(wait=False)
+            mock_win.ver_executor.shutdown(wait=False)
+
+        # When concurrency is configured below 30, both pools use the lower limit
+        mock_win.config.max_workers = 12
+        SyncWindow.init_executors(mock_win)
+        try:
+            self.assertEqual(mock_win.sync_executor._max_workers, 12)
+            self.assertEqual(mock_win.ver_executor._max_workers, 12)
+        finally:
+            mock_win.sync_executor.shutdown(wait=False)
+            mock_win.ver_executor.shutdown(wait=False)
+
+    @mock.patch("sync_backend.check_repo_sync")
+    @mock.patch("sync_backend.check_repo_pr")
+    @mock.patch("geckopit.GLib.idle_add")
+    def test_chained_pr_sync_conditional_execution(self, mock_idle, mock_pr, mock_sync):
+        from geckopit import SyncWindow
+        mock_win = mock.Mock()
+        mock_win.stable_b = "factory"
+        mock_win.unstable_b = "next"
+        mock_win.stable_p = "/workspace"
+        mock_win.check_worktrees_for_repo.return_value = {"stable": {}}
+
+        # Case 1: next is ahead -> check_repo_pr MUST be called
+        mock_sync.return_value = ("pkg_ahead", {
+            "status": "success",
+            "next_status": "Ahead",
+            "next_ahead": 3
+        })
+        mock_pr.return_value = ("pkg_ahead", {"has_pr": True, "number": 101})
+
+        SyncWindow.run_bg_sync(mock_win, "pkg_ahead")
+        mock_sync.assert_called_with("pkg_ahead", stable_branch="factory", unstable_branch="next", workspace_path="/workspace")
+        mock_pr.assert_called_with("pkg_ahead", stable_branch="factory", unstable_branch="next", workspace_path="/workspace")
+        mock_idle.assert_called_with(
+            mock_win.add_sync_result,
+            "pkg_ahead",
+            mock_sync.return_value[1],
+            {"stable": {}},
+            {"has_pr": True, "number": 101}
+        )
+
+        # Case 2: next is NOT ahead -> check_repo_pr MUST NOT be called
+        mock_pr.reset_mock()
+        mock_idle.reset_mock()
+        mock_sync.return_value = ("pkg_clean", {
+            "status": "success",
+            "next_status": "In Sync",
+            "next_ahead": 0
+        })
+
+        SyncWindow.run_bg_sync(mock_win, "pkg_clean")
+        mock_pr.assert_not_called()
+        mock_idle.assert_called_with(
+            mock_win.add_sync_result,
+            "pkg_clean",
+            mock_sync.return_value[1],
+            {"stable": {}},
+            {"has_pr": False}
+        )
+
+    def test_update_sync_row_single_pr_propagation(self):
+        from geckopit import SyncWindow
+        mock_win = mock.Mock()
+        mock_win.current_selected_package = "pkg_test"
+        mock_win.package_data = {
+            "pkg_test": {
+                "sync": {},
+                "worktree": {},
+                "pr": {}
+            }
+        }
+        mock_win.refreshed_sync_packages = set()
+
+        sync_data = {"status": "success", "pool_status": "In Sync"}
+        wt_data = {"stable": {"clean": True}}
+        pr_data = {"has_pr": True, "number": 77}
+
+        SyncWindow.update_sync_row_single(mock_win, "pkg_test", sync_data, wt_data=wt_data, pr_data=pr_data)
+
+        self.assertEqual(mock_win.package_data["pkg_test"]["sync"], sync_data)
+        self.assertEqual(mock_win.package_data["pkg_test"]["worktree"], wt_data)
+        self.assertEqual(mock_win.package_data["pkg_test"]["pr"], pr_data)
+        self.assertIn("pkg_test", mock_win.refreshed_sync_packages)
+        mock_win.update_row_ui.assert_called_with("pkg_test")
+        mock_win.update_detail_sync_ui.assert_called_with("pkg_test")
+        mock_win.update_detail_worktree_ui.assert_called_with("pkg_test")
+        mock_win.update_detail_title.assert_called_with("pkg_test")
+
 class TestPRPrefill(unittest.TestCase):
     def test_parse_changes_diff_single_entry(self):
         import sync_backend as sb
