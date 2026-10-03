@@ -23,7 +23,8 @@ from upgrade.changelog import (
     build_changelog_from_items,
     remove_patch_from_spec,
     CHANGELOG_WRAP_WIDTH,
-    extract_appstream_notes
+    extract_appstream_notes,
+    APPSTREAM_XML_REGEX
 )
 
 class TestUpgradeHelperArchitecture(unittest.TestCase):
@@ -445,6 +446,111 @@ Release:        0
             self.assertIn("- Update to version 2.0:", formatted)
             self.assertIn("+ New features:", formatted)
             self.assertIn("- First cool feature", formatted)
+
+    def test_appstream_xml_regex(self):
+        """Tests that APPSTREAM_XML_REGEX matches .xml, .xml.in, and .xml.in.in variants."""
+        valid_filenames = [
+            "org.gnome.Baobab.metainfo.xml",
+            "org.gnome.Baobab.appdata.xml",
+            "info.febvre.Komikku.metainfo.xml.in",
+            "info.febvre.Komikku.metainfo.xml.in.in",
+            "data/info.febvre.Komikku.metainfo.xml.in.in",
+            "data/org.example.App.appdata.xml.in.in",
+            "metainfo.xml",
+            "appdata.xml.in",
+        ]
+        for f in valid_filenames:
+            self.assertTrue(bool(APPSTREAM_XML_REGEX.search(f)), f"Failed to match valid: {f}")
+
+        invalid_filenames = [
+            "info.febvre.Komikku.metainfo.xml.bak",
+            "info.febvre.Komikku.metainfo.xml.patch",
+            "info.febvre.Komikku.metainfo.xml.in.orig",
+            "NEWS",
+            "meson.build",
+            "metainfo.xml.txt",
+        ]
+        for f in invalid_filenames:
+            self.assertFalse(bool(APPSTREAM_XML_REGEX.search(f)), f"Incorrectly matched invalid: {f}")
+
+    def test_extract_appstream_notes_double_in_and_fluff(self):
+        """Tests extraction from metainfo.xml.in.in with trailing fluff paragraph and translation lines."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            xml_path = os.path.join(tmpdir, "info.febvre.Komikku.metainfo.xml.in.in")
+            with open(xml_path, "w", encoding="utf-8") as f:
+                f.write("""<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <releases>
+    <release version="51.1.0" date="2026-10-03">
+      <description translate="no">
+        <ul>
+          <li>[Card] Tracking: Added warning message when sync fails</li>
+          <li>[Reader] Fixed selection coordinate calculation</li>
+          <li>[L10n] Updated French, Indonesian and Korean translations</li>
+        </ul>
+        <p>Happy reading.</p>
+      </description>
+    </release>
+  </releases>
+</component>""")
+            notes = extract_appstream_notes(xml_path, version="51.1.0")
+            self.assertIsNotNone(notes)
+            self.assertIn("* [Card] Tracking:", notes)
+            self.assertNotIn("Happy reading", notes)
+
+            # Test changelog formatting
+            diff_lines = ["--- a/test.xml", "+++ b/test.xml", "@@ -0,0 +5 @@"]
+            diff_lines += ["+" + l for l in notes.splitlines()]
+            formatted = format_changelog_entry("\n".join(diff_lines), "51.1.0")
+            self.assertIn("- Update to version 51.1.0:", formatted)
+            self.assertIn("[Card] Tracking: Added warning message when sync fails", formatted)
+            self.assertIn("[Reader] Fixed selection coordinate calculation", formatted)
+            self.assertIn("Updated translations.", formatted)
+            self.assertNotIn("Happy reading", formatted)
+
+    def test_obs_scm_metainfo_double_in(self):
+        """Tests ObsScmUpgradeHelper changelog target discovery and extraction on metainfo.xml.in.in."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service_path = os.path.join(tmpdir, "_service")
+            with open(service_path, "w") as f:
+                f.write('''<services>
+  <service name="obs_scm" mode="manual">
+    <param name="url">https://codeberg.org/valos/Komikku</param>
+    <param name="scm">git</param>
+    <param name="revision">v51.1.0</param>
+    <param name="filename">Komikku</param>
+  </service>
+</services>''')
+            with open(os.path.join(tmpdir, "Komikku.spec"), "w") as f:
+                f.write("Name: Komikku\n")
+
+            clone_dir = os.path.join(tmpdir, "Komikku")
+            data_dir = os.path.join(clone_dir, "data")
+            os.makedirs(os.path.join(clone_dir, ".git"))
+            os.makedirs(data_dir)
+
+            xml_path = os.path.join(data_dir, "info.febvre.Komikku.metainfo.xml.in.in")
+            with open(xml_path, "w", encoding="utf-8") as f:
+                f.write('''<?xml version="1.0" encoding="UTF-8"?>
+<component>
+  <releases>
+    <release version="51.1.0">
+      <description>
+        <ul>
+          <li>Double in extension test note</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+</component>''')
+
+            helper = ObsScmUpgradeHelper(tmpdir)
+            target = helper.find_upstream_changelog_target(clone_dir)
+            self.assertEqual(target, os.path.relpath(xml_path, clone_dir))
+
+            diffs = helper.extract_git_diffs(pkg_name="Komikku", new_ver="51.1.0")
+            self.assertIn("osc-collab.NEWS", diffs)
+            self.assertIn("Double in extension test note", diffs["osc-collab.NEWS"])
 
     def test_obs_scm_get_obsinfo_path_and_metadata_mismatch(self):
         """Tests case where repo URL is Junction.git, but obsinfo on disk is junction.obsinfo."""

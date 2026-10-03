@@ -10,6 +10,7 @@ import textwrap
 from typing import Optional, List, Tuple
 
 CHANGELOG_WRAP_WIDTH = 67
+APPSTREAM_XML_REGEX = re.compile(r'(metainfo|appdata)\.xml(?:\.in)*$', re.IGNORECASE)
 
 def wrap_bullet(text: str, level: int = 1, width: int = CHANGELOG_WRAP_WIDTH) -> str:
     """
@@ -262,7 +263,7 @@ def format_changelog_entry(
                 b_txt = b_txt[0].upper() + b_txt[1:]
             header_cap = header[0].upper() + header[1:] if header else ""
             structured_items.append((1, f"{header_cap}: {b_txt}"))
-        elif header:
+        elif header and bullets:
             header_cap = header[0].upper() + header[1:] if header else ""
             structured_items.append((1, f"{header_cap}:"))
             for sub_lvl, b_txt in bullets:
@@ -270,6 +271,13 @@ def format_changelog_entry(
                 if lvl != 3 and b_txt:
                     b_txt = b_txt[0].upper() + b_txt[1:]
                 structured_items.append((lvl, b_txt))
+        elif header and not bullets:
+            # Standalone paragraph or single description note
+            if len(sections) == 1:
+                header_clean = header.rstrip(":").strip()
+                if header_clean:
+                    header_cap = header_clean[0].upper() + header_clean[1:]
+                    structured_items.append((1, header_cap))
         else:
             for sub_lvl, b_txt in bullets:
                 lvl = 2 if sub_lvl == 2 else 1
@@ -324,12 +332,30 @@ def extract_appstream_notes(xml_path: str, version: Optional[str] = None) -> Opt
 
     rel_name = matched_rel.get("version") or version or ""
     lines = [f"Version {rel_name}\n"]
-    for child in desc:
+    desc_children = list(desc)
+    for idx, child in enumerate(desc_children):
         if child.tag == "p":
             txt = "".join(child.itertext()).strip()
-            if txt:
+            if not txt:
+                continue
+            # Check if this paragraph is followed by a bullet list (i.e. acts as a section header)
+            is_header = False
+            for next_child in desc_children[idx + 1:]:
+                if next_child.tag == "ul":
+                    is_header = True
+                    break
+                elif next_child.tag == "p" and "".join(next_child.itertext()).strip():
+                    break
+
+            if is_header:
                 txt = txt.rstrip(":") + ":"
                 lines.append(f"\n{txt}")
+            else:
+                # Standalone paragraph (not introducing a list).
+                # Skip conversational sign-offs (e.g. "Happy reading", "Enjoy!", "Cheers")
+                if re.match(r'^(happy\s+reading|enjoy|cheers|thanks|thank\s+you)\b', txt, re.IGNORECASE):
+                    continue
+                lines.append(f"* {txt}")
         elif child.tag == "ul":
             for li in child.findall("li"):
                 li_txt = "".join(li.itertext()).strip()

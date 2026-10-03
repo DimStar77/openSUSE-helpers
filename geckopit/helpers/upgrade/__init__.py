@@ -15,7 +15,8 @@ from .changelog import (
     build_changelog_from_items,
     remove_patch_from_spec,
     check_retrospective_news_changes,
-    extract_appstream_notes
+    extract_appstream_notes,
+    APPSTREAM_XML_REGEX
 )
 
 # Registry of upgrade helpers in order of evaluation
@@ -60,4 +61,5 @@ __all__ = [
     "remove_patch_from_spec",
     "check_retrospective_news_changes",
     "extract_appstream_notes",
+    "APPSTREAM_XML_REGEX",
 ]

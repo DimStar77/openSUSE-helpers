@@ -21,7 +21,8 @@ from .changelog import (
     format_changelog_entry,
     remove_patch_from_spec,
     check_retrospective_news_changes,
-    extract_appstream_notes
+    extract_appstream_notes,
+    APPSTREAM_XML_REGEX
 )
 
 class ObsScmUpgradeHelper(BaseUpgradeHelper):
@@ -440,7 +441,7 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
                 )
                 if res_all.returncode == 0:
                     for f in res_all.stdout.splitlines():
-                        if re.search(r'(metainfo|appdata)\.xml(\.in)?$', f, re.IGNORECASE):
+                        if APPSTREAM_XML_REGEX.search(f):
                             return f
             except Exception:
                 pass
@@ -453,7 +454,7 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         # 2b. Check for AppStream XML file on disk
         for root, _, files in os.walk(upstream_repo):
             for f in files:
-                if re.search(r'(metainfo|appdata)\.xml(\.in)?$', f, re.IGNORECASE):
+                if APPSTREAM_XML_REGEX.search(f):
                     return os.path.relpath(os.path.join(root, f), upstream_repo)
 
         return "NEWS"
@@ -475,7 +476,7 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         # Auto-detect upstream changelog filename (evaluating diff activity against old_rev)
         changelog_target = self.find_upstream_changelog_target(upstream_repo, old_rev=old_rev, new_rev=new_rev)
 
-        is_appstream = bool(re.search(r'(metainfo|appdata)\.xml(\.in)?$', changelog_target, re.IGNORECASE))
+        is_appstream = bool(APPSTREAM_XML_REGEX.search(changelog_target))
         if is_appstream:
             xml_path = os.path.join(upstream_repo, changelog_target)
             notes = extract_appstream_notes(xml_path, version=new_ver)
