@@ -311,6 +311,21 @@ geckopit-cli --upgrade 4.2.2
 geckopit-cli --upgrade 4.2.2 --dry-run
 </code></pre>
 <hr />
+<h3 id="sequential-patch-pre-flight-verification-check-patches">🔍 Sequential Patch Pre-Flight Verification (<code>--check-patches</code>)</h3>
+<p>When maintaining packages with multiple downstream patches, verifying whether patches apply cleanly against a newly downloaded archive or rebased tree previously required manual <code>quilt setup</code>, extracting large archives, and managing quilt stacks.</p>
+<p>Geckopit provides a built-in sequential patch verification engine:</p>
+<pre><code class="language-bash"># Verify downstream patches against the upstream source in strict .spec order
+geckopit-cli --check-patches
+
+# Or run against a specific package from anywhere
+geckopit-cli webkitgtk --check-patches
+</code></pre>
+<p><strong>Key Verification Principles</strong>:
+* <strong>Sequential Dependency Chaining</strong>: Unlike isolated file checks, patches are applied sequentially (<code>Patch0</code> ➔ <code>Patch1</code> ➔ <code>Patch2</code>), allowing dependent patches to chain on top of earlier modifications.
+* <strong>Halt at First Failure</strong>: Like quilt, the engine immediately halts at the first failing patch to prevent misleading cascade failures.
+* <strong>Resume After Rebase</strong>: When a patch fails, simply edit and fix the patch in your editor, then re-run <code>geckopit-cli --check-patches</code>. The engine verifies in ~0.1s without needing directory teardowns, <code>.pc</code> deletions, or manual quilt resets!
+* <strong>Automated Upgrade Integration</strong>: <code>geckopit-cli --upgrade</code> automatically triggers this pre-flight check after dropping merged patches, immediately alerting you if any remaining downstream patch needs rebasing before you commit.</p>
+<hr />
 <h2 id="4-auditing-fixing-build-dependency-drift-meson-cmake-autotools-python">🔧 4. Auditing &amp; Fixing Build Dependency Drift (Meson, CMake, Autotools, Python)</h2>
 <p>Upstream projects often bump minimum dependency constraints in <code>meson.build</code>, <code>CMakeLists.txt</code>, <code>configure.ac</code>, or <code>pyproject.toml</code> without maintainers noticing. Geckopit inspects the <code>.spec</code> file to identify active build systems (supporting declarative <code>BuildSystem:</code> tags, build invocation macros, <code>%pyproject_wheel</code>, and BuildRequires), and audits upstream declarations against your <code>.spec</code> <code>BuildRequires:</code> (including <code>%{python_module ...}</code>).</p>
 <hr />

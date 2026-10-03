@@ -27,6 +27,7 @@ import commit_helper as ch
 from upgrade import get_upgrade_helper, list_upgrade_helpers
 import meson_drift
 import pr_helper
+import patch_checker
 
 
 def render_single_package_dashboard(data):
@@ -1027,6 +1028,7 @@ def print_help():
     print(f"\n{sb.BOLD}Package Upgrades & Spec Tools:{sb.RESET}")
     print(f"  {sb.BOLD}-u, --upgrade [REV]{sb.RESET}")
     print("                     Upgrades package to specified revision (default: @PARENT_TAG@).")
+    print(f"  {sb.BOLD}--check-patches{sb.RESET}    Sequentially verifies downstream patches apply against upstream source.")
     print(f"  {sb.BOLD}-c, --commit{sb.RESET}       Stages packaging files, cleans whitespaces, and commits via $EDITOR.")
     print(f"  {sb.BOLD}-d, --audit-deps{sb.RESET}   Audits upstream build dependencies against .spec BuildRequires.")
     print(f"  {sb.BOLD}--fix-deps{sb.RESET}         Bumps .spec BuildRequires to match upstream build files and logs changes.")
@@ -1160,6 +1162,13 @@ def main():
             print(f"{sb.RED}[Error]{sb.RESET} --commit must be run inside a package directory (or target a package).", file=sys.stderr)
             sys.exit(1)
         sys.exit(run_package_commit(target_pkg_dir, interactive=not no_edit))
+
+    # Execute check-patches mode
+    if "--check-patches" in sys.argv:
+        if not target_pkg_dir:
+            print(f"{sb.RED}[Error]{sb.RESET} --check-patches must be run inside a package directory (or target a package).", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(0 if patch_checker.run_check_patches_cli(target_pkg_dir) else 1)
 
     # Execute list-prs mode
     if "--list-prs" in sys.argv:

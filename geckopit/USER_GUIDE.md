@@ -151,6 +151,28 @@ geckopit-cli --upgrade 4.2.2 --dry-run
 
 ---
 
+### 🔍 Sequential Patch Pre-Flight Verification (`--check-patches`)
+
+When maintaining packages with multiple downstream patches, verifying whether patches apply cleanly against a newly downloaded archive or rebased tree previously required manual `quilt setup`, extracting large archives, and managing quilt stacks.
+
+Geckopit provides a built-in sequential patch verification engine:
+
+```bash
+# Verify downstream patches against the upstream source in strict .spec order
+geckopit-cli --check-patches
+
+# Or run against a specific package from anywhere
+geckopit-cli webkitgtk --check-patches
+```
+
+**Key Verification Principles**:
+* **Sequential Dependency Chaining**: Unlike isolated file checks, patches are applied sequentially (`Patch0` ➔ `Patch1` ➔ `Patch2`), allowing dependent patches to chain on top of earlier modifications.
+* **Halt at First Failure**: Like quilt, the engine immediately halts at the first failing patch to prevent misleading cascade failures.
+* **Resume After Rebase**: When a patch fails, simply edit and fix the patch in your editor, then re-run `geckopit-cli --check-patches`. The engine verifies in ~0.1s without needing directory teardowns, `.pc` deletions, or manual quilt resets!
+* **Automated Upgrade Integration**: `geckopit-cli --upgrade` automatically triggers this pre-flight check after dropping merged patches, immediately alerting you if any remaining downstream patch needs rebasing before you commit.
+
+---
+
 ## 🔧 4. Auditing & Fixing Build Dependency Drift (Meson, CMake, Autotools, Python)
 
 Upstream projects often bump minimum dependency constraints in `meson.build`, `CMakeLists.txt`, `configure.ac`, or `pyproject.toml` without maintainers noticing. Geckopit inspects the `.spec` file to identify active build systems (supporting declarative `BuildSystem:` tags, build invocation macros, `%pyproject_wheel`, and BuildRequires), and audits upstream declarations against your `.spec` `BuildRequires:` (including `%{python_module ...}`).

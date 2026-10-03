@@ -802,6 +802,16 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         # 7. Audit and drop merged patches
         dropped_patches = self.audit_and_drop_merged_patches(pkg_name, on_log=log)
 
+        # 7b. Sequentially verify remaining downstream patches
+        try:
+            import patch_checker
+            p_res = patch_checker.check_patches_sequential(self.package_dir)
+            if not p_res["success"] and p_res["failed_patch"]:
+                log(f"⚠️  Notice: Downstream patch '{p_res['failed_patch']}' fails to apply to {new_ver or rev}!")
+                log("   Run 'geckopit-cli --check-patches' to inspect and re-verify after rebasing.")
+        except Exception:
+            pass
+
         # 8. Update Version: in *.spec
         if new_ver:
             self.update_spec_version(new_ver, on_log=log)

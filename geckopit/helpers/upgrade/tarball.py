@@ -529,6 +529,16 @@ class TarballUpgradeHelper(BaseUpgradeHelper):
         # 4b. Audit and Drop Merged Patches
         dropped_patches = self.audit_and_drop_merged_patches(new_archive_path, on_log=log)
 
+        # 4b2. Sequentially verify remaining downstream patches
+        try:
+            import patch_checker
+            p_res = patch_checker.check_patches_sequential(self.package_dir)
+            if not p_res["success"] and p_res["failed_patch"]:
+                log(f"⚠️  Notice: Downstream patch '{p_res['failed_patch']}' fails to apply to {target_version}!")
+                log("   Run 'geckopit-cli --check-patches' to inspect and re-verify after rebasing.")
+        except Exception:
+            pass
+
         # 4c. Audit and Fix Meson Dependency Drift
         fixed_meson_drifts = []
         try:

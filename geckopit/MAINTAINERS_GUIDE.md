@@ -280,7 +280,19 @@ geckopit-cli --upgrade 47.2
 geckopit-cli --upgrade --dry-run
 ```
 
-### 🔍 3. Workspace Batch Audits
+### 🔍 3. Sequential Patch Pre-Flight Verification
+Verify whether downstream patches apply cleanly against the current or upgraded upstream source:
+
+```bash
+# Verify downstream patches in strict .spec declaration order
+geckopit-cli --check-patches
+```
+
+*   **Sequential Chaining & Quilt Parity**: Chains dependent patches sequentially and immediately halts at the first failing patch to report exact hunk failures without cascading errors.
+*   **Resume After Rebase**: Re-run anytime after editing or refreshing a patch—runs in milliseconds without requiring directory teardowns or manual quilt setup resets.
+*   **Upgrade Pre-Flight**: Integrated directly into `geckopit-cli --upgrade` and Cockpit update engines.
+
+### 🔍 4. Workspace Batch Audits
 From the workspace root directory, run parallel batch audits across all packages:
 
 ```bash
@@ -303,7 +315,7 @@ geckopit-cli --include-not-in-pool
 geckopit-cli --todo
 ```
 
-### 📥 4. Pull Request Management & Merging
+### 📥 5. Pull Request Management & Merging
 Manage and apply Gitea pull requests directly from the terminal without manual remote tracking or SHA hunting:
 
 ```bash
@@ -327,7 +339,7 @@ geckopit-cli --merge-pr 24 --no-commit
 *   **Spec Collision Guard**: Detects duplicate patch declarations (e.g. conflicting `Patch2:`) in `.spec` files, leaving changes staged for maintainer review with `git commit -c FETCH_HEAD`.
 *   **Forwarded PR & Group Intelligence**: Automatically queries `_ObsPrj` to determine if a PR is forwarded individually or bundled into a multi-package release group (`pr-manage combine`).
 
-### 🔄 5. Legacy Script Compatibility
+### 🔄 6. Legacy Script Compatibility
 Existing maintainer scripts (`gc.sh`, `gnome-audit.sh`, `gnome-catchup.sh`, `gnome-promote.sh`, `gnome-pool-audit.sh`, and `obs_scm-update.sh`) automatically delegate to `geckopit-cli` when installed in `$PATH`, maintaining muscle memory while using the modern Python backend.
 
 ---
