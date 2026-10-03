@@ -369,6 +369,29 @@ geckopit-cli --forward --pr
 geckopit-cli --forward --no-pr
 </code></pre>
 <hr />
+<h3 id="managing-merging-pull-requests-cli">📥 Managing &amp; Merging Pull Requests (CLI)</h3>
+<p>Maintainers routinely review and incorporate contributions from external submitters or check open PR status across their workspace:</p>
+<pre><code class="language-bash"># List open PRs for the current package (or workspace-wide overview from the root)
+geckopit-cli --list-prs
+
+# List open PRs for a specific package from anywhere
+geckopit-cli webkitgtk --list-prs
+
+# Fetch and merge a contributor PR onto your active branch HEAD
+geckopit-cli --merge-pr 24
+
+# Merge and squash multi-commit PRs into a single atomic commit
+geckopit-cli --merge-pr 24 --squash
+
+# Stage PR changes without auto-committing (for review or manual touch-ups)
+geckopit-cli --merge-pr 24 --no-commit
+</code></pre>
+<p><strong>Key PR Merge Capabilities</strong>:
+* <strong>Direct Origin Fetch</strong>: Fetches <code>pull/&lt;ID&gt;/head</code> directly from <code>origin</code> without needing contributor fork URLs or commit SHAs.
+* <strong>Smart Changelog Redating</strong>: Automatically places the contributor's changelog entry at the top of <code>.changes</code>, redates it to the current time, and preserves contributor authorship.
+* <strong>Spec Collision Guard</strong>: Scans <code>.spec</code> files for duplicate <code>Patch&lt;N&gt;:</code> numbers (e.g. conflicting <code>Patch2:</code> additions) and safely halts before committing, leaving changes staged for maintainer review with <code>git commit -c FETCH_HEAD</code>.
+* <strong>Forwarded PR &amp; Group Intelligence</strong>: <code>--list-prs</code> queries <code>_ObsPrj</code> to report whether a package PR is forwarded individually or bundled into a multi-package release group (e.g. <code>pr-manage combine</code>).</p>
+<hr />
 <h2 id="6-synchronizing-multi-branch-workspaces">🔄 6. Synchronizing Multi-Branch Workspaces</h2>
 <p>Synchronize your local workspace trees with remote tracking branches across all profile checkouts.</p>
 <hr />

@@ -232,6 +232,35 @@ geckopit-cli --forward --no-pr
 
 ---
 
+### 📥 Managing & Merging Pull Requests (CLI)
+
+Maintainers routinely review and incorporate contributions from external submitters or check open PR status across their workspace:
+
+```bash
+# List open PRs for the current package (or workspace-wide overview from the root)
+geckopit-cli --list-prs
+
+# List open PRs for a specific package from anywhere
+geckopit-cli webkitgtk --list-prs
+
+# Fetch and merge a contributor PR onto your active branch HEAD
+geckopit-cli --merge-pr 24
+
+# Merge and squash multi-commit PRs into a single atomic commit
+geckopit-cli --merge-pr 24 --squash
+
+# Stage PR changes without auto-committing (for review or manual touch-ups)
+geckopit-cli --merge-pr 24 --no-commit
+```
+
+**Key PR Merge Capabilities**:
+* **Direct Origin Fetch**: Fetches `pull/<ID>/head` directly from `origin` without needing contributor fork URLs or commit SHAs.
+* **Smart Changelog Redating**: Automatically places the contributor's changelog entry at the top of `.changes`, redates it to the current time, and preserves contributor authorship.
+* **Spec Collision Guard**: Scans `.spec` files for duplicate `Patch<N>:` numbers (e.g. conflicting `Patch2:` additions) and safely halts before committing, leaving changes staged for maintainer review with `git commit -c FETCH_HEAD`.
+* **Forwarded PR & Group Intelligence**: `--list-prs` queries `_ObsPrj` to report whether a package PR is forwarded individually or bundled into a multi-package release group (e.g. `pr-manage combine`).
+
+---
+
 ## 🔄 6. Synchronizing Multi-Branch Workspaces
 
 Synchronize your local workspace trees with remote tracking branches across all profile checkouts.

@@ -367,3 +367,175 @@ def merge_pull_request(
         print(f"{GREEN}🚀 Successfully applied {commit_count} commits from PR #{pr_id} on top of HEAD!{RESET}")
         return True
 
+
+
+try:
+    import sync_backend as sb
+except ImportError:
+    from . import sync_backend as sb
+
+def get_obsprj_forwarded_prs(workspace_path: str = ".", owner: str = "GNOME"):
+    """
+    Queries open pull requests on the superproject ({owner}/_ObsPrj) and maps
+    referenced package PRs to their forwarded superproject PR status.
+    """
+    token = sb.get_gitea_token()
+    headers = {'User-Agent': 'curl/8.0.1'}
+    if token:
+        headers['Authorization'] = f'token {token}'
+
+    url = f"https://src.opensuse.org/api/v1/repos/{owner}/_ObsPrj/pulls?state=open"
+    forwarded_map = {}
+    obsprj_prs = []
+    try:
+        res = sb.get_http_session().get(url, headers=headers, timeout=10)
+        if res.status_code == 200:
+            obsprj_prs = res.json()
+    except Exception:
+        pass
+
+    re_pkg_pr = re.compile(r'PR:\s*([^/]+)/([^!]+)!(\d+)')
+    for pr in obsprj_prs:
+        num = pr.get("number")
+        title = pr.get("title")
+        target_branch = pr.get("base", {}).get("ref")
+        url = pr.get("html_url")
+        body = pr.get("body", "")
+
+        referenced = re_pkg_pr.findall(body)
+        is_grouped = len(referenced) > 1
+        group_size = len(referenced)
+
+        for p_owner, pkg, pkg_pr_num in referenced:
+            key = (pkg.lower(), int(pkg_pr_num))
+            forwarded_map[key] = {
+                "obsprj_pr": num,
+                "obsprj_title": title,
+                "obsprj_target": target_branch,
+                "obsprj_url": url,
+                "is_grouped": is_grouped,
+                "group_size": group_size,
+                "group_pkgs": [p[1] for p in referenced] if is_grouped else []
+            }
+    return forwarded_map, obsprj_prs
+
+def list_pull_requests(target_pkg_dir: Optional[str] = None, workspace_path: str = ".") -> bool:
+    """
+    Lists open pull requests with target branches and openSUSE superproject (_ObsPrj)
+    forwarded PR status (single vs grouped).
+    In single package mode, prints detailed PR information with quick merge command.
+    In workspace mode, prints an overview table of forwarded PRs on _ObsPrj.
+    """
+    token = sb.get_gitea_token()
+    headers = {'User-Agent': 'curl/8.0.1'}
+    if token:
+        headers['Authorization'] = f'token {token}'
+
+    if target_pkg_dir and os.path.isdir(target_pkg_dir):
+        pkg_dir = os.path.abspath(target_pkg_dir)
+        pkg_name = os.path.basename(pkg_dir)
+        owner, gitea_name = sb.get_gitea_owner_and_repo(pkg_dir, pkg_name)
+
+        super_owner, _ = sb.get_gitea_owner_and_repo(workspace_path, "_ObsPrj")
+        if not super_owner:
+            super_owner = owner
+
+        print(f"🔄 Querying open pull requests for {CYAN}{pkg_name}{RESET} on {owner}/{gitea_name}...")
+        url = f"https://src.opensuse.org/api/v1/repos/{owner}/{gitea_name}/pulls?state=open"
+        prs = []
+        try:
+            res = sb.get_http_session().get(url, headers=headers, timeout=10)
+            if res.status_code == 200:
+                prs = res.json()
+        except Exception as e:
+            print(f"{RED}[Error]{RESET} Failed to query pull requests from Gitea: {e}", file=sys.stderr)
+            return False
+
+        forwarded_map, _ = get_obsprj_forwarded_prs(workspace_path, super_owner)
+
+        if not prs:
+            print(f"\n{CYAN}ℹ️  No open pull requests found for {pkg_name} on {owner}/{gitea_name}.{RESET}\n")
+            return True
+
+        print(f"\n{BOLD}{'='*80}{RESET}")
+        print(f"📋 {BOLD}OPEN PULL REQUESTS: {CYAN}{pkg_name}{RESET} ({owner}/{gitea_name})")
+        print(f"{BOLD}{'='*80}{RESET}")
+
+        for pr in prs:
+            num = pr.get("number")
+            title = pr.get("title")
+            author = pr.get("user", {}).get("username") or pr.get("user", {}).get("login")
+            base = pr.get("base", {}).get("ref")
+            head_repo = pr.get("head", {}).get("repo", {}).get("full_name") or ""
+            head_ref = pr.get("head", {}).get("ref") or ""
+            source_str = f"{head_repo}:{head_ref}" if head_repo else head_ref
+            created = pr.get("created_at", "")[:19].replace("T", " ")
+            url = pr.get("html_url")
+
+            fwd = forwarded_map.get((pkg_name.lower(), num))
+            if fwd:
+                if fwd["is_grouped"]:
+                    fwd_str = f"{YELLOW}{super_owner}/_ObsPrj#{fwd['obsprj_pr']} ➔ {fwd['obsprj_target']} [Group of {fwd['group_size']} packages]{RESET}"
+                else:
+                    fwd_str = f"{GREEN}{super_owner}/_ObsPrj#{fwd['obsprj_pr']} ➔ {fwd['obsprj_target']} [Single Package Forwarded]{RESET}"
+            else:
+                fwd_str = f"{CYAN}None (Direct Branch or Contributor PR){RESET}"
+
+            print(f"  {BOLD}PR #{num}:{RESET} {title}")
+            print(f"    • Author:       {author}")
+            print(f"    • Target:       {BOLD}{base}{RESET}  (<= {source_str})")
+            print(f"    • Created:      {created}")
+            print(f"    • Forwarded PR: {fwd_str}")
+            print(f"    • URL:          {url}")
+            print(f"    • Quick Merge:  {CYAN}geckopit-cli --merge-pr {num}{RESET}")
+            print()
+
+        print(f"{BOLD}{'='*80}{RESET}\n")
+        return True
+
+    else:
+        # Workspace Mode
+        super_owner, _ = sb.get_gitea_owner_and_repo(workspace_path, "_ObsPrj")
+        if not super_owner:
+            super_owner = "GNOME"
+
+        print(f"🔄 Querying open forwarded pull requests for superproject {CYAN}{super_owner}/_ObsPrj{RESET}...")
+        forwarded_map, obs_prs = get_obsprj_forwarded_prs(workspace_path, super_owner)
+
+        if not obs_prs:
+            print(f"\n{CYAN}ℹ️  No open forwarded pull requests found on {super_owner}/_ObsPrj.{RESET}\n")
+            return True
+
+        print(f"\n{BOLD}{'='*80}{RESET}")
+        print(f"📋 {BOLD}OPEN FORWARDED PULL REQUESTS: {CYAN}{super_owner}/_ObsPrj{RESET}")
+        print(f"{BOLD}{'='*80}{RESET}")
+        print(f"  {'PR #':<8} {'TARGET':<10} {'TYPE':<22} {'PACKAGES / TITLE'}")
+        print(f"  {'-'*76}")
+
+        re_pkg_pr = re.compile(r'PR:\s*([^/]+)/([^!]+)!(\d+)')
+        total_referenced = 0
+
+        for pr in obs_prs:
+            num = f"#{pr.get('number')}"
+            target = pr.get('base', {}).get('ref', '')
+            body = pr.get('body', '')
+            title = pr.get('title', '')
+            referenced = re_pkg_pr.findall(body)
+            pkgs = [p[1] for p in referenced]
+            total_referenced += len(pkgs)
+
+            if len(pkgs) > 1:
+                ptype = f"{YELLOW}Group of {len(pkgs)} pkgs{RESET}"
+                pkg_summary = ", ".join(pkgs[:4]) + f" (+{len(pkgs)-4} more)" if len(pkgs) > 4 else ", ".join(pkgs)
+            elif len(pkgs) == 1:
+                ptype = f"{GREEN}Single Package{RESET}"
+                pkg_summary = pkgs[0]
+            else:
+                ptype = f"{CYAN}Superproject{RESET}"
+                pkg_summary = title[:40]
+
+            print(f"  {BOLD}{num:<8}{RESET} {target:<10} {ptype:<31} {pkg_summary}")
+
+        print(f"{BOLD}{'='*80}{RESET}")
+        print(f"  Total: {len(obs_prs)} forwarded PRs on _ObsPrj representing {total_referenced} package updates in staging.\n")
+        return True

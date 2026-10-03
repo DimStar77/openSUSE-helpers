@@ -1031,6 +1031,7 @@ def print_help():
     print(f"  {sb.BOLD}-d, --audit-deps{sb.RESET}   Audits upstream build dependencies against .spec BuildRequires.")
     print(f"  {sb.BOLD}--fix-deps{sb.RESET}         Bumps .spec BuildRequires to match upstream build files and logs changes.")
     print(f"\n{sb.BOLD}Pull Request Management:{sb.RESET}")
+    print(f"  {sb.BOLD}--list-prs{sb.RESET}         Lists open PRs with target branches and _ObsPrj forwarding status.")
     print(f"  {sb.BOLD}--merge-pr <ID>{sb.RESET}     Fetches and merges Gitea PR <ID> onto HEAD, redating changelog to now.")
     print(f"\n{sb.BOLD}Setup & Documentation:{sb.RESET}")
     print(f"  {sb.BOLD}--check-setup{sb.RESET}      Verifies readiness of Git identity, SSH keys, OBS, and Gitea.")
@@ -1159,6 +1160,10 @@ def main():
             print(f"{sb.RED}[Error]{sb.RESET} --commit must be run inside a package directory (or target a package).", file=sys.stderr)
             sys.exit(1)
         sys.exit(run_package_commit(target_pkg_dir, interactive=not no_edit))
+
+    # Execute list-prs mode
+    if "--list-prs" in sys.argv:
+        sys.exit(0 if pr_helper.list_pull_requests(target_pkg_dir=target_pkg_dir, workspace_path=os.getcwd()) else 1)
 
     # Execute merge-pr mode
     if merge_pr_id:

@@ -303,7 +303,31 @@ geckopit-cli --include-not-in-pool
 geckopit-cli --todo
 ```
 
-### 🔄 4. Legacy Script Compatibility
+### 📥 4. Pull Request Management & Merging
+Manage and apply Gitea pull requests directly from the terminal without manual remote tracking or SHA hunting:
+
+```bash
+# List open PRs for the current package (or workspace-wide overview from the root)
+geckopit-cli --list-prs
+
+# List open PRs for a specific package from anywhere
+geckopit-cli webkitgtk --list-prs
+
+# Fetch and merge a contributor PR onto your active branch HEAD
+geckopit-cli --merge-pr 24
+
+# Merge and squash multi-commit PRs into a single atomic commit
+geckopit-cli --merge-pr 24 --squash
+
+# Stage PR changes without auto-committing (for review or manual touch-ups)
+geckopit-cli --merge-pr 24 --no-commit
+```
+
+*   **Smart Redating & Authorship**: Automatically places the contributor's changelog entry at the top of `.changes`, redates it to `now`, and sets the commit `--author` to the contributor.
+*   **Spec Collision Guard**: Detects duplicate patch declarations (e.g. conflicting `Patch2:`) in `.spec` files, leaving changes staged for maintainer review with `git commit -c FETCH_HEAD`.
+*   **Forwarded PR & Group Intelligence**: Automatically queries `_ObsPrj` to determine if a PR is forwarded individually or bundled into a multi-package release group (`pr-manage combine`).
+
+### 🔄 5. Legacy Script Compatibility
 Existing maintainer scripts (`gc.sh`, `gnome-audit.sh`, `gnome-catchup.sh`, `gnome-promote.sh`, `gnome-pool-audit.sh`, and `obs_scm-update.sh`) automatically delegate to `geckopit-cli` when installed in `$PATH`, maintaining muscle memory while using the modern Python backend.
 
 ---
