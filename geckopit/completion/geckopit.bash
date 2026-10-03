@@ -95,6 +95,36 @@ print(' '.join(sorted(targets)))
 " "$cur_pkg" 2>/dev/null
 }
 
+_geckopit_get_prs() {
+    local cur_pkg="$1"
+    python3 -c "
+import json, os, sys, glob
+
+pkg = sys.argv[1] if len(sys.argv) > 1 else ''
+prs = set()
+
+if not pkg:
+    pkg = os.path.basename(os.getcwd())
+
+cache_dir = os.path.expanduser('~/.cache/geckopit')
+if os.path.isdir(cache_dir):
+    for cf in glob.glob(os.path.join(cache_dir, 'cache_*.json')):
+        try:
+            d = json.load(open(cf))
+            pkg_data = d.get('package_data', {})
+            data = pkg_data.get(pkg)
+            if data:
+                pr = data.get('pr', {})
+                num = pr.get('number')
+                if num:
+                    prs.add(str(num))
+        except Exception:
+            pass
+
+print(' '.join(sorted(prs)))
+" "$cur_pkg" 2>/dev/null
+}
+
 _geckopit_completion() {
     local cur prev words cword
     if type _init_completion >/dev/null 2>&1; then
@@ -105,10 +135,22 @@ _geckopit_completion() {
         prev="${COMP_WORDS[COMP_CWORD-1]}"
     fi
 
-    local options="--upgrade -u --commit -c --no-edit --audit-deps -d --fix-deps --sync -s --fetch --force -f --jobs -j --version -v --branch -b --profile -p --package --not-in-pool --include-not-in-pool --guide --docs --check-setup --setup --dry-run -n --help -h --bash-completion"
+    local options="--merge-pr --squash --no-commit --upgrade -u --commit -c --no-edit --audit-deps -d --fix-deps --sync -s --fetch --force -f --jobs -j --version -v --branch -b --profile -p --package --not-in-pool --include-not-in-pool --guide --docs --check-setup --setup --dry-run -n --help -h --bash-completion"
     local branches="factory next stable unstable"
 
     case "$prev" in
+        --merge-pr)
+            local cand_pkg=""
+            for w in "${COMP_WORDS[@]}"; do
+                if [[ "$w" != -* && "$w" != "geckopit"* && "$w" != "$cur" ]]; then
+                    cand_pkg="$w"
+                    break
+                fi
+            done
+            local pr_targets=$(_geckopit_get_prs "$cand_pkg")
+            COMPREPLY=( $(compgen -W "$pr_targets" -- "$cur") )
+            return 0
+            ;;
         -b|--branch|-v|--version)
             COMPREPLY=( $(compgen -W "$branches" -- "$cur") )
             return 0

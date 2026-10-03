@@ -26,6 +26,7 @@ import sync_backend as sb
 import commit_helper as ch
 from upgrade import get_upgrade_helper, list_upgrade_helpers
 import meson_drift
+import pr_helper
 
 
 def render_single_package_dashboard(data):
@@ -1015,28 +1016,36 @@ def print_help():
     print("Supports both Project meta-checkouts and single-package directories.")
     print("\nUsage:")
     print("  geckopit-cli [package] [options]")
-    print("\nModes:")
-    print(f"  {sb.BOLD}(default){sb.RESET}          Checks sync status (or displays comprehensive single-package dashboard).")
-    print(f"  {sb.BOLD}-u, --upgrade [REV]{sb.RESET}")
-    print("                     Upgrades the package to specified revision (default: @PARENT_TAG@).")
-    print(f"  {sb.BOLD}-c, --commit{sb.RESET}       Stages packaging files, cleans whitespaces, and commits via $EDITOR.")
+    print(f"\n{sb.BOLD}SCM & Downstream Sync:{sb.RESET}")
+    print(f"  {sb.BOLD}(default){sb.RESET}          Checks sync status (or displays single-package dashboard).")
+    print(f"  {sb.BOLD}-s, --sync{sb.RESET}         Synchronizes workspace packages against remote tracking branches.")
+    print(f"  {sb.BOLD}--fetch{sb.RESET}            Fetches remote updates across workspace without modifying worktrees.")
+    print(f"  {sb.BOLD}-f, --forward{sb.RESET}      Identifies forwardable unstable/next branches.")
     print(f"  {sb.BOLD}-v, --version [b]{sb.RESET}  Compares package versions against release-monitoring.org.")
-    print(f"  {sb.BOLD}-f, --forward{sb.RESET}      Identifies forwardable next branches.")
-    print(f"  {sb.BOLD}--not-in-pool{sb.RESET}      Dedicated audit mode: lists only packages not registered in central Gitea pool.")
-    print(f"  {sb.BOLD}--guide, --docs{sb.RESET}    Opens the Geckopit User Guide in your default browser.")
+    print(f"  {sb.BOLD}--not-in-pool{sb.RESET}      Dedicated audit mode: lists packages not in central Gitea pool.")
+    print(f"  {sb.BOLD}--todo{sb.RESET}             Alias for default sync checking mode.")
+    print(f"\n{sb.BOLD}Package Upgrades & Spec Tools:{sb.RESET}")
+    print(f"  {sb.BOLD}-u, --upgrade [REV]{sb.RESET}")
+    print("                     Upgrades package to specified revision (default: @PARENT_TAG@).")
+    print(f"  {sb.BOLD}-c, --commit{sb.RESET}       Stages packaging files, cleans whitespaces, and commits via $EDITOR.")
+    print(f"  {sb.BOLD}-d, --audit-deps{sb.RESET}   Audits upstream build dependencies against .spec BuildRequires.")
+    print(f"  {sb.BOLD}--fix-deps{sb.RESET}         Bumps .spec BuildRequires to match upstream build files and logs changes.")
+    print(f"\n{sb.BOLD}Pull Request Management:{sb.RESET}")
+    print(f"  {sb.BOLD}--merge-pr <ID>{sb.RESET}     Fetches and merges Gitea PR <ID> onto HEAD, redating changelog to now.")
+    print(f"\n{sb.BOLD}Setup & Documentation:{sb.RESET}")
     print(f"  {sb.BOLD}--check-setup{sb.RESET}      Verifies readiness of Git identity, SSH keys, OBS, and Gitea.")
     print(f"  {sb.BOLD}--setup{sb.RESET}            Interactively configures missing packaging tools and credentials.")
-    print(f"  {sb.BOLD}-d, --audit-deps{sb.RESET}   Audits upstream build dependencies (Meson, CMake, Autotools) against .spec BuildRequires.")
-    print(f"  {sb.BOLD}--fix-deps{sb.RESET}         Audits and fixes .spec BuildRequires according to upstream build files, recording a changelog entry.")
-    print(f"  {sb.BOLD}--todo{sb.RESET}             Alias for default sync checking mode.")
-    print("\nOptions:")
-    print(f"  {sb.BOLD}--include-not-in-pool{sb.RESET}")
-    print("                     Include packages not registered in central pool in downstream sync table.")
+    print(f"  {sb.BOLD}--guide, --docs{sb.RESET}    Opens the Geckopit User Guide in your default browser.")
+    print(f"\n{sb.BOLD}Options & Modifiers:{sb.RESET}")
+    print(f"  {sb.BOLD}--squash{sb.RESET}            Used with --merge-pr to squash multiple PR commits into a single commit.")
+    print(f"  {sb.BOLD}--no-commit{sb.RESET}         Used with --merge-pr to stage changes without committing.")
     print(f"  {sb.BOLD}--no-edit{sb.RESET}          Used with --commit to commit without opening an interactive editor.")
     print(f"  {sb.BOLD}-n, --dry-run{sb.RESET}      Used with --upgrade to simulate steps without modifying files.")
     print(f"  {sb.BOLD}-p, --pr{sb.RESET}           Include Gitea pull request pending status in forwarding mode.")
     print(f"  {sb.BOLD}--no-pr{sb.RESET}            In forwarding mode, only show packages without a pending pull request.")
-    print(f"  {sb.BOLD}-b, --branch <b>{sb.RESET}   Limit version checks to a specific branch ('factory' or 'next').")
+    print(f"  {sb.BOLD}-b, --branch <b>{sb.RESET}   Limit checks to a specific branch ('factory' or 'next').")
+    print(f"  {sb.BOLD}--include-not-in-pool{sb.RESET}")
+    print("                     Include non-pool packages in downstream sync table.")
     print(f"  {sb.BOLD}-h, --help{sb.RESET}         Show this help message and exit.")
 
 
@@ -1078,10 +1087,19 @@ def main():
             show_upgrade = True
             upgrade_rev = arg.split("=", 1)[1]
 
+    # Parse merge-pr options first
+    merge_pr_id = None
+    for idx, arg in enumerate(sys.argv):
+        if arg in ("--merge-pr",):
+            if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("-"):
+                merge_pr_id = sys.argv[idx + 1]
+        elif arg.startswith("--merge-pr="):
+            merge_pr_id = arg.split("=", 1)[1]
+
     # Detect if a target package argument was provided (e.g. 'geckopit-cli baobab')
     target_arg = None
     for arg in sys.argv[1:]:
-        if not arg.startswith("-") and arg != upgrade_rev and arg not in ("factory", "next", "stable", "unstable"):
+        if not arg.startswith("-") and arg != upgrade_rev and arg != merge_pr_id and arg not in ("factory", "next", "stable", "unstable"):
             target_arg = arg
             break
 
@@ -1141,6 +1159,16 @@ def main():
             print(f"{sb.RED}[Error]{sb.RESET} --commit must be run inside a package directory (or target a package).", file=sys.stderr)
             sys.exit(1)
         sys.exit(run_package_commit(target_pkg_dir, interactive=not no_edit))
+
+    # Execute merge-pr mode
+    if merge_pr_id:
+        if not target_pkg_dir:
+            print(f"{sb.RED}[Error]{sb.RESET} --merge-pr must be run inside a package directory (or target a package).", file=sys.stderr)
+            sys.exit(1)
+        no_commit = "--no-commit" in sys.argv
+        squash = "--squash" in sys.argv
+        success = pr_helper.merge_pull_request(target_pkg_dir, merge_pr_id, auto_commit=not no_commit, squash=squash)
+        sys.exit(0 if success else 1)
 
     # Execute upgrade mode
     if show_upgrade:
