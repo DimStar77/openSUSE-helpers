@@ -1,6 +1,6 @@
 # pr_manage.py Manual
 
-`pr_manage.py` is a utility for managing Pull Requests (PRs) within the `GNOME/_ObsPrj` repository on Gitea (typically `src.opensuse.org`). It is specifically designed to handle the complex workflow of grouping and managing multiple package submissions in the GNOME metaproject.
+`pr_manage.py` (and the `pr-manage` CLI/TUI) is a multi-workspace utility for managing and grouping forwarded Pull Requests (PRs) across any openSUSE metaproject on Gitea (such as `GNOME/_ObsPrj`, `KDE/_ObsPrj`, or `openSUSE/Factory`).
 
 ## Table of Contents
 1. [Installation & Requirements](#installation--requirements)
@@ -34,9 +34,35 @@ The script relies on the configuration from the [tea](https://gitea.com/gitea/te
 
 ---
 
-## Configuration
 
-`pr_manage.py` automatically reads credentials from `~/.config/tea/config.yml`.
+## Multi-Workspace Resolution & Permission Guards
+
+`pr-manage` is completely workspace-aware and dynamically targets any valid metaproject repository without hardcoded assumptions:
+
+1. **Resolution Hierarchy**:
+   - **CLI Flag**: `--repo <owner/repo>` or `-R <owner/repo>` (e.g. `pr-manage -R openSUSE/Factory tui`).
+   - **Environment Variable**: `GITEA_REPO=<owner/repo>`.
+   - **Local Git Remote**: Automatically interrogates `git remote get-url origin` if executed inside a checkout (e.g. `GNOME/_ObsPrj` or `openSUSE/Factory`).
+   - **Project Configuration**: Reads `GitProjectName` from local `workflow.config`.
+   - **Last-Used Workspace**: Automatically remembers the last targeted workspace in `~/.config/pr-manage.json` and launches directly into it.
+   - **Default Fallback**: Defaults to `GNOME/_ObsPrj`.
+
+2. **Dynamic Workspace Discovery (`[W]`)**:
+   - Scans user organizations on Gitea (e.g. `GNOME`, `KDE`) and common public metaprojects.
+   - **Validates Existence**: Queries Gitea for repository existence, automatically filtering out non-existent repositories (preventing 404s like `KDE/_ObsPrj`).
+   - Caches recently accessed valid workspaces in `~/.cache/pr-manage/recent_workspaces.json`.
+
+3. **Proactive Permission Guards**:
+   - Automatically inspects the user's repository permissions (`admin`, `push`, `pull`).
+   - **Read-Only Mode (`[🔒 READ-ONLY]`)**: When targeting a repository where the user does not have push/maintainer rights (e.g. `openSUSE/Factory` for general contributors):
+     - Displays `[🔒 READ-ONLY]` in the top bar.
+     - Proactively blocks mutating actions (`Add`, `Remove`, `Move`, `Rename`, `Combine`, `Disintegrate`) with clean warning toasts rather than failing with raw HTTP 403 Forbidden errors.
+
+## Configuration & Workspace Persistence
+
+`pr-manage` persists user-configured workspaces and the active workspace in `~/.config/pr-manage.json` (mirroring Geckopit's configuration architecture). Whenever you switch workspaces via `[W]` or pass `-R <repo>`, it is saved and automatically used on subsequent launches.
+
+Authentication credentials are automatically read from `~/.config/tea/config.yml`.
 
 1. **Setup tea**: If you haven't already, install `tea` and add your Gitea login:
    ```bash
@@ -69,14 +95,56 @@ Lists open PRs in `GNOME/_ObsPrj`.
   - Target Branch (Color-coded: Green for `factory`, Cyan for `next`, Yellow for others)
   - Package / Title: Shows the "host" package (marked with ★) and any additional peer packages in the group.
 
+### `tui`
+Launches the interactive 3-column Terminal User Interface (TUI) for visual queue management.
+
+- **Layout**:
+  - **Column 1 (Forwards & Groups)**: Lists all active forwarded PRs on the metaproject (both multi-package groups with package counts and single-package PR forwards). Any item can be selected, combined, or approved with 'o' ('merge ok').
+  - **Column 2 (Members)**: Displays all packages currently inside the focused group or single PR forward, marking the host package (★).
+  - **Asynchronous OBS Build Status**: Live OBS staging project build results are loaded asynchronously in background worker threads, displaying a temporary `⚡ Checking...` indicator so cursor navigation remains 100% fluid and non-blocking.
+  - **Column 3 (Ungrouped Queue)**: Searchable list of standalone single-package PRs waiting to be grouped.
+- **Keybindings**:
+  - `Tab` / `1, 2, 3`: Switch active column.
+  - `Home` / `End` (or `g` / `G`): Jump directly to the top / bottom of the active list.
+  - `Enter` / `i`: Inspect highlighted package: view PR details & unified syntax-colored diff / changelog.
+  - `Space`: Toggle multi-selection mark (`[✓]`) on the highlighted item.
+  - `*`: Mark all visible items in the active column.
+  - `_`: Deselect all items in the active column.
+  - `I`: Invert selection marks in the active column.
+  - `A` / `a`: Batch add marked (or highlighted) ungrouped packages into active group.
+  - `D` / `d` / `u`: Batch remove marked (or highlighted) packages from active group.
+  - `v` / `m`: Move marked package(s) directly to another group via destination selection modal.
+  - `e`: Inline rename active group PR title in Gitea.
+  - `c` / `C`: Batch combine marked PRs in Column 1 (prompts with modal to pick which marked PR absorbs the others), or combines a single PR into active group.
+  - `o`: Signal staging merge approval (`merge ok`) with pre-merge OBS failure guard.
+  - `O` / `!`: Launch interactive Out-of-Sync / Orphan Audit triage modal.
+  - `w` / `x`: Open highlighted PR in web browser (`xdg-open`).
+  - `W`: Switch metaproject workspace on the fly (`GNOME/_ObsPrj`, `KDE/_ObsPrj`, `openSUSE/Factory`).
+  - `d`: Disintegrate group back to standalone PRs.
+  - `f` / `b`: Cycle branch filter (`all` / `factory` / `next`).
+  - `/`: Search / filter ungrouped queue.
+  - `r`: Refresh live state from Gitea and OBS.
+  - `q`: Quit TUI.
+
+### `audit [branch]`
+Audits all open package PRs across the organization to detect out-of-sync / orphaned PRs (package PRs that have no active forward PR in staging).
+
+- **Arguments**:
+  - `branch` (Optional): Filter by target branch (e.g., `factory`, `next`).
+- **Output**:
+  - Reports total organization open PRs vs. staging tracked PRs.
+  - Formatted table of out-of-sync packages detailing package name, PR ID, author, target branch, and historical forward PR ID/state.
+  - Remediation instructions for both CLI and interactive TUI.
+
 ### `select <target-pr-id> <package1> [package2 ...]`
 Groups individual package PRs into a single target PR.
 
 - **Action**:
-  - Finds open PRs matching the provided package names.
+  - Finds open PRs matching the provided package names (using exact head ref, token, or title matching).
   - Ensures the target branch matches the target PR's branch.
+  - **Uniqueness Guard**: Verifies that each package name only exists once. If a package is already present in the target group, it is safely skipped with a duplicate conflict warning.
   - Extracts reference tokens (e.g., `PR: GNOME/package!123`) from the source PRs.
-  - Appends these tokens to the target PR's description.
+  - Appends these tokens to the target PR's description (preserving the PR title intact so staging managers can assign meaningful group names like 'GNOME 51.0').
   - **Closes** the individual package PRs.
 - **Use Case**: Consolidating multiple related package updates into one staging request.
 
@@ -92,7 +160,8 @@ Removes a package from a grouped PR.
 Merges one group or package PR into another group PR.
 
 - **Action**:
-  - Transfers all reference tokens from the source PR to the target PR.
+  - **Collision Guard**: Pre-scans both PRs for overlapping submodules. If any package exists in both PRs, the combine operation is immediately aborted with a detailed conflict report, guaranteeing that two PRs for the same submodule cannot be grouped together.
+  - Transfers all reference tokens from the source PR to the target PR (preserving the target PR's title intact).
   - Closes the source PR.
 
 ### `disintegrate <target-pr-id>`
