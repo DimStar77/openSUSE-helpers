@@ -10,7 +10,7 @@ Short, focused 60–90 second screen recordings are the best medium for onboardi
 * **Goal**: Demonstrate how Geckopit transforms a tedious version upgrade into an effortless 1-click operation.
 * **Storyboard**:
   1. `00:00 - 00:10`: Show the Cockpit starting with `⚠️ Needs` active. Focus on `zenity` displaying `Update Av. 4.2.0 ➔ 4.2.2`.
-  2. `00:10 - 00:25`: Click **`Update Next to 4.2.2`**. The console drawer slides open showing `ObsScmUpgradeHelper` fetching sources, dropping merged patches, and formatting `.changes` at 67 columns.
+  2. `00:10 - 00:25`: Click **`Update Next to 4.2.2`**. The console drawer slides open showing `ObsScmUpgradeHelper` fetching sources, dropping merged patches, and formatting `.changes` at 79 columns.
   3. `00:25 - 00:40`: Show the update button smoothly transitioning to `Up-To-Date`, and the `Push` button illuminating.
   4. `00:40 - 00:55`: Click `Push`. Toast confirms push. Package badges update in place.
   5. `00:55 - 01:00`: Closing splash: *"Automated upgrades with Geckopit."*

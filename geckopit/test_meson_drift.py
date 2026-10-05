@@ -546,7 +546,7 @@ BuildRequires:  pkgconfig(glib-2.0) >= 2.36.0
             self.assertTrue(ok)
             with open(changes_file, "r", encoding="utf-8") as f:
                 new_changes = f.read()
-            self.assertIn("- Update version dependencies according to meson.build and\n  pyproject.toml.", new_changes)
+            self.assertIn("- Update version dependencies according to meson.build and pyproject.toml.", new_changes)
 
 
 if __name__ == "__main__":

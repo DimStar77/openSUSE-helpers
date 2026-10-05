@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 openSUSE Package Changelog Formatter Library.
-Provides strict 67-column multi-level bullet wrapping and upstream NEWS/ChangeLog parsing.
+Provides strict 79-column multi-level bullet wrapping and upstream NEWS/ChangeLog parsing.
 Shared across all Geckopit upgrade engines and standalone packaging tools.
 """
 
@@ -9,7 +9,7 @@ import re
 import textwrap
 from typing import Optional, List, Tuple
 
-CHANGELOG_WRAP_WIDTH = 67
+CHANGELOG_WRAP_WIDTH = 79
 APPSTREAM_XML_REGEX = re.compile(r'(metainfo|appdata)\.xml(?:\.in)*$', re.IGNORECASE)
 
 def wrap_bullet(text: str, level: int = 1, width: int = CHANGELOG_WRAP_WIDTH) -> str:

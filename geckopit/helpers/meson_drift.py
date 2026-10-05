@@ -14,6 +14,14 @@ import shlex
 import glob
 from typing import Dict, List, Tuple, Optional
 
+try:
+    from helpers.upgrade.changelog import CHANGELOG_WRAP_WIDTH
+except ImportError:
+    try:
+        from .upgrade.changelog import CHANGELOG_WRAP_WIDTH
+    except ImportError:
+        CHANGELOG_WRAP_WIDTH = 79
+
 # Package name normalization map: maps pkg-config/upstream names to spec devel package names
 DEVEL_PACKAGE_MAP = {
     "glib-2.0": "glib2-devel",
@@ -1131,9 +1139,9 @@ def record_drift_changelog(package_dir: str, fixed_drifts: List[Dict], on_log: O
     files_str = " and ".join(file_names)
     raw_text = f"Update version dependencies according to {files_str}."
 
-    # Format strictly according to openSUSE 67-column changelog wrapping rules
+    # Format strictly according to openSUSE changelog wrapping rules
     wrapper = textwrap.TextWrapper(
-        width=67,
+        width=CHANGELOG_WRAP_WIDTH,
         initial_indent="- ",
         subsequent_indent="  ",
         break_long_words=False,

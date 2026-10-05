@@ -148,7 +148,7 @@ class TestUpgradeHelperArchitecture(unittest.TestCase):
             (1, "Add support for GNOME 47"),
             (1, "Fix memory leak on shutdown")
         ]
-        result = build_changelog_from_items(items, "47.0", dropped_patches=["fix.patch"], has_translations=True, width=67)
+        result = build_changelog_from_items(items, "47.0", dropped_patches=["fix.patch"], has_translations=True)
         lines = result.splitlines()
         self.assertEqual(lines[0], "- Update to version 47.0:")
         self.assertEqual(lines[1], "  + Add support for GNOME 47")
@@ -158,24 +158,24 @@ class TestUpgradeHelperArchitecture(unittest.TestCase):
 
     def test_wrap_bullet_levels(self):
         # Level 0
-        l0 = wrap_bullet("Update to version 51.0:", level=0, width=67)
+        l0 = wrap_bullet("Update to version 51.0:", level=0)
         self.assertTrue(l0.startswith("- Update to version 51.0:"))
 
         # Level 1
-        l1 = wrap_bullet("Don't duplicate locale keyboard layout", level=1, width=67)
+        l1 = wrap_bullet("Don't duplicate locale keyboard layout", level=1)
         self.assertTrue(l1.startswith("  + Don't duplicate locale keyboard layout"))
 
-        # Level 2 with wrap at 67 chars
+        # Level 2 with wrap at 79 chars (default CHANGELOG_WRAP_WIDTH)
         long_txt = "Fix several issues related to presentation of ARIA tree and treegrid in web engine."
-        l2 = wrap_bullet(long_txt, level=2, width=67)
+        l2 = wrap_bullet(long_txt, level=2)
         lines = l2.splitlines()
-        self.assertTrue(lines[0].startswith("    - Fix several issues related to presentation of ARIA tree and"))
-        self.assertTrue(lines[1].startswith("      treegrid in web engine."))
+        self.assertTrue(lines[0].startswith("    - Fix several issues related to presentation of ARIA tree and treegrid in"))
+        self.assertTrue(lines[1].startswith("      web engine."))
         for line in lines:
-            self.assertLessEqual(len(line), 67)
+            self.assertLessEqual(len(line), 79)
 
         # Level 3
-        l3 = wrap_bullet("Detailed sub-sub item", level=3, width=67)
+        l3 = wrap_bullet("Detailed sub-sub item", level=3)
         self.assertTrue(l3.startswith("      . Detailed sub-sub item"))
 
     def test_format_changelog_entry_flat_list_and_dropped_patch(self):
@@ -196,7 +196,7 @@ class TestUpgradeHelperArchitecture(unittest.TestCase):
 +* Bulgarian (Shopov)
 +* Spanish (Mustieles)
 '''
-        result = format_changelog_entry(sample_diff, "51.0", dropped_patches=["e5c2018d.patch"], width=67)
+        result = format_changelog_entry(sample_diff, "51.0", dropped_patches=["e5c2018d.patch"])
         expected = """- Update to version 51.0:
   + Don't duplicate locale keyboard layout
   + Fix activating network items in quick settings
@@ -226,7 +226,7 @@ class TestUpgradeHelperArchitecture(unittest.TestCase):
 +Translations:
 + * Bulgarian
 '''
-        result = format_changelog_entry(sample_diff, "51.0", width=67)
+        result = format_changelog_entry(sample_diff, "51.0")
         lines = result.splitlines()
         self.assertEqual(lines[0], "- Update to version 51.0:")
         self.assertEqual(lines[1], "  + Web:")

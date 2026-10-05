@@ -285,7 +285,7 @@ geckopit-cli --setup
 <hr />
 <h2 id="3-upgrading-a-package-to-a-new-upstream-release">⚙️ 3. Upgrading a Package to a New Upstream Release</h2>
 <p>When an upstream project releases a new version, Geckopit automates the entire upgrade:
-fetching new sources ➔ bumping the version in <code>.spec</code> ➔ extracting upstream release notes ➔ wrapping changelog bullets at standard 67 columns ➔ dropping merged patches ➔ checking for Meson dependency bumps.</p>
+fetching new sources ➔ bumping the version in <code>.spec</code> ➔ extracting upstream release notes ➔ wrapping changelog bullets at standard 79 columns ➔ dropping merged patches ➔ checking for Meson dependency bumps.</p>
 <p>Geckopit automatically adapts to how the package is maintained:
 * <strong>Service-managed packages (<code>_service</code>)</strong>: Fetches upstream Git commits, drops merged patches, and updates packaging metadata.
 * <strong>Direct tarball packages (<code>.spec</code>)</strong>: Reads downloaded source archives, extracts changelogs, and updates spec files.</p>
@@ -297,7 +297,7 @@ fetching new sources ➔ bumping the version in <code>.spec</code> ➔ extractin
 <li>Select a package showing the orange <strong><code>Update Av.</code></strong> badge (e.g. <code>zenity</code> or <code>libgsf</code>).</li>
 <li>In the Pipeline card, review the version comparison (e.g. <code>4.2.0 ➔ 4.2.2</code>).</li>
 <li>Click the dynamic update button (e.g. <strong><code>Update Next to 4.2.2</code></strong> or <strong><code>Update Factory to 4.2.2</code></strong>).</li>
-<li>An embedded terminal tab opens in the bottom drawer, executing the upgrade engine, bumping the spec version, wrapping the <code>.changes</code> entry at 67 columns, and dropping merged patches.</li>
+<li>An embedded terminal tab opens in the bottom drawer, executing the upgrade engine, bumping the spec version, wrapping the <code>.changes</code> entry at 79 columns, and dropping merged patches.</li>
 <li>Upon completion, the update button transitions to <strong><code>Up-To-Date</code></strong> and illuminates the <strong><code>Push</code></strong> button.</li>
 <li>Click <strong><code>Push</code></strong> to push your packaging commits to <code>origin</code>.</li>
 </ol>

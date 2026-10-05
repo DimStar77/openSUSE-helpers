@@ -114,7 +114,7 @@ geckopit-cli --setup
 ## ⚙️ 3. Upgrading a Package to a New Upstream Release
 
 When an upstream project releases a new version, Geckopit automates the entire upgrade:
-fetching new sources ➔ bumping the version in `.spec` ➔ extracting upstream release notes ➔ wrapping changelog bullets at standard 67 columns ➔ dropping merged patches ➔ checking for Meson dependency bumps.
+fetching new sources ➔ bumping the version in `.spec` ➔ extracting upstream release notes ➔ wrapping changelog bullets at standard 79 columns ➔ dropping merged patches ➔ checking for Meson dependency bumps.
 
 Geckopit automatically adapts to how the package is maintained:
 * **Service-managed packages (`_service`)**: Fetches upstream Git commits, drops merged patches, and updates packaging metadata.
@@ -131,7 +131,7 @@ Geckopit automatically adapts to how the package is maintained:
 1. Select a package showing the orange **`Update Av.`** badge (e.g. `zenity` or `libgsf`).
 2. In the Pipeline card, review the version comparison (e.g. `4.2.0 ➔ 4.2.2`).
 3. Click the dynamic update button (e.g. **`Update Next to 4.2.2`** or **`Update Factory to 4.2.2`**).
-4. An embedded terminal tab opens in the bottom drawer, executing the upgrade engine, bumping the spec version, wrapping the `.changes` entry at 67 columns, and dropping merged patches.
+4. An embedded terminal tab opens in the bottom drawer, executing the upgrade engine, bumping the spec version, wrapping the `.changes` entry at 79 columns, and dropping merged patches.
 5. Upon completion, the update button transitions to **`Up-To-Date`** and illuminates the **`Push`** button.
 6. Click **`Push`** to push your packaging commits to `origin`.
 

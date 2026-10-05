@@ -2,7 +2,7 @@
 """
 OBS Source Service Upgrade Helper (obs_scm / _service).
 Python reimplementation and modernization of obs_scm-update.sh.
-Features automated changelog formatting at 67 chars, spec version bumping,
+Features automated changelog formatting at 79 chars, spec version bumping,
 and automated merged patch detection and dropping.
 """
 
@@ -671,7 +671,7 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         meson_deps_updated: bool = False,
         on_log: Optional[Callable[[str], None]] = None
     ) -> bool:
-        """Formats 67-column changelog entry and records it via non-interactive 'osc vc -F'."""
+        """Formats 79-column changelog entry and records it via non-interactive 'osc vc -F'."""
         changelog_content = format_changelog_entry(
             diff_text,
             new_version,
