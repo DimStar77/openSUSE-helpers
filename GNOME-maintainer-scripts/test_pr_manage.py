@@ -902,3 +902,180 @@ class TestPermissionsAndDynamicWorkspaces(unittest.TestCase):
         self.assertFalse(pm.is_valid_workspace_slug("something_without_slash"))
         self.assertTrue(pm.is_valid_workspace_slug("GNOME/_ObsPrj"))
         self.assertTrue(pm.is_valid_workspace_slug("openSUSE/Factory"))
+
+
+import pr_manage_gui as pg
+
+
+class TestGuiComponents(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import gi
+        gi.require_version("Gtk", "4.0")
+        gi.require_version("Adw", "1")
+        from gi.repository import Adw
+        Adw.init()
+
+    def setUp(self):
+        self.mock_client = MagicMock()
+        self.mock_client.repo = "GNOME/_ObsPrj"
+        self.mock_client.owner = "GNOME"
+        self.mock_client.has_admin_access = True
+        self.mock_client.has_push_access = True
+        self.mock_client.is_read_only = False
+        self.service = ss.StagingService(self.mock_client)
+
+    def test_diff_viewer_window_instantiation(self):
+        win = pg.DiffViewerWindow(None, "GNOME", "zenity", 10, "diff --git a/foo b/foo\n+line")
+        self.assertIn("zenity!10", win.get_title())
+
+    def test_staging_gui_window_title_and_selection(self):
+        app = pg.StagingGuiApp(self.service)
+        win = pg.StagingGuiWindow(app, self.service)
+        self.assertEqual(win.get_title(), "openSUSE Staging PR Manager")
+
+        # Select a group
+        g1 = ss.StagingGroup(1079, "GNOME 51.0", "factory", "PR_gdk-pixbuf#7", "gdk-pixbuf", [pm.PackageToken("GNOME", "gtk4", 18)])
+        win.select_group(g1)
+        self.assertEqual(win.selected_group.pr_id, 1079)
+        self.assertIn("GNOME 51.0", win.row_title.get_title())
+
+    def test_diff_viewer_dark_mode_style_scheme(self):
+        import gi
+        gi.require_version("Adw", "1")
+        gi.require_version("GtkSource", "5")
+        from gi.repository import Adw, GtkSource
+
+        buf = GtkSource.Buffer()
+
+        # Dark mode preference
+        with patch.object(Adw.StyleManager, "get_dark", return_value=True):
+            pg.apply_source_view_style_scheme(buf)
+            scheme = buf.get_style_scheme()
+            self.assertIsNotNone(scheme)
+            self.assertTrue("dark" in scheme.get_id().lower() or scheme.get_id() == "oblivion")
+
+        # Light mode preference
+        with patch.object(Adw.StyleManager, "get_dark", return_value=False):
+            pg.apply_source_view_style_scheme(buf)
+            scheme = buf.get_style_scheme()
+            self.assertIsNotNone(scheme)
+            self.assertTrue("dark" not in scheme.get_id().lower())
+
+    def test_staging_gui_toast_overlay(self):
+        app = pg.StagingGuiApp(self.service)
+        win = pg.StagingGuiWindow(app, self.service)
+
+        self.assertTrue(hasattr(win, "toast_overlay"))
+        # Should execute cleanly without AttributeError
+        win.show_toast("Notification")
+        win.show_operation_result(ss.OperationResult(True, "All good"))
+
+    def test_staging_gui_sidebar_batch_bar(self):
+        app = pg.StagingGuiApp(self.service)
+        win = pg.StagingGuiWindow(app, self.service)
+
+        g1 = ss.StagingGroup(100, "PR 100", "factory", "ref1", "zenity", [pm.PackageToken("GNOME", "zenity", 1)])
+        g2 = ss.StagingGroup(200, "PR 200", "factory", "ref2", "gtk4", [pm.PackageToken("GNOME", "gtk4", 18)])
+        win.groups = [g1, g2]
+
+        self.assertFalse(win.box_sidebar_batch.get_visible())
+
+        # Mark 1 group
+        win.selected_groups_marked.add(100)
+        win.update_sidebar_batch_bar()
+        self.assertTrue(win.box_sidebar_batch.get_visible())
+        self.assertEqual(win.btn_accept_marked.get_label(), "✓ Accept (1)")
+        # Combine requires at least 2
+        self.assertFalse(win.btn_combine_marked.get_sensitive())
+
+        # Mark second group
+        win.selected_groups_marked.add(200)
+        win.update_sidebar_batch_bar()
+        self.assertEqual(win.btn_combine_marked.get_label(), "⎘ Combine (2)")
+        self.assertTrue(win.btn_combine_marked.get_sensitive())
+        self.assertEqual(win.btn_accept_marked.get_label(), "✓ Accept (2)")
+
+        # Clear marked
+        win.clear_groups_marked()
+        self.assertFalse(win.box_sidebar_batch.get_visible())
+
+    def test_staging_gui_row_obs_color_classes(self):
+        app = pg.StagingGuiApp(self.service)
+        win = pg.StagingGuiWindow(app, self.service)
+
+        g1 = ss.StagingGroup(100, "PR 100", "factory", "ref1", "zenity", [pm.PackageToken("GNOME", "zenity", 1)])
+        win.groups = [g1]
+        win.populate_groups_list()
+
+        row = win.group_rows.get(100)
+        self.assertIsNotNone(row)
+
+        # 1. Succeeded -> Green
+        win.apply_row_obs_styling(100, {"status": "succeeded", "total": 12})
+        self.assertTrue(row.has_css_class("obs-succeeded"))
+        self.assertIn("Built", row.obs_badge.get_label())
+
+        # 2. Building -> Light Blue
+        win.apply_row_obs_styling(100, {"status": "building", "succeeded": 4, "total": 12})
+        self.assertTrue(row.has_css_class("obs-building"))
+        self.assertFalse(row.has_css_class("obs-succeeded"))
+        self.assertIn("Building", row.obs_badge.get_label())
+
+        # 3. Failed -> Red
+        win.apply_row_obs_styling(100, {"status": "failed", "failed_pkgs": ["foo"], "total": 12})
+        self.assertTrue(row.has_css_class("obs-failed"))
+        self.assertFalse(row.has_css_class("obs-building"))
+        self.assertIn("Failed", row.obs_badge.get_label())
+
+    def test_find_forwarded_child_id_excludes_parent_group_and_validates_head(self):
+        mock_client = MagicMock()
+        mock_client.repo = "GNOME/_ObsPrj"
+        mock_client.repo_name = "_ObsPrj"
+
+        # Strategy 1 returns empty
+        mock_client.request.side_effect = [
+            [], # Strategy 1: recent PRs
+            # Strategy 2: Timeline with parent group PR #1079 and real child PR #923
+            [
+                {"ref_issue": {"number": 923, "title": "Forwarded PRs: adwaita-icon-theme", "repository": {"name": "_ObsPrj"}}},
+                {"ref_issue": {"number": 1079, "title": "Forwarded PRs: accountsservice, adwaita-icon-theme", "repository": {"name": "_ObsPrj"}}},
+            ],
+            # 1079 is skipped because exclude_pr_id=1079. First candidate inspected is 923:
+            {"number": 923, "head": {"ref": "PR_adwaita-icon-theme#8"}},
+        ]
+
+        child_id = pm.find_forwarded_child_id(mock_client, "GNOME/adwaita-icon-theme", "8", exclude_pr_id=1079)
+        self.assertEqual(child_id, 923)
+
+    def test_staging_group_tokens_always_sorted_alphabetically(self):
+        unsorted_tokens = [
+            pm.PackageToken("GNOME", "zenity", 1),
+            pm.PackageToken("GNOME", "accountsservice", 5),
+            pm.PackageToken("GNOME", "gtk4", 18),
+            pm.PackageToken("GNOME", "adwaita-icon-theme", 8),
+        ]
+        group = ss.StagingGroup(100, "Group", "factory", "ref", "zenity", unsorted_tokens)
+        sorted_names = [t.package for t in group.tokens]
+        self.assertEqual(sorted_names, ["accountsservice", "adwaita-icon-theme", "gtk4", "zenity"])
+
+    def test_staging_gui_host_package_has_no_remove_button(self):
+        app = pg.StagingGuiApp(self.service)
+        win = pg.StagingGuiWindow(app, self.service)
+
+        tokens = [
+            pm.PackageToken("GNOME", "zenity", 1),
+            pm.PackageToken("GNOME", "gtk4", 18),
+        ]
+        group = ss.StagingGroup(100, "Group", "factory", "ref", "zenity", tokens)
+        win.select_group(group)
+
+        # gtk4 is peer (index 0 alphabetically)
+        row_gtk4 = win.list_members.get_row_at_index(0)
+        self.assertEqual(row_gtk4.get_title(), "gtk4")
+        self.assertNotIn("Host", row_gtk4.get_subtitle())
+
+        # zenity is host (index 1 alphabetically)
+        row_zenity = win.list_members.get_row_at_index(1)
+        self.assertEqual(row_zenity.get_title(), "zenity")
+        self.assertIn("Host Package ★", row_zenity.get_subtitle())

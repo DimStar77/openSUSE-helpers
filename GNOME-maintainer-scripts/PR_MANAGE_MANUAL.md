@@ -126,6 +126,21 @@ Launches the interactive 3-column Terminal User Interface (TUI) for visual queue
   - `r`: Refresh live state from Gitea and OBS.
   - `q`: Quit TUI.
 
+### `gui`
+Launches the modern GTK4 / Libadwaita graphical staging manager interface (`pr-manage gui` or standalone `pr-manage-gui`).
+
+- **Architecture**: Powered by the headless `StagingService` backend, featuring a responsive Libadwaita layout:
+  - **Sidebar**: Staging groups and standalone forwards with live package counts, branch pills, search, and checkbox multi-selection for batch combination.
+  - **Color-Coded OBS Status Lines**: Sidebar items are dynamically styled once OBS build states are queried: **soft green** background with green left border for successful builds, **light blue** for in-progress builds, and **soft red** for failed builds (remaining neutral grey until queried).
+  - **Header Card**: In-place PR title renaming (`document-edit-symbolic`), target branch pills, host package indicator (★), live OBS build status pill (`Built`, `Building`, `Failed`), and an unambiguous active approval button (`✓ Accept #<id>`).
+  - **Batch vs Active Separation**: Checkboxes in the sidebar dynamically reveal a dedicated batch action bar (`⎘ Combine (N)`, `✓ Accept (N)`, and clear `✕`) for marked sets, keeping multi-selection distinct from the focused group.
+  - **Interactive Diff Viewer**: Built with `GtkSourceView 5` displaying syntax-highlighted git diffs and changelogs with line numbers and one-click clipboard export.
+  - **Dual Staging Work Area**:
+    - **Group Members Panel**: Searchable list of bundled packages with upstream PR numbers, instant diff inspection, and single/batch removal.
+    - **Ungrouped Staging Queue**: Searchable list of standalone package PRs with one-click addition into the active group or single-PR approval (`merge ok`).
+  - **Out-of-Sync Orphan Auditor**: Integrated dialog to triage unforwarded package PRs with one-click child PR reopening or group adoption.
+  - **Workspace & Permission Awareness**: HeaderBar dropdown for switching staging repositories with permission tags (`[Admin]`, `[Maintainer]`, `[Read-Only]`) and a persistent notification banner when operating in Read-Only mode.
+
 ### `audit [branch]`
 Audits all open package PRs across the organization to detect out-of-sync / orphaned PRs (package PRs that have no active forward PR in staging).
 

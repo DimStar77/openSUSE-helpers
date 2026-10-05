@@ -840,6 +840,7 @@ def main():
         print("  pr-manage list [factory|next]")
         print("  pr-manage audit [factory|next]           Audit and detect out-of-sync / orphan PRs")
         print("  pr-manage tui                            Interactive 3-column staging queue TUI")
+        print("  pr-manage gui                            Launch graphical GTK4 / Libadwaita interface")
         print("  pr-manage select <target-pr-id> <package1> [package2 ...]")
         print("  pr-manage unselect <target-pr-id> <package-name>")
         print("  pr-manage combine <target-pr-id> <source-pr-id>")
@@ -873,6 +874,10 @@ def main():
     elif cmd in ("tui", "ui"):
         import pr_manage_tui
         pr_manage_tui.run_tui(client)
+    elif cmd in ("gui", "gtk"):
+        import pr_manage_gui
+        gui_client = client if repo_override else None
+        pr_manage_gui.run_gui(gui_client)
     else:
         if len(args) < 2:
             print(f"{Fore.RED}Error: Command '{cmd}' requires a target PR ID.")
