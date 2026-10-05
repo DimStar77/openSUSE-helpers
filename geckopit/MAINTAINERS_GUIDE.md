@@ -184,7 +184,7 @@ For packages managed directly via `.spec` URL definitions:
 #### C. Automated openSUSE Changelog Engine (`changelog.py`)
 Both engines use Geckopit's shared changelog library:
 *   Formats `*.changes` entries following openSUSE packaging guidelines.
-*   Enforces strict **79-column multi-level bullet wrapping** (`- `, `  + `, `    - `, `      . `).
+*   Enforces strict **79-column multi-level bullet wrapping** (`- `, `  * `, `    + `, `      - `).
 *   Unwraps upstream `NEWS` / `ChangeLog` paragraphs cleanly.
 *   Strips compound upstream issue tracker references (e.g. `!123`, `#456`), preserving standard CVE identifiers.
 *   Consolidates multi-line translation updates into a single summary entry.

@@ -16,21 +16,21 @@ def wrap_bullet(text: str, level: int = 1, width: int = CHANGELOG_WRAP_WIDTH) ->
     """
     Wraps bullet point text strictly at width characters with level-specific prefixes:
       Level 0: '- '       (continuation: '  ')
-      Level 1: '  + '     (continuation: '    ')
-      Level 2: '    - '   (continuation: '      ')
-      Level 3: '      . ' (continuation: '        ')
+      Level 1: '  * '     (continuation: '    ')
+      Level 2: '    + '   (continuation: '      ')
+      Level 3: '      - ' (continuation: '        ')
     """
     if level == 0:
         prefix = "- "
         cont = "  "
     elif level == 1:
-        prefix = "  + "
+        prefix = "  * "
         cont = "    "
     elif level == 2:
-        prefix = "    - "
+        prefix = "    + "
         cont = "      "
     else:
-        prefix = "      . "
+        prefix = "      - "
         cont = "        "
 
     wrapper = textwrap.TextWrapper(

@@ -151,9 +151,9 @@ class TestUpgradeHelperArchitecture(unittest.TestCase):
         result = build_changelog_from_items(items, "47.0", dropped_patches=["fix.patch"], has_translations=True)
         lines = result.splitlines()
         self.assertEqual(lines[0], "- Update to version 47.0:")
-        self.assertEqual(lines[1], "  + Add support for GNOME 47")
-        self.assertEqual(lines[2], "  + Fix memory leak on shutdown")
-        self.assertEqual(lines[3], "  + Updated translations.")
+        self.assertEqual(lines[1], "  * Add support for GNOME 47")
+        self.assertEqual(lines[2], "  * Fix memory leak on shutdown")
+        self.assertEqual(lines[3], "  * Updated translations.")
         self.assertEqual(lines[4], "- Drop fix.patch: fixed upstream.")
 
     def test_wrap_bullet_levels(self):
@@ -163,20 +163,20 @@ class TestUpgradeHelperArchitecture(unittest.TestCase):
 
         # Level 1
         l1 = wrap_bullet("Don't duplicate locale keyboard layout", level=1)
-        self.assertTrue(l1.startswith("  + Don't duplicate locale keyboard layout"))
+        self.assertTrue(l1.startswith("  * Don't duplicate locale keyboard layout"))
 
         # Level 2 with wrap at 79 chars (default CHANGELOG_WRAP_WIDTH)
         long_txt = "Fix several issues related to presentation of ARIA tree and treegrid in web engine."
         l2 = wrap_bullet(long_txt, level=2)
         lines = l2.splitlines()
-        self.assertTrue(lines[0].startswith("    - Fix several issues related to presentation of ARIA tree and treegrid in"))
+        self.assertTrue(lines[0].startswith("    + Fix several issues related to presentation of ARIA tree and treegrid in"))
         self.assertTrue(lines[1].startswith("      web engine."))
         for line in lines:
             self.assertLessEqual(len(line), 79)
 
         # Level 3
         l3 = wrap_bullet("Detailed sub-sub item", level=3)
-        self.assertTrue(l3.startswith("      . Detailed sub-sub item"))
+        self.assertTrue(l3.startswith("      - Detailed sub-sub item"))
 
     def test_format_changelog_entry_flat_list_and_dropped_patch(self):
         sample_diff = '''
@@ -198,15 +198,15 @@ class TestUpgradeHelperArchitecture(unittest.TestCase):
 '''
         result = format_changelog_entry(sample_diff, "51.0", dropped_patches=["e5c2018d.patch"])
         expected = """- Update to version 51.0:
-  + Don't duplicate locale keyboard layout
-  + Fix activating network items in quick settings
-  + Improve lock/login screen styling
-  + Cancel mount password dialogs when locking screen
-  + Validate serilized image data before creating pixbuf
-  + Fixed crash
-  + Plugged leaks
-  + Misc. bug fixes and cleanups
-  + Updated translations.
+  * Don't duplicate locale keyboard layout
+  * Fix activating network items in quick settings
+  * Improve lock/login screen styling
+  * Cancel mount password dialogs when locking screen
+  * Validate serilized image data before creating pixbuf
+  * Fixed crash
+  * Plugged leaks
+  * Misc. bug fixes and cleanups
+  * Updated translations.
 - Drop e5c2018d.patch: fixed upstream."""
         self.assertEqual(result.strip(), expected.strip())
 
@@ -229,13 +229,13 @@ class TestUpgradeHelperArchitecture(unittest.TestCase):
         result = format_changelog_entry(sample_diff, "51.0")
         lines = result.splitlines()
         self.assertEqual(lines[0], "- Update to version 51.0:")
-        self.assertEqual(lines[1], "  + Web:")
-        self.assertEqual(lines[2], "    - Fix combining lines incorrectly due to Gecko scaling bug.")
-        self.assertEqual(lines[3], '    - Fix missing "leaving blockquote" announcement.')
-        self.assertEqual(lines[4], "  + General:")
-        self.assertEqual(lines[5], "    - Fix on-the-fly changes related to the non-global voice set.")
-        self.assertEqual(lines[6], "    - Fix not speaking a newly-shown terminal line after scrolling.")
-        self.assertEqual(lines[7], "  + Updated translations.")
+        self.assertEqual(lines[1], "  * Web:")
+        self.assertEqual(lines[2], "    + Fix combining lines incorrectly due to Gecko scaling bug.")
+        self.assertEqual(lines[3], '    + Fix missing "leaving blockquote" announcement.')
+        self.assertEqual(lines[4], "  * General:")
+        self.assertEqual(lines[5], "    + Fix on-the-fly changes related to the non-global voice set.")
+        self.assertEqual(lines[6], "    + Fix not speaking a newly-shown terminal line after scrolling.")
+        self.assertEqual(lines[7], "  * Updated translations.")
 
     def test_remove_patch_from_spec(self):
         spec_content = '''Name: gnome-shell
@@ -444,8 +444,8 @@ Release:        0
             diff_lines += ["+" + l for l in notes.splitlines()]
             formatted = format_changelog_entry("\n".join(diff_lines), "2.0")
             self.assertIn("- Update to version 2.0:", formatted)
-            self.assertIn("+ New features:", formatted)
-            self.assertIn("- First cool feature", formatted)
+            self.assertIn("* New features:", formatted)
+            self.assertIn("+ First cool feature", formatted)
 
     def test_appstream_xml_regex(self):
         """Tests that APPSTREAM_XML_REGEX matches .xml, .xml.in, and .xml.in.in variants."""
