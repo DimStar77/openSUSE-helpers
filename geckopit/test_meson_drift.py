@@ -549,5 +549,65 @@ BuildRequires:  pkgconfig(glib-2.0) >= 2.36.0
             self.assertIn("- Update version dependencies according to meson.build and pyproject.toml.", new_changes)
 
 
+
+    def test_parse_meson_dependencies_numeric_format_variables(self):
+        """Tests that integer variables and multi-variable .format() calls resolve to semantic versions."""
+        content = """
+        glib_major_req = 2
+        glib_minor_req = 57
+        glib_micro_req = 2
+        glib_req = '>= @0@.@1@.@2@'.format(glib_major_req, glib_minor_req, glib_micro_req)
+
+        dependency('glib-2.0', version: glib_req)
+        dependency('gmodule-2.0', version: glib_req)
+        """
+        deps = meson_drift.parse_meson_dependencies(content)
+        self.assertIn("glib-2.0", deps)
+        self.assertEqual(deps["glib-2.0"], (">=", "2.57.2", True))
+        self.assertIn("gmodule-2.0", deps)
+        self.assertEqual(deps["gmodule-2.0"], (">=", "2.57.2", True))
+
+    def test_audit_and_fix_unversioned_dependency_with_numeric_format(self):
+        """Tests that audit and fix properly resolve and update unversioned BuildRequires from formatted variables."""
+        spec_code = """Name: gtk3
+Version: 3.24.52
+BuildSystem: meson
+BuildRequires:  pkgconfig(glib-2.0) >= 2.57.2
+BuildRequires:  pkgconfig(gmodule-2.0)
+"""
+        meson_code = """
+        glib_major_req = 2
+        glib_minor_req = 57
+        glib_micro_req = 2
+        glib_req = '>= @0@.@1@.@2@'.format(glib_major_req, glib_minor_req, glib_micro_req)
+        dependency('glib-2.0', version: glib_req)
+        dependency('gmodule-2.0', version: glib_req)
+        """
+        with tempfile.TemporaryDirectory() as td:
+            spec_file = os.path.join(td, "gtk3.spec")
+            changes_file = os.path.join(td, "gtk3.changes")
+            with open(spec_file, "w", encoding="utf-8") as f:
+                f.write(spec_code)
+            with open(changes_file, "w", encoding="utf-8") as f:
+                f.write("-------------------------------------------------------------------\nWed Sep 23 12:00:00 UTC 2026 - test@opensuse.org\n\n- Initial packaging.\n\n")
+            with open(os.path.join(td, "meson.build"), "w", encoding="utf-8") as f:
+                f.write(meson_code)
+
+            drifts = meson_drift.audit_meson_drift(td)
+            self.assertEqual(len(drifts), 1)
+            self.assertEqual(drifts[0]["package"], "gmodule-2.0")
+            self.assertEqual(drifts[0]["upstream_version"], "2.57.2")
+            self.assertEqual(drifts[0]["type"], "unversioned")
+
+            fixed = meson_drift.fix_meson_drift(td)
+            self.assertEqual(len(fixed), 1)
+            with open(spec_file, "r", encoding="utf-8") as f:
+                new_spec = f.read()
+            self.assertIn("BuildRequires:  pkgconfig(gmodule-2.0) >= 2.57.2", new_spec)
+
+            remaining = meson_drift.audit_meson_drift(td)
+            self.assertEqual(len(remaining), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

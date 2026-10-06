@@ -268,21 +268,55 @@ def parse_meson_dependencies(content: str) -> Dict[str, Tuple[str, str, bool]]:
         lines = [re.sub(r"#.*$", "", l) for l in content.splitlines()]
         content_clean = "\n".join(lines)
 
-    # 2. Extract Meson string and version variables (including .format() resolution)
+    # 2. Extract Meson string, numeric, and version variables (including .format() resolution)
     vars_map = {}
-    for line in content_clean.splitlines():
-        line = line.strip()
-        m_var = re.match(r"""^([a-zA-Z0-9_]+)\s*=\s*['"](.*?)['"](?:\.format\((.*?)\))?""", line)
-        if m_var:
-            v_name = m_var.group(1)
-            v_fmt = m_var.group(2)
-            v_args = m_var.group(3)
-            if v_args:
-                arg_tokens = [arg.strip().strip("'\"") for arg in v_args.split(",") if arg.strip()]
-                for idx, arg_val in enumerate(arg_tokens):
-                    resolved_val = vars_map.get(arg_val, arg_val)
-                    v_fmt = v_fmt.replace(f"@{idx}@", resolved_val)
-            vars_map[v_name] = v_fmt
+
+    # Extract integer and float literals: e.g. glib_major_req = 2
+    for m in re.finditer(r"^\s*([a-zA-Z0-9_]+)\s*=\s*([0-9]+(?:\.[0-9]+)*)\s*$", content_clean, re.MULTILINE):
+        vars_map[m.group(1)] = m.group(2)
+
+    def resolve_format_arg(arg: str, vmap: Dict[str, str]) -> str:
+        a = arg.strip().strip("'\"")
+        a = re.sub(r"\.to_string\(\)$", "", a).strip()
+        if a in vmap:
+            return vmap[a]
+        m_arith = re.match(r"^([a-zA-Z0-9_]+)\s*([+\-])\s*(\d+)$", a)
+        if m_arith:
+            base = vmap.get(m_arith.group(1))
+            if base and base.isdigit():
+                val = int(base)
+                off = int(m_arith.group(3))
+                return str(val + off if m_arith.group(2) == "+" else val - off)
+        return vmap.get(a, a)
+
+    # Extract string and .format() assignments (supporting multiline format args)
+    for m in re.finditer(r"^\s*([a-zA-Z0-9_]+)\s*=\s*['\"](.*?)['\"](?:\.format\s*\((.*?)\))?", content_clean, re.MULTILINE | re.DOTALL):
+        v_name = m.group(1)
+        v_fmt = m.group(2)
+        v_args = m.group(3)
+        if v_args:
+            args = [arg.strip() for arg in v_args.split(",") if arg.strip()]
+            for idx, arg_val in enumerate(args):
+                resolved = resolve_format_arg(arg_val, vars_map)
+                v_fmt = v_fmt.replace(f"@{idx}@", resolved)
+        vars_map[v_name] = v_fmt
+
+    # Extract simple string concatenations: var = '>= ' + other_var
+    for m in re.finditer(r"^\s*([a-zA-Z0-9_]+)\s*=\s*['\"](.*?)['\"]\s*\+\s*([a-zA-Z0-9_]+)", content_clean, re.MULTILINE):
+        prefix = m.group(2)
+        rhs = vars_map.get(m.group(3), m.group(3))
+        vars_map[m.group(1)] = prefix + rhs
+
+    # Chained alias and reference resolution
+    for _ in range(3):
+        changed = False
+        for k, v in list(vars_map.items()):
+            if v in vars_map and vars_map[v] != v:
+                vars_map[k] = vars_map[v]
+                changed = True
+        if not changed:
+            break
+
 
     # 3. Extract dependency(...) calls
     deps = {}
@@ -334,7 +368,7 @@ def parse_meson_dependencies(content: str) -> Dict[str, Tuple[str, str, bool]]:
             else:
                 ver = ver_str.strip()
 
-        if "@" in ver:
+        if "@" in ver or not re.match(r"^[0-9]", ver):
             ver = ""
 
         if name not in deps or (ver and not deps[name][1]):
@@ -800,7 +834,10 @@ def audit_meson_drift(package_dir: str, meson_content: Optional[str] = None, bum
 
         if matched_spec is not None:
             s_op, s_ver, s_raw = matched_spec
-            if u_ver and s_ver and compare_versions(u_ver, s_ver) > 0:
+            if not u_ver or not re.match(r"^[0-9]", u_ver):
+                continue
+
+            if s_ver and compare_versions(u_ver, s_ver) > 0:
                 drifts.append({
                     "package": dep_name,
                     "spec_name": spec_decl_name,
@@ -810,7 +847,7 @@ def audit_meson_drift(package_dir: str, meson_content: Optional[str] = None, bum
                     "type": "bump",
                     "build_system": active_build_system
                 })
-            elif u_ver and not s_ver and (include_unversioned or not bumps_only):
+            elif not s_ver and (include_unversioned or not bumps_only):
                 drifts.append({
                     "package": dep_name,
                     "spec_name": spec_decl_name,
@@ -820,7 +857,7 @@ def audit_meson_drift(package_dir: str, meson_content: Optional[str] = None, bum
                     "type": "unversioned",
                     "build_system": active_build_system
                 })
-        elif not bumps_only and u_req and u_ver:
+        elif not bumps_only and u_req and u_ver and re.match(r"^[0-9]", u_ver):
             drifts.append({
                 "package": dep_name,
                 "spec_name": f"pkgconfig({dep_name})",
