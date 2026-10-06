@@ -623,7 +623,7 @@ class StagingGuiWindow(Adw.ApplicationWindow):
         self.spinner.stop()
         self.btn_refresh.set_sensitive(True)
         toast = Adw.Toast(title=f"Error loading PRs: {err_msg}")
-        self.add_toast(toast)
+        self.show_toast(f"Error loading PRs: {err_msg}")
 
     def populate_groups_list(self):
         self.group_rows.clear()
@@ -652,8 +652,9 @@ class StagingGuiWindow(Adw.ApplicationWindow):
             chk.connect("toggled", on_chk_toggle)
             row.add_prefix(chk)
 
+            conflict_tag = "⚠️ " if g.mergeable is False else ""
             icon = "📦" if g.is_group else "📄"
-            title_txt = f"{icon} #{g.pr_id}  [{g.branch}]  ({g.member_count}p)"
+            title_txt = f"{conflict_tag}{icon} #{g.pr_id}  [{g.branch}]  ({g.member_count}p)"
             row.set_title(title_txt)
             row.set_subtitle(g.title)
             row.pr_obj = g
@@ -715,7 +716,9 @@ class StagingGuiWindow(Adw.ApplicationWindow):
             pill_text = f"🔵 Building ({obs.get('succeeded', 0)}/{obs.get('total', 0)}p)"
         elif st == "failed":
             row.add_css_class("obs-failed")
-            pill_text = f"🔴 Failed ({len(obs.get('failed_pkgs', []))}p)"
+            failed_archs = obs.get("failed_archs", [])
+            arch_str = f" [{','.join(failed_archs)}]" if failed_archs else ""
+            pill_text = f"🔴 Failed ({len(obs.get('failed_pkgs', []))}p{arch_str})"
         else:
             pill_text = "⚪ Standby"
 
@@ -741,9 +744,14 @@ class StagingGuiWindow(Adw.ApplicationWindow):
             return
 
         is_ro = self.service.client.is_read_only
+        is_conflicted = (group.mergeable is False)
         self.btn_accept.set_label(f"✓ Accept #{group.pr_id}")
-        self.btn_accept.set_tooltip_text(f"Submit 'merge ok' for active PR #{group.pr_id} ('{group.title}')")
-        self.btn_accept.set_sensitive(not is_ro)
+        if is_conflicted:
+            self.btn_accept.set_tooltip_text(f"Blocked: PR #{group.pr_id} has Git merge conflicts with '{group.branch}'")
+            self.btn_accept.set_sensitive(False)
+        else:
+            self.btn_accept.set_tooltip_text(f"Submit 'merge ok' for active PR #{group.pr_id} ('{group.title}')")
+            self.btn_accept.set_sensitive(not is_ro)
         self.btn_rename.set_sensitive(not is_ro)
         self.btn_disintegrate.set_sensitive(not is_ro and group.is_group)
         self.btn_browser.set_sensitive(True)
@@ -1060,6 +1068,11 @@ class StagingGuiWindow(Adw.ApplicationWindow):
         if not marked_groups:
             return
 
+        conflicted = [f"#{g.pr_id}" for g in marked_groups if g.mergeable is False]
+        if conflicted:
+            self.show_toast(f"❌ Blocked: Marked PR(s) {', '.join(conflicted)} have Git merge conflicts!")
+            return
+
         failed_prs = []
         for g in marked_groups:
             obs = self.service.get_obs_build_status(g.pr_id, g.branch)
@@ -1097,6 +1110,10 @@ class StagingGuiWindow(Adw.ApplicationWindow):
 
     def on_accept_clicked(self, btn):
         if not self.selected_group:
+            return
+
+        if self.selected_group.mergeable is False:
+            self.show_toast(f"❌ Blocked: PR #{self.selected_group.pr_id} has Git merge conflicts with '{self.selected_group.branch}'!")
             return
         # Pre-Merge OBS Failure Guard
         obs = self.service.get_obs_build_status(self.selected_group.pr_id, self.selected_group.branch)

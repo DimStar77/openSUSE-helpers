@@ -187,9 +187,12 @@ Breaks a group PR back into its individual components.
   - Removes the reference tokens from the target PR, effectively making it a standalone package PR again.
 
 ### `accept <target-pr-id>`
-Signals approval for a PR to be merged into staging.
+Signals approval for a PR to be merged into staging with pre-flight safety guards.
 
-- **Action**: Posts a comment "merge ok" on the PR.
+- **Pre-Flight Guards**:
+  - **Git Merge Conflict Guard**: Queries Gitea's `mergeable` status. If the PR has Git merge conflicts with the target base branch (`mergeable: false`), approval is strictly blocked to prevent bot merge failures downstream.
+  - **Multi-Architecture OBS Guard**: Queries OBS build results across **all target architectures** (including `x86_64`, `aarch64`, `s390x`, `ppc64le`, `i586`). If any package failed or is broken on ANY architecture, approval is blocked and all failing packages with their specific architectures (e.g. `gdm [aarch64, s390x]`) are reported.
+- **Action**: Posts a comment "merge ok" on the PR once all safety checks pass.
 - **Effect**: This notifies the openSUSE staging workflow bots to process the merge.
 
 ---

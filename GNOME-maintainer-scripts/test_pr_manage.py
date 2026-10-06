@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 import pr_manage as pm
+import staging_service as ss
 import tempfile
 from pathlib import Path
 _TEST_TMP_DIR = tempfile.TemporaryDirectory()
@@ -29,6 +30,14 @@ class TestPrManageModelsAndUtils(unittest.TestCase):
         self.assertEqual(t1, t2)
         self.assertNotEqual(t1, t3)
         self.assertEqual(hash(t1), hash(t2))
+
+    def test_staging_group_mergeable(self):
+        g1 = ss.StagingGroup(101, "G1", "factory", "ref", "p1", raw_pr={"mergeable": True})
+        self.assertTrue(g1.mergeable)
+        g2 = ss.StagingGroup(102, "G2", "factory", "ref", "p2", raw_pr={"mergeable": False})
+        self.assertFalse(g2.mergeable)
+        g3 = ss.StagingGroup(103, "G3", "factory", "ref", "p3")
+        self.assertIsNone(g3.mergeable)
 
     def test_extract_tokens(self):
         body = """
@@ -263,8 +272,6 @@ class TestPrManageCollisionGuard(unittest.TestCase):
         self.assertIn("body", update_call[1])
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 import staging_service as ss
 
@@ -300,6 +307,72 @@ class TestStagingService(unittest.TestCase):
         # Column 3 has standalone queue
         self.assertEqual(len(ungrouped), 1)
         self.assertEqual(ungrouped[0].pr_id, 200)
+
+    def test_accept_group_blocked_by_git_merge_conflict(self):
+        mock_pr = {"number": 100, "title": "Group", "base": {"ref": "factory"}, "mergeable": False}
+        self.mock_client.get_pr = MagicMock(return_value=mock_pr)
+        self.mock_client.add_comment = MagicMock()
+
+        res = self.service.accept_group(100)
+        self.assertFalse(res.success)
+        self.assertIn("Git merge conflicts", res.message)
+        self.mock_client.add_comment.assert_not_called()
+
+    def test_accept_group_blocked_by_multi_arch_obs_failure(self):
+        mock_pr = {"number": 100, "title": "Group", "base": {"ref": "factory"}, "mergeable": True}
+        self.mock_client.get_pr = MagicMock(return_value=mock_pr)
+        self.mock_client.add_comment = MagicMock()
+
+        mock_obs = {
+            "status": "failed",
+            "project": "GNOME:Factory:PullRequest:100",
+            "failed_pkgs": ["gdm"],
+            "failed_details": {"gdm": ["aarch64", "s390x"]},
+        }
+        with patch.object(self.service, "get_obs_build_status", return_value=mock_obs):
+            res = self.service.accept_group(100)
+            self.assertFalse(res.success)
+            self.assertIn("gdm [aarch64, s390x]", res.message)
+            self.mock_client.add_comment.assert_not_called()
+
+    def test_get_obs_build_status_multi_arch_aggregation(self):
+        xml_data = """<resultlist state="f409df81b854">
+          <result project="GNOME:Factory:PullRequest:100" repository="openSUSE_Factory" arch="x86_64" state="published">
+            <status package="libgexiv2" code="succeeded" />
+          </result>
+          <result project="GNOME:Factory:PullRequest:100" repository="openSUSE_Factory" arch="i586" state="published">
+            <status package="libgexiv2" code="succeeded" />
+          </result>
+          <result project="GNOME:Factory:PullRequest:100" repository="openSUSE_Factory" arch="aarch64" state="published">
+            <status package="libgexiv2" code="failed" />
+          </result>
+        </resultlist>"""
+        mock_res = MagicMock(returncode=0, stdout=xml_data)
+        with patch("subprocess.run", return_value=mock_res):
+            st = self.service.get_obs_build_status(100, "factory")
+            self.assertEqual(st["status"], "failed")
+            self.assertEqual(st["failed_pkgs"], ["libgexiv2"])
+            self.assertEqual(st["failed_details"], {"libgexiv2": ["aarch64"]})
+            self.assertEqual(st["failed_archs"], ["aarch64"])
+            self.assertEqual(st["archs"], ["aarch64", "i586", "x86_64"])
+
+    def test_get_obs_build_status_excluded_architecture_not_blocking(self):
+        xml_data = """<resultlist state="f409df81b854">
+          <result project="GNOME:Factory:PullRequest:1093" repository="openSUSE_Factory" arch="x86_64" state="unpublished">
+            <status package="wpewebkit" code="succeeded" />
+          </result>
+          <result project="GNOME:Factory:PullRequest:1093" repository="openSUSE_Factory" arch="i586" state="unpublished">
+            <status package="wpewebkit" code="excluded" />
+          </result>
+        </resultlist>"""
+        mock_res = MagicMock(returncode=0, stdout=xml_data)
+        with patch("subprocess.run", return_value=mock_res):
+            st = self.service.get_obs_build_status(1093, "factory")
+            self.assertEqual(st["status"], "succeeded")
+            self.assertEqual(st["succeeded"], 1)
+            self.assertEqual(st["total"], 1)
+            self.assertEqual(st["excluded"], 1)
+            self.assertEqual(st["failed_pkgs"], [])
 
     def test_service_add_package_collision_guard(self):
         self.mock_client.get_pr.return_value = {
@@ -1079,3 +1152,17 @@ class TestGuiComponents(unittest.TestCase):
         row_zenity = win.list_members.get_row_at_index(1)
         self.assertEqual(row_zenity.get_title(), "zenity")
         self.assertIn("Host Package ★", row_zenity.get_subtitle())
+
+    def test_staging_gui_conflict_guard(self):
+        app = pg.StagingGuiApp(self.service)
+        win = pg.StagingGuiWindow(app, self.service)
+
+        conflicted_group = ss.StagingGroup(100, "Conflicted Group", "factory", "ref", "zenity", [], raw_pr={"mergeable": False})
+        win.select_group(conflicted_group)
+
+        # Accept button must be disabled due to conflict
+        self.assertFalse(win.btn_accept.get_sensitive())
+        self.assertIn("Blocked", win.btn_accept.get_tooltip_text())
+
+if __name__ == '__main__':
+    unittest.main()

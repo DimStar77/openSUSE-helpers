@@ -936,6 +936,14 @@ class StagingTUI:
         """[o] Submits 'merge ok' with pre-merge OBS failure guard."""
         if self.active_col == 0 and len(self.selected_groups) > 1:
             marked_groups = [g for g in self.groups if g.pr_id in self.selected_groups]
+
+            # Pre-flight check: Git merge conflicts
+            conflicted_prs = [f"#{g.pr_id}" for g in marked_groups if g.mergeable is False]
+            if conflicted_prs:
+                self.status_msg = f"❌ Blocked: Marked PR(s) {', '.join(conflicted_prs)} have Git merge conflicts!"
+                self.status_color = 5
+                return
+
             failed_prs = []
             for g in marked_groups:
                 st = self.get_cached_obs_status(g.pr_id, g.branch)
@@ -982,11 +990,22 @@ class StagingTUI:
             self.status_color = 3
             return
 
-        # Pre-Merge Safety Guard: Check OBS Build Status!
+        # Pre-Merge Safety Guard 1: Check Git Merge Conflict first!
+        if target.mergeable is False:
+            self.status_msg = f"❌ Blocked: PR #{target.pr_id} has Git merge conflicts with base branch '{target.branch}'!"
+            self.status_color = 5
+            return
+
+        # Pre-Merge Safety Guard 2: Multi-Architecture OBS Build Status!
         obs_status = self.get_cached_obs_status(target.pr_id, target.branch)
         warn_prefix = ""
         if obs_status.get("status") == "failed":
-            failed_str = ", ".join(obs_status.get("failed_pkgs", [])[:3])
+            failed_details = obs_status.get("failed_details", {})
+            if failed_details:
+                failed_items = [f"{pkg} [{','.join(archs)}]" for pkg, archs in failed_details.items()]
+                failed_str = ", ".join(failed_items[:3])
+            else:
+                failed_str = ", ".join(obs_status.get("failed_pkgs", [])[:3])
             warn_prefix = f"⚠️ OBS FAILING ({failed_str})! "
 
         label = f"group #{target.pr_id}" if target.is_group else f"single PR #{target.pr_id}"
@@ -1308,12 +1327,13 @@ class StagingTUI:
                 obs_badge = ""
                 row_color = curses.color_pair(1) # Default Grey
 
+            conflict_tag = "⚠️ " if g.mergeable is False else ""
             if g.is_group:
                 badge = f"({g.member_count}p)"
-                summary_str = f"{obs_badge}#{g.pr_id} [{g.branch}] {badge} {g.title}"
+                summary_str = f"{conflict_tag}{obs_badge}#{g.pr_id} [{g.branch}] {badge} {g.title}"
             else:
                 pkg = g.host_package or g.title.replace("Forwarded PRs: ", "").strip()
-                summary_str = f"{obs_badge}#{g.pr_id} [{g.branch}] {pkg}"
+                summary_str = f"{conflict_tag}{obs_badge}#{g.pr_id} [{g.branch}] {pkg}"
 
             line_str = f"{cursor_prefix}{check_box}{summary_str:<{w - 6}}"
 
@@ -1360,7 +1380,8 @@ class StagingTUI:
             obs_txt = "OBS: ⚪ Standby"
             obs_attr = curses.color_pair(1) | curses.A_DIM
 
-        info_line1 = f"Target: #{target.pr_id} [{target.branch}]  •  {obs_txt}"
+        conflict_str = "  •  ⚠️ GIT CONFLICT" if target.mergeable is False else ""
+        info_line1 = f"Target: #{target.pr_id} [{target.branch}]  •  {obs_txt}{conflict_str}"
         info_line2 = f"Title:  {target.title}"
         host_str = f"Host:   ★ {target.host_package or 'None'}"
 
@@ -1394,7 +1415,9 @@ class StagingTUI:
                 else:
                     check_box = "[✓] " if is_marked else "[ ] "
                     host_tag = ""
-                item_str = f"{cursor_prefix}{check_box}{tok.package}{host_tag} (!{tok.pr_number})"
+                failed_archs = obs_status.get("failed_details", {}).get(tok.package, [])
+                arch_tag = f" [✗ {','.join(failed_archs)}]" if failed_archs else ""
+                item_str = f"{cursor_prefix}{check_box}{tok.package}{host_tag}{arch_tag} (!{tok.pr_number})"
                 line_str = f"{item_str:<{w - 4}}"
 
                 if is_selected:

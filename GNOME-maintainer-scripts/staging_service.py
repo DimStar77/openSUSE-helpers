@@ -28,6 +28,7 @@ class StagingGroup:
     host_package: Optional[str]
     tokens: List[pm.PackageToken] = field(default_factory=list)
     html_url: str = ""
+    raw_pr: Dict = field(default_factory=dict)
 
     def __post_init__(self):
         if self.tokens:
@@ -57,6 +58,11 @@ class StagingGroup:
         if self.host_package and self.host_package.lower() == target:
             return True
         return any(t.key == target for t in self.tokens)
+
+    @property
+    def mergeable(self) -> Optional[bool]:
+        """Returns True if Gitea confirms PR merges cleanly, False on Git merge conflict, None if unknown."""
+        return self.raw_pr.get("mergeable")
 
 
 @dataclass
@@ -129,7 +135,8 @@ class StagingService:
                 head_ref=p.get("head", {}).get("ref", ""),
                 host_package=host_pkg,
                 tokens=tokens,
-                html_url=p.get("html_url", "")
+                html_url=p.get("html_url", ""),
+                raw_pr=p
             )
 
             if group_obj.is_group:
@@ -586,7 +593,37 @@ class StagingService:
         return OperationResult(True, f"Disintegrated group #{target_pr_id}. Restored {len(peer_tokens)} child PRs.")
 
     def accept_group(self, target_pr_id: int) -> OperationResult:
-        """Approves the group for staging merge by posting 'merge ok'."""
+        """Approves the group for staging merge by posting 'merge ok', guarded by pre-flight checks."""
+        if getattr(self.client, "is_read_only", False) is True:
+            return OperationResult(
+                False,
+                f"Permission Denied: Repository '{self.repo}' is read-only for your user. Cannot approve PR #{target_pr_id}."
+            )
+
+        pr_data = self.client.get_pr(target_pr_id)
+        target_branch = pr_data.get("base", {}).get("ref", "factory") if pr_data else "factory"
+
+        # Pre-merge safety guard 1: Gitea Git merge conflict check
+        if pr_data and pr_data.get("mergeable") is False:
+            return OperationResult(
+                False,
+                f"Pre-merge safety check failed: PR #{target_pr_id} has Git merge conflicts with base branch '{target_branch}' (mergeable is False). Please rebase or resolve conflicts before approving!"
+            )
+
+        # Pre-merge safety guard 2: Multi-Architecture OBS build status check
+        obs_status = self.get_obs_build_status(target_pr_id, target_branch)
+        if obs_status.get("status") == "failed":
+            failed_details = obs_status.get("failed_details", {})
+            if failed_details:
+                failed_items = [f"{pkg} [{', '.join(archs)}]" for pkg, archs in failed_details.items()]
+                failed_str = ", ".join(failed_items)
+            else:
+                failed_str = ", ".join(obs_status.get("failed_pkgs", []))
+            return OperationResult(
+                False,
+                f"Pre-merge safety check failed: OBS staging project '{obs_status.get('project')}' has failing packages ({failed_str}). Merge approval blocked!"
+            )
+
         try:
             self.client.add_comment(target_pr_id, "merge ok")
             return OperationResult(True, f"Successfully commented 'merge ok' on PR #{target_pr_id}.")
@@ -628,7 +665,22 @@ class StagingService:
     def get_obs_build_status(self, pr_id: int, branch: str = "factory") -> Dict:
         """
         Queries the OBS build result for the staging project associated with this PR.
-        Returns a dict: {'status': 'succeeded'|'building'|'failed'|'none', 'failed_pkgs': [...], 'succeeded': int, 'total': int}
+        Aggregates results across ALL built architectures (not just x86_64).
+        Returns a dict: {
+            'status': 'succeeded'|'building'|'failed'|'none',
+            'project': str,
+            'failed_pkgs': [...],
+            'failed_details': {'pkg': ['arch1', ...]},
+            'failed_archs': [...],
+            'arch_summary': {...},
+            'archs': [...],
+            'pkg_repos': {'pkg': 'repo_name'},
+            'succeeded': int,
+            'building': int,
+            'excluded': int,
+            'total': int,
+            'total_raw': int
+        }
         """
         import subprocess
         import xml.etree.ElementTree as ET
@@ -644,51 +696,107 @@ class StagingService:
                 timeout=4
             )
             if res.returncode != 0:
-                return {"status": "none", "project": project, "total": 0, "failed_pkgs": []}
+                return {
+                    "status": "none", "project": project, "total": 0,
+                    "failed_pkgs": [], "failed_details": {}, "failed_archs": [],
+                    "arch_summary": {}, "archs": [], "pkg_repos": {},
+                    "succeeded": 0, "building": 0, "excluded": 0
+                }
 
             root = ET.fromstring(res.stdout)
             results = root.findall(".//result")
             if not results:
-                return {"status": "none", "project": project, "total": 0, "failed_pkgs": []}
-
-            primary_res = next((r for r in results if r.get("arch") == "x86_64"), results[0])
-            overall_state = primary_res.get("state", "")
-
-            statuses = {}
-            failed_pkgs = []
-            for s in primary_res.findall("status"):
-                code = s.get("code")
-                pkg = s.get("package")
-                statuses[code] = statuses.get(code, 0) + 1
-                if code in ("failed", "unresolvable", "broken"):
-                    failed_pkgs.append(pkg)
-
-            total = sum(statuses.values())
-            succeeded = statuses.get("succeeded", 0)
-            building = statuses.get("building", 0) + statuses.get("blocked", 0)
-
-            if failed_pkgs:
                 return {
-                    "status": "failed",
-                    "failed_pkgs": failed_pkgs,
-                    "project": project,
-                    "total": total,
-                    "succeeded": succeeded
+                    "status": "none", "project": project, "total": 0,
+                    "failed_pkgs": [], "failed_details": {}, "failed_archs": [],
+                    "arch_summary": {}, "archs": [], "pkg_repos": {},
+                    "succeeded": 0, "building": 0, "excluded": 0
                 }
-            elif building > 0:
-                return {
-                    "status": "building",
-                    "building": building,
-                    "succeeded": succeeded,
-                    "total": total,
-                    "project": project
-                }
-            elif succeeded == total and total > 0:
-                return {"status": "succeeded", "total": total, "project": project}
+
+            failed_by_pkg = {}
+            failed_archs = set()
+            building_archs = set()
+            succeeded_archs = set()
+            all_archs = set()
+            arch_summaries = {}
+            pkg_repos = {}
+            total_statuses = 0
+            total_succeeded = 0
+            total_building = 0
+            total_excluded = 0
+
+            for r in results:
+                arch = r.get("arch", "unknown")
+                repo = r.get("repository", "unknown")
+                r_state = r.get("state", "")
+                all_archs.add(arch)
+
+                arch_entry = arch_summaries.setdefault(
+                    arch,
+                    {"succeeded": 0, "failed": 0, "building": 0, "excluded": 0, "state": r_state, "failed_pkgs": [], "repository": repo}
+                )
+
+                for s in r.findall("status"):
+                    code = s.get("code")
+                    pkg = s.get("package")
+                    if pkg and repo:
+                        pkg_repos[pkg] = repo
+                    total_statuses += 1
+
+                    if code in ("failed", "unresolvable", "broken"):
+                        failed_by_pkg.setdefault(pkg, []).append(arch)
+                        failed_archs.add(arch)
+                        arch_entry["failed"] += 1
+                        if pkg not in arch_entry["failed_pkgs"]:
+                            arch_entry["failed_pkgs"].append(pkg)
+                    elif code in ("building", "blocked", "scheduled", "dispatching"):
+                        building_archs.add(arch)
+                        total_building += 1
+                        arch_entry["building"] += 1
+                    elif code in ("succeeded", "finished"):
+                        total_succeeded += 1
+                        succeeded_archs.add(arch)
+                        arch_entry["succeeded"] += 1
+                    elif code in ("excluded", "disabled"):
+                        total_excluded += 1
+                        arch_entry["excluded"] += 1
+
+            total_active = total_statuses - total_excluded
+
+            for pkg in failed_by_pkg:
+                failed_by_pkg[pkg] = sorted(list(set(failed_by_pkg[pkg])))
+
+            if failed_by_pkg:
+                status = "failed"
+            elif building_archs or total_building > 0:
+                status = "building"
+            elif total_succeeded == total_active and total_active > 0:
+                status = "succeeded"
             else:
-                return {"status": overall_state or "unknown", "total": total, "project": project, "failed_pkgs": []}
+                status = "none" if total_active == 0 else "building"
+
+            return {
+                "status": status,
+                "project": project,
+                "failed_pkgs": sorted(list(failed_by_pkg.keys())),
+                "failed_details": failed_by_pkg,
+                "failed_archs": sorted(list(failed_archs)),
+                "arch_summary": arch_summaries,
+                "archs": sorted(list(all_archs)),
+                "pkg_repos": pkg_repos,
+                "succeeded": total_succeeded,
+                "building": total_building,
+                "excluded": total_excluded,
+                "total": total_active,
+                "total_raw": total_statuses,
+            }
         except Exception as e:
-            return {"status": "error", "error": str(e), "project": project, "failed_pkgs": []}
+            return {
+                "status": "none", "project": project, "total": 0,
+                "failed_pkgs": [], "failed_details": {}, "failed_archs": [],
+                "arch_summary": {}, "archs": [], "pkg_repos": {},
+                "succeeded": 0, "building": 0, "excluded": 0, "error": str(e)
+            }
 
     def audit_orphans(self, filter_branch: Optional[str] = None) -> List[OrphanPackagePR]:
         """
