@@ -1105,3 +1105,11 @@ class StagingService:
     def record_recent_workspace(self, repo_name: str):
         """Saves a successfully accessed workspace into ~/.config/pr-manage.json."""
         pm.save_config(active_workspace=repo_name, add_workspace=repo_name)
+
+    def get_refresh_interval(self) -> int:
+        """Returns the auto-refresh interval in seconds for the current workspace."""
+        return pm.get_workspace_refresh_interval(self.repo)
+
+    def set_refresh_interval(self, seconds: int):
+        """Persists the auto-refresh interval in seconds for the current workspace."""
+        pm.set_workspace_refresh_interval(self.repo, seconds)

@@ -183,6 +183,31 @@ def save_config(active_workspace: Optional[str] = None, add_workspace: Optional[
     except Exception:
         pass
 
+def get_workspace_refresh_interval(repo: str) -> int:
+    """Returns the auto-refresh interval in seconds for a repository (default 300 = 5m). 0 = disabled."""
+    cfg = load_config()
+    intervals = cfg.get("refresh_intervals", {})
+    if repo in intervals:
+        try:
+            return int(intervals[repo])
+        except (ValueError, TypeError):
+            pass
+    return int(cfg.get("default_refresh_interval", 300))
+
+
+def set_workspace_refresh_interval(repo: str, seconds: int):
+    """Saves the auto-refresh interval for a specific repository in ~/.config/pr-manage.json."""
+    cfg = load_config()
+    intervals = cfg.setdefault("refresh_intervals", {})
+    intervals[repo] = int(seconds)
+    try:
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+    except Exception:
+        pass
+
+
 def resolve_repository() -> str:
     """
     Resolves the target Gitea repository name (e.g. 'GNOME/_ObsPrj', 'KDE/_ObsPrj', 'openSUSE/Factory').

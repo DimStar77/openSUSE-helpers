@@ -13,6 +13,7 @@ A modern GTK4 / Libadwaita desktop application for managing forwarded PRs on _Ob
 
 import sys
 import os
+import time
 import subprocess
 from pathlib import Path
 from typing import Optional, List, Dict, Set, Tuple
@@ -389,6 +390,22 @@ class StagingGuiWindow(Adw.ApplicationWindow):
         self.spinner = Gtk.Spinner()
         self.header.pack_end(self.spinner)
 
+        # Auto-Refresh Dropdown
+        self.auto_refresh_source_id: Optional[int] = None
+        self.auto_refresh_intervals = [
+            ("Auto: Off", 0),
+            ("Auto: 1m", 60),
+            ("Auto: 2m", 120),
+            ("Auto: 5m", 300),
+            ("Auto: 10m", 600),
+            ("Auto: 15m", 900)
+        ]
+        self.drop_refresh = Gtk.DropDown.new_from_strings([lbl for lbl, _ in self.auto_refresh_intervals])
+        self.drop_refresh.set_tooltip_text("Background auto-refresh interval for current workspace")
+        self.sync_refresh_dropdown_selection()
+        self.drop_refresh.connect("notify::selected", self.on_refresh_interval_changed)
+        self.header.pack_end(self.drop_refresh)
+
         # Read-Only Banner
         self.banner = Adw.Banner(button_label="Dismiss")
         self.banner.connect("button-clicked", lambda b: self.banner.set_revealed(False))
@@ -407,6 +424,7 @@ class StagingGuiWindow(Adw.ApplicationWindow):
 
         # Initial Load
         self.refresh_data()
+        self.arm_auto_refresh_timer()
 
     def update_workspace_menu(self):
         """Constructs workspace dropdown menu showing permissions and active repo."""
@@ -629,12 +647,42 @@ class StagingGuiWindow(Adw.ApplicationWindow):
         scroller.set_child(self.list_ungrouped)
         box.append(scroller)
 
-    def refresh_data(self):
+    def sync_refresh_dropdown_selection(self):
+        curr_secs = self.service.get_refresh_interval()
+        matched_idx = 3 # default 5m
+        for idx, (_, secs) in enumerate(self.auto_refresh_intervals):
+            if secs == curr_secs:
+                matched_idx = idx
+                break
+        self.drop_refresh.set_selected(matched_idx)
+
+    def arm_auto_refresh_timer(self, seconds: Optional[int] = None):
+        if self.auto_refresh_source_id:
+            GLib.source_remove(self.auto_refresh_source_id)
+            self.auto_refresh_source_id = None
+
+        interval = seconds if seconds is not None else self.service.get_refresh_interval()
+        if interval > 0:
+            self.auto_refresh_source_id = GLib.timeout_add_seconds(interval, self.on_auto_refresh_tick)
+
+    def on_auto_refresh_tick(self) -> bool:
+        """Quiet background refresh tick."""
+        self.refresh_data(is_auto_refresh=True)
+        return GLib.SOURCE_CONTINUE
+
+    def on_refresh_interval_changed(self, drop, pspec):
+        sel_idx = drop.get_selected()
+        if 0 <= sel_idx < len(self.auto_refresh_intervals):
+            lbl, secs = self.auto_refresh_intervals[sel_idx]
+            self.service.set_refresh_interval(secs)
+            self.arm_auto_refresh_timer(secs)
+            self.show_toast(f"Auto-refresh interval set to {lbl} for {self.service.repo}.")
+
+    def refresh_data(self, is_auto_refresh: bool = False):
         """Asynchronously refreshes staging queues and groups from Gitea."""
-        self.obs_status_cache.clear()
-        self.pending_obs_queries.clear()
-        self.spinner.start()
-        self.btn_refresh.set_sensitive(False)
+        if not is_auto_refresh:
+            self.spinner.start()
+            self.btn_refresh.set_sensitive(False)
 
         branch_val = self.drop_branch.get_selected_item().get_string()
         branch_filter = None if branch_val == "all" else branch_val
@@ -649,29 +697,41 @@ class StagingGuiWindow(Adw.ApplicationWindow):
         def worker():
             try:
                 groups, ungrouped = self.service.fetch_all(filter_branch=branch_filter)
-                GLib.idle_add(self.on_data_loaded, groups, ungrouped)
+                GLib.idle_add(lambda: self.on_data_loaded(groups, ungrouped, is_auto_refresh=is_auto_refresh))
             except Exception as e:
                 GLib.idle_add(self.on_load_error, str(e))
 
         self.executor.submit(worker)
 
-    def on_data_loaded(self, groups: List[ss.StagingGroup], ungrouped: List[ss.StagingGroup]):
+    def on_data_loaded(self, groups: List[ss.StagingGroup], ungrouped: List[ss.StagingGroup], is_auto_refresh: bool = False):
         self.groups = groups
         self.ungrouped = ungrouped
         self.spinner.stop()
         self.btn_refresh.set_sensitive(True)
 
+        # Prune non-existent PR IDs from OBS status cache without wiping active entries
+        valid_ids = {g.pr_id for g in self.groups}
+        self.obs_status_cache = {gid: st for gid, st in self.obs_status_cache.items() if gid in valid_ids}
+        self.pending_obs_queries = {gid for gid in self.pending_obs_queries if gid in valid_ids}
+
+        # Track active group ID to re-evaluate group members in-place
+        old_selected_id = self.selected_group.pr_id if self.selected_group else None
+        matching = next((g for g in self.groups if g.pr_id == old_selected_id), None) if old_selected_id else None
+
         self.populate_groups_list()
         self.populate_ungrouped_list()
 
-        # Restore or update selection
-        if self.selected_group:
-            matching = next((g for g in self.groups if g.pr_id == self.selected_group.pr_id), None)
-            self.select_group(matching or (self.groups[0] if self.groups else None))
+        # Restore or update selection, re-evaluating tracked packages in-place
+        if matching:
+            self.select_group(matching)
         elif self.groups:
             self.select_group(self.groups[0])
         else:
             self.select_group(None)
+
+        if is_auto_refresh:
+            now_str = time.strftime("%H:%M:%S")
+            self.show_toast(f"🔄 Staging queue auto-refreshed ({now_str})")
 
     def on_load_error(self, err_msg: str):
         self.spinner.stop()

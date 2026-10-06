@@ -36,6 +36,8 @@ import os
 import re
 import curses
 import subprocess
+import threading
+import time
 from typing import Optional, List, Tuple, Set, Dict
 from concurrent.futures import ThreadPoolExecutor
 
@@ -75,6 +77,19 @@ class StagingTUI:
         self.status_color = 1  # 1: Normal, 2: Success, 3: Cyan, 4: Warning, 5: Error
         self.loading = False
 
+        # Auto-Refresh Engine
+        self.refresh_interval = self.service.get_refresh_interval()
+        self.last_refresh_time = time.time()
+        self.is_refreshing_background = False
+        self.auto_refresh_intervals = [
+            ("Off", 0),
+            ("1 min", 60),
+            ("2 min", 120),
+            ("5 min", 300),
+            ("10 min", 600),
+            ("15 min", 900)
+        ]
+
     def load_data(self, stdscr: Optional[curses.window] = None, message: Optional[str] = None):
         """Fetches data from Gitea via the StagingService, rendering an immediate splash or toast."""
         self.loading = True
@@ -104,9 +119,10 @@ class StagingTUI:
         valid_ungrouped_ids = {u.pr_id for u in self.ungrouped}
         self.selected_ungrouped = {uid for uid in self.selected_ungrouped if uid in valid_ungrouped_ids}
 
-        # Clear OBS status cache and pending queries so it refreshes for active view
-        self.obs_status_cache.clear()
-        self.pending_obs_queries.clear()
+        # Prune non-existent OBS cache items without clearing active ones
+        valid_group_ids = {g.pr_id for g in self.groups}
+        self.obs_status_cache = {gid: st for gid, st in self.obs_status_cache.items() if gid in valid_group_ids}
+        self.pending_obs_queries = {gid for gid in self.pending_obs_queries if gid in valid_group_ids}
 
         # Clamp indices
         if self.groups:
@@ -115,6 +131,52 @@ class StagingTUI:
             self.group_idx = 0
 
         self._clamp_indices()
+
+    def trigger_background_refresh(self):
+        """Asynchronously triggers a quiet background refresh and re-evaluation."""
+        if self.is_refreshing_background:
+            return
+        self.is_refreshing_background = True
+
+        def worker():
+            current_branch = self.branch_filters[self.branch_filter_idx]
+            try:
+                new_groups, new_ungrouped = self.service.fetch_all(filter_branch=current_branch)
+                self.reconcile_background_data(new_groups, new_ungrouped)
+            except Exception as e:
+                self.status_msg = f"Auto-refresh error: {e}"
+                self.status_color = 5
+            finally:
+                self.is_refreshing_background = False
+                self.last_refresh_time = time.time()
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def reconcile_background_data(self, new_groups: List[ss.StagingGroup], new_ungrouped: List[ss.StagingGroup]):
+        """Reconciles live queue in-place, keeping cursor and selection stable and re-evaluating group members."""
+        old_group = self.get_current_group()
+        old_group_id = old_group.pr_id if old_group else None
+
+        self.groups = new_groups
+        self.ungrouped = new_ungrouped
+
+        # Prune non-existent OBS cache items
+        valid_ids = {g.pr_id for g in self.groups}
+        self.obs_status_cache = {gid: st for gid, st in self.obs_status_cache.items() if gid in valid_ids}
+        self.pending_obs_queries = {gid for gid in self.pending_obs_queries if gid in valid_ids}
+
+        # Keep cursor stable on current group ID if still present
+        if old_group_id:
+            for idx, g in enumerate(self.groups):
+                if g.pr_id == old_group_id:
+                    self.group_idx = idx
+                    break
+
+        self._clamp_indices()
+
+        now_str = time.strftime("%H:%M:%S")
+        self.status_msg = f"🔄 Auto-synced staging queue ({now_str})"
+        self.status_color = 2
 
     def _clamp_indices(self):
         current_members = self.get_current_group_members()
@@ -186,6 +248,11 @@ class StagingTUI:
         self.load_data(stdscr=stdscr, message=f"Target: {self.service.repo}")
 
         while True:
+            # Check auto-refresh timer tick
+            now = time.time()
+            if self.refresh_interval > 0 and (now - self.last_refresh_time) >= self.refresh_interval and not self.is_refreshing_background:
+                self.trigger_background_refresh()
+
             self.draw(stdscr)
             try:
                 ch = stdscr.getch()
@@ -256,6 +323,8 @@ class StagingTUI:
                 self.load_data(stdscr=stdscr, message="Switching branch filter...")
             elif ch in (ord("r"), ord("R")):
                 self.load_data(stdscr=stdscr, message="Refreshing live staging queue...")
+            elif ch in (ord("t"), ord("T")):
+                self.handle_set_refresh_interval(stdscr)
             elif ch == ord("/"):
                 self.prompt_search(stdscr)
             elif ch in (ord("?"), ord("h")):
@@ -732,6 +801,59 @@ class StagingTUI:
         except Exception as e:
             self.status_msg = f"Failed to open browser: {e}"
             self.status_color = 5
+
+    def handle_set_refresh_interval(self, stdscr):
+        """[t] / [T] Modal dialog to configure per-workspace auto-refresh interval."""
+        h, w = stdscr.getmaxyx()
+        modal_w = min(60, w - 4)
+        modal_h = min(14, len(self.auto_refresh_intervals) + 6)
+        start_y = max(1, (h - modal_h) // 2)
+        start_x = max(1, (w - modal_w) // 2)
+
+        win = curses.newwin(modal_h, modal_w, start_y, start_x)
+        win.box()
+
+        sel_idx = 3  # default 5m
+        for idx, (_, secs) in enumerate(self.auto_refresh_intervals):
+            if secs == self.refresh_interval:
+                sel_idx = idx
+                break
+
+        while True:
+            win.erase()
+            win.box()
+            title = f" Auto-Refresh Interval ({self.service.repo}) "
+            win.addstr(0, max(2, (modal_w - len(title)) // 2), title[:modal_w - 4], curses.color_pair(3) | curses.A_BOLD)
+            win.addstr(1, 2, "Select background refresh rate:", curses.color_pair(1) | curses.A_DIM)
+
+            for i, (lbl, secs) in enumerate(self.auto_refresh_intervals):
+                is_selected = (i == sel_idx)
+                is_current = (secs == self.refresh_interval)
+                curr_mark = " (active)" if is_current else ""
+                cursor = "▸ " if is_selected else "  "
+                label = f"{cursor}{lbl}{curr_mark}"
+                attr = curses.color_pair(2 if is_selected else 1) | (curses.A_BOLD if is_selected else 0)
+                win.addstr(2 + i, 2, label[:modal_w - 4], attr)
+
+            foot = " Enter: Save  •  q/Esc: Cancel "
+            win.addstr(modal_h - 2, 2, foot[:modal_w - 4], curses.color_pair(2) | curses.A_BOLD)
+            win.refresh()
+
+            ch = stdscr.getch()
+            if ch in (ord("q"), ord("Q"), 27):
+                return
+            elif ch in (curses.KEY_UP, ord("k")):
+                sel_idx = max(0, sel_idx - 1)
+            elif ch in (curses.KEY_DOWN, ord("j")):
+                sel_idx = min(len(self.auto_refresh_intervals) - 1, sel_idx + 1)
+            elif ch in (10, curses.KEY_ENTER):
+                lbl, secs = self.auto_refresh_intervals[sel_idx]
+                self.refresh_interval = secs
+                self.service.set_refresh_interval(secs)
+                self.last_refresh_time = time.time()
+                self.status_msg = f"Auto-refresh interval set to {lbl} for {self.service.repo}."
+                self.status_color = 2
+                return
 
     def handle_switch_workspace(self, stdscr):
         """[W] Modal dialog to dynamically discover and switch between valid Gitea workspaces."""
@@ -1428,7 +1550,8 @@ class StagingTUI:
             perm_badge = "[🟢 MAINTAINER]"
 
         repo_str = f"Repo: {self.service.repo} {perm_badge}"
-        top_bar = f" openSUSE Staging Group Manager  •  {repo_str}  •  {branch_str}"
+        int_str = f"{self.refresh_interval // 60}m" if self.refresh_interval > 0 else "Off"
+        top_bar = f" openSUSE Staging Group Manager  •  {repo_str}  •  {branch_str}  •  Auto: {int_str}"
         top_attr = curses.color_pair(4 if self.service.client.is_read_only else 3) | curses.A_BOLD
         stdscr.addstr(0, 0, top_bar[:w - 1], top_attr)
         help_hint = "[W] Switch [?] Help [q] Quit "
@@ -1456,7 +1579,7 @@ class StagingTUI:
         stdscr.addstr(h - 2, 0, full_status[:w - 1], status_color)
 
         # Bottom Keybindings Guide
-        cmd_guide = "[Enter] Diff [l] Log [Space] Mark [*] All [A] Add [D] Rem [v] Move [e] Rename [c] Comb [o] OK"
+        cmd_guide = "[Enter] Diff [l] Log [Space] Mark [*] All [A] Add [D] Rem [v] Move [e] Rename [c] Comb [o] OK [t] Auto"
         stdscr.addstr(h - 1, 0, cmd_guide[:w - 1], curses.color_pair(1) | curses.A_DIM)
 
         stdscr.refresh()

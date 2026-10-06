@@ -124,7 +124,8 @@ Launches the interactive 3-column Terminal User Interface (TUI) for visual queue
   - `d`: Disintegrate group back to standalone PRs.
   - `f` / `b`: Cycle branch filter (`all` / `factory` / `next`).
   - `/`: Search / filter ungrouped queue.
-  - `r`: Refresh live state from Gitea and OBS.
+  - `r`: Manual refresh live state from Gitea and OBS.
+  - `t` / `T`: Configure per-workspace background auto-refresh interval (`Off`, `1m`, `2m`, `5m`, `10m`, `15m`).
   - `q`: Quit TUI.
 
 ### `gui`
@@ -141,6 +142,7 @@ Launches the modern GTK4 / Libadwaita graphical staging manager interface (`pr-m
     - **Group Members Panel**: Searchable list of bundled packages with upstream PR numbers, instant diff inspection, and single/batch removal.
     - **Ungrouped Staging Queue**: Searchable list of standalone package PRs with one-click addition into the active group or single-PR approval (`merge ok`).
   - **Out-of-Sync Orphan Auditor**: Integrated dialog to triage unforwarded package PRs with one-click child PR reopening or group adoption.
+  - **Non-Intrusive Auto-Refresh & Member Re-Evaluation**: Configurable per-workspace background auto-refresh (default 5m, adjustable via HeaderBar dropdown: `Off`, `1m`, `2m`, `5m`, `10m`, `15m`). Re-evaluates tracked group member packages in real-time to pick up changes made by other maintainers, reconciles merged/closed PRs in-place, and updates OBS build states without ever resetting known statuses to 'Standby'.
   - **Workspace & Permission Awareness**: HeaderBar dropdown for switching staging repositories with permission tags (`[Admin]`, `[Maintainer]`, `[Read-Only]`) and a persistent notification banner when operating in Read-Only mode.
 
 ### `audit [branch]`

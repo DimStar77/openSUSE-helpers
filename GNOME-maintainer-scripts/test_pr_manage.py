@@ -1247,5 +1247,94 @@ class TestGuiComponents(unittest.TestCase):
         )
 
 
+
+    def test_workspace_refresh_interval_persistence(self):
+        with tempfile.TemporaryDirectory() as td:
+            pm.CONFIG_PATH = Path(td) / "test-config.json"
+            # Default
+            self.assertEqual(pm.get_workspace_refresh_interval("GNOME/_ObsPrj"), 300)
+
+            # Set and retrieve
+            pm.set_workspace_refresh_interval("GNOME/_ObsPrj", 120)
+            self.assertEqual(pm.get_workspace_refresh_interval("GNOME/_ObsPrj"), 120)
+
+            # StagingService delegation
+            mock_client = MagicMock(repo="openSUSE/Factory")
+            svc = ss.StagingService(mock_client)
+            self.assertEqual(svc.get_refresh_interval(), 300)
+            svc.set_refresh_interval(600)
+            self.assertEqual(svc.get_refresh_interval(), 600)
+            self.assertEqual(pm.get_workspace_refresh_interval("openSUSE/Factory"), 600)
+
+    def test_tui_reconcile_re_evaluates_group_members_in_place(self):
+        tui = pt.StagingTUI(self.service)
+        # Initial group with 1 package (zenity)
+        g1 = ss.StagingGroup(100, "Group 100", "factory", "ref", "zenity", [pm.PackageToken("GNOME", "zenity", 1)])
+        tui.groups = [g1]
+        tui.group_idx = 0
+        tui.obs_status_cache[100] = {"status": "succeeded", "total": 1}
+
+        # Another maintainer adds 'gtk4' to group 100 on Gitea:
+        updated_tokens = [pm.PackageToken("GNOME", "gtk4", 18), pm.PackageToken("GNOME", "zenity", 1)]
+        g1_updated = ss.StagingGroup(100, "Group 100", "factory", "ref", "zenity", updated_tokens)
+
+        tui.reconcile_background_data([g1_updated], [])
+
+        # Cursor must remain stable on group 100
+        self.assertEqual(tui.group_idx, 0)
+        self.assertEqual(tui.get_current_group().pr_id, 100)
+
+        # Tracked packages must be re-evaluated in-place!
+        members = tui.get_current_group_members()
+        self.assertEqual(len(members), 2)
+        self.assertEqual([m.package for m in members], ["gtk4", "zenity"])
+
+        # OBS cache must NOT be wiped!
+        self.assertIn(100, tui.obs_status_cache)
+        self.assertEqual(tui.obs_status_cache[100]["status"], "succeeded")
+
+    def test_gui_on_data_loaded_re_evaluates_active_group_without_obs_cache_wipe(self):
+        app = pg.StagingGuiApp(self.service)
+        win = pg.StagingGuiWindow(app, self.service)
+
+        g1 = ss.StagingGroup(100, "Group 100", "factory", "ref", "zenity", [pm.PackageToken("GNOME", "zenity", 1)])
+        win.groups = [g1]
+        win.select_group(g1)
+        win.obs_status_cache[100] = {"status": "succeeded", "total": 1}
+
+        # Another maintainer adds 'gjs' to group 100:
+        updated_tokens = [pm.PackageToken("GNOME", "gjs", 2), pm.PackageToken("GNOME", "zenity", 1)]
+        g1_updated = ss.StagingGroup(100, "Group 100", "factory", "ref", "zenity", updated_tokens)
+
+        win.on_data_loaded([g1_updated], [], is_auto_refresh=True)
+
+        # Selected group stays group 100
+        self.assertEqual(win.selected_group.pr_id, 100)
+
+        # Members list re-evaluates in-place
+        self.assertEqual(len(win.selected_group.tokens), 2)
+        self.assertEqual([t.package for t in win.selected_group.tokens], ["gjs", "zenity"])
+
+        # OBS cache remains populated (no reset to standby)
+        self.assertIn(100, win.obs_status_cache)
+        self.assertEqual(win.obs_status_cache[100]["status"], "succeeded")
+
+    def test_gui_auto_refresh_dropdown_and_timer(self):
+        app = pg.StagingGuiApp(self.service)
+        win = pg.StagingGuiWindow(app, self.service)
+
+        self.assertTrue(hasattr(win, "drop_refresh"))
+        self.assertTrue(hasattr(win, "auto_refresh_source_id"))
+        self.assertIsNotNone(win.auto_refresh_source_id)
+
+        # Change dropdown selection to 'Off' (index 0)
+        win.drop_refresh.set_selected(0)
+        self.assertIsNone(win.auto_refresh_source_id)
+        self.assertEqual(self.service.get_refresh_interval(), 0)
+
+        # Clean timer
+        win.arm_auto_refresh_timer(0)
+
+
 if __name__ == '__main__':
     unittest.main()
