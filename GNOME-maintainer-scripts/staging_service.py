@@ -662,6 +662,51 @@ class StagingService:
         except Exception as e:
             return f"(Error fetching diff: {e})"
 
+    def get_staging_config(self, branch: str) -> Optional[Dict[str, str]]:
+        """
+        Fetches and caches staging.config for the given target branch from Gitea.
+        Contains 'ObsProject' and 'StagingProject' configuration for the branch.
+        """
+        if not hasattr(self, "_staging_configs"):
+            self._staging_configs = {}
+
+        branch_key = branch.lower()
+        target_ref = "factory" if branch_key in ("standard", "master") else branch
+        cache_key = f"{self.repo}:{target_ref}"
+
+        if cache_key in self._staging_configs:
+            return self._staging_configs[cache_key]
+
+        try:
+            url = f"{self.client.base_url}/api/v1/repos/{self.repo}/raw/staging.config?ref={target_ref}"
+            headers = {"Authorization": f"token {self.client.token}", "User-Agent": "pr-manage/2.0"}
+            res = self.client.session.get(url, headers=headers, timeout=5)
+            if res.status_code == 200:
+                data = json.loads(res.text)
+                self._staging_configs[cache_key] = data
+                return data
+        except Exception:
+            pass
+
+        self._staging_configs[cache_key] = None
+        return None
+
+    def get_obs_project_name(self, pr_id: int, branch: str = "factory") -> str:
+        """
+        Resolves the canonical OBS staging project name for a PR and target branch.
+        First inspects staging.config from the branch (authoritative); otherwise
+        falls back to canonical project capitalization heuristics.
+        """
+        cfg = self.get_staging_config(branch)
+        if cfg and "StagingProject" in cfg:
+            return f"{cfg['StagingProject']}:{pr_id}"
+
+        if branch.lower() in ("factory", "standard", "master"):
+            branch_name = "Factory"
+        else:
+            branch_name = branch.capitalize()
+        return f"{self.owner}:{branch_name}:PullRequest:{pr_id}"
+
     def get_obs_build_status(self, pr_id: int, branch: str = "factory") -> Dict:
         """
         Queries the OBS build result for the staging project associated with this PR.
@@ -683,15 +728,14 @@ class StagingService:
         import subprocess
         import xml.etree.ElementTree as ET
 
-        branch_name = "Factory" if branch.lower() in ("factory", "standard") else branch
-        project = f"{self.owner}:{branch_name}:PullRequest:{pr_id}"
+        project = self.get_obs_project_name(pr_id, branch)
 
         try:
             res = subprocess.run(
                 ["osc", "api", f"/build/{project}/_result"],
                 capture_output=True,
                 text=True,
-                timeout=4
+                timeout=8
             )
             if res.returncode != 0:
                 return {
@@ -810,8 +854,7 @@ class StagingService:
         """
         import subprocess
 
-        branch_name = "Factory" if branch.lower() in ("factory", "standard") else branch
-        project = f"{self.owner}:{branch_name}:PullRequest:{pr_id}"
+        project = self.get_obs_project_name(pr_id, branch)
 
         obs_status = self.get_obs_build_status(pr_id, branch)
         target_arch = arch

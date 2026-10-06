@@ -308,6 +308,27 @@ class TestStagingService(unittest.TestCase):
         self.assertEqual(len(ungrouped), 1)
         self.assertEqual(ungrouped[0].pr_id, 200)
 
+    def test_get_obs_project_name_branch_mapping(self):
+        self.mock_client.owner = "GNOME"
+
+        # 1. Authoritative: resolves from staging.config when present
+        mock_resp_next = MagicMock(status_code=200, text='{"ObsProject": "GNOME:Next", "StagingProject": "GNOME:Next:PullRequest"}')
+        self.mock_client.session.get.return_value = mock_resp_next
+        self.assertEqual(self.service.get_obs_project_name(1077, "next"), "GNOME:Next:PullRequest:1077")
+
+        # 2. Fallback when staging.config is not present (e.g. 404)
+        mock_resp_404 = MagicMock(status_code=404)
+        self.mock_client.session.get.return_value = mock_resp_404
+        self.service._staging_configs.clear()
+
+        # factory -> Factory
+        self.assertEqual(self.service.get_obs_project_name(100, "factory"), "GNOME:Factory:PullRequest:100")
+        self.assertEqual(self.service.get_obs_project_name(100, "standard"), "GNOME:Factory:PullRequest:100")
+        self.assertEqual(self.service.get_obs_project_name(100, "Factory"), "GNOME:Factory:PullRequest:100")
+        # next -> Next
+        self.assertEqual(self.service.get_obs_project_name(1077, "next"), "GNOME:Next:PullRequest:1077")
+        self.assertEqual(self.service.get_obs_project_name(1077, "Next"), "GNOME:Next:PullRequest:1077")
+
     def test_accept_group_blocked_by_git_merge_conflict(self):
         mock_pr = {"number": 100, "title": "Group", "base": {"ref": "factory"}, "mergeable": False}
         self.mock_client.get_pr = MagicMock(return_value=mock_pr)
