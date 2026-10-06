@@ -28,7 +28,7 @@ try:
 except Exception:
     HAS_GTKSOURCE = False
 
-from gi.repository import Gtk, Adw, GLib, Gio, Gdk
+from gi.repository import Gtk, Adw, GLib, Gio, Gdk, GObject
 
 import pr_manage as pm
 import staging_service as ss
@@ -284,6 +284,56 @@ class OrphanAuditDialog(Adw.Window):
         self.close()
 
 
+class BuildLogViewerWindow(Adw.Window):
+    """Interactive modal window displaying OBS build failure log with line numbers and search."""
+
+    def __init__(self, parent_window, project: str, package: str, pr_num: int, log_text: str):
+        super().__init__(transient_for=parent_window, modal=True)
+        self.set_title(f"OBS Build Log: {package} (PR #{pr_num})")
+        self.set_default_size(950, 720)
+
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.set_content(main_box)
+
+        header = Adw.HeaderBar()
+        main_box.append(header)
+
+        btn_copy = Gtk.Button(icon_name="edit-copy-symbolic", tooltip_text="Copy Log to Clipboard")
+        btn_copy.connect("clicked", lambda b: self.copy_to_clipboard(parent_window, log_text))
+        header.pack_end(btn_copy)
+
+        search_bar = Gtk.SearchBar()
+        search_entry = Gtk.SearchEntry()
+        search_bar.set_child(search_entry)
+        search_bar.set_key_capture_widget(self)
+        main_box.append(search_bar)
+
+        btn_search = Gtk.ToggleButton(icon_name="edit-find-symbolic", tooltip_text="Search Log (Ctrl+F)")
+        btn_search.bind_property("active", search_bar, "search-mode-enabled", GObject.BindingFlags.BIDIRECTIONAL)
+        header.pack_end(btn_search)
+
+        scroller = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
+        main_box.append(scroller)
+
+        buffer = GtkSource.Buffer() if GtkSource else Gtk.TextBuffer()
+        buffer.set_text(log_text)
+
+        view = GtkSource.View.new_with_buffer(buffer) if GtkSource else Gtk.TextView.new_with_buffer(buffer)
+        view.set_editable(False)
+        view.set_monospace(True)
+        if hasattr(view, "set_show_line_numbers"):
+            view.set_show_line_numbers(True)
+        scroller.set_child(view)
+
+    def copy_to_clipboard(self, parent_window, text):
+        display = Gdk.Display.get_default()
+        if display:
+            clipboard = display.get_clipboard()
+            clipboard.set(text)
+            if hasattr(parent_window, "show_toast"):
+                parent_window.show_toast("Build log copied to clipboard.")
+
+
 class StagingGuiWindow(Adw.ApplicationWindow):
     """Primary desktop workspace window for the Staging Group Manager."""
 
@@ -512,6 +562,10 @@ class StagingGuiWindow(Adw.ApplicationWindow):
         self.btn_browser = Gtk.Button(icon_name="web-browser-symbolic", tooltip_text="Open on Gitea")
         self.btn_browser.connect("clicked", self.on_open_browser_clicked)
         self.row_title.add_suffix(self.btn_browser)
+
+        self.btn_build_log = Gtk.Button(icon_name="text-x-generic-symbolic", tooltip_text="View OBS Build Failure Log")
+        self.btn_build_log.connect("clicked", self.on_view_build_log_clicked)
+        self.row_title.add_suffix(self.btn_build_log)
 
         # Dual Work Paned (Members vs Ungrouped)
         self.paned_columns = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
@@ -755,6 +809,7 @@ class StagingGuiWindow(Adw.ApplicationWindow):
         self.btn_rename.set_sensitive(not is_ro)
         self.btn_disintegrate.set_sensitive(not is_ro and group.is_group)
         self.btn_browser.set_sensitive(True)
+        self.btn_build_log.set_sensitive(True)
 
         host_str = f"Host: ★ {group.host_package}" if group.host_package else ""
         self.row_title.set_title(f"#{group.pr_id}  [{group.branch}]  {group.title}")
@@ -825,6 +880,24 @@ class StagingGuiWindow(Adw.ApplicationWindow):
                 chk.connect("toggled", lambda c, k=tok.key: self.selected_members_marked.add(k) if c.get_active() else self.selected_members_marked.discard(k))
             row.add_prefix(chk)
 
+            # Direct OBS build log button for member package
+            obs_curr = self.obs_status_cache.get(self.selected_group.pr_id, {})
+            pkg_failed_archs = obs_curr.get("failed_details", {}).get(tok.package, [])
+            if pkg_failed_archs:
+                btn_pkg_log = Gtk.Button(
+                    label=f"🔴 Log ({','.join(pkg_failed_archs)})",
+                    tooltip_text=f"View OBS build failure log for {tok.package} ({','.join(pkg_failed_archs)})",
+                    css_classes=["destructive-action", "caption"]
+                )
+            else:
+                btn_pkg_log = Gtk.Button(
+                    icon_name="document-open-recent-symbolic",
+                    tooltip_text=f"View OBS build log for {tok.package}",
+                    css_classes=["flat"]
+                )
+            btn_pkg_log.connect("clicked", lambda b, p=tok.package: self.open_build_log_viewer(self.service.repo, p, self.selected_group.pr_id, branch=self.selected_group.branch))
+            row.add_suffix(btn_pkg_log)
+
             # Per-row actions: Diff
             btn_diff = Gtk.Button(icon_name="text-x-generic-symbolic", tooltip_text="Inspect Changelog Diff")
             btn_diff.connect("clicked", lambda b, o=tok.owner, p=tok.package, n=tok.pr_number: self.open_diff_viewer(o, p, n))
@@ -893,6 +966,75 @@ class StagingGuiWindow(Adw.ApplicationWindow):
             diff = self.service.get_pr_diff(owner, package, pr_num)
             GLib.idle_add(lambda: DiffViewerWindow(self, owner, package, pr_num, diff).present())
         self.executor.submit(worker)
+
+    def open_build_log_viewer(self, project: str, package: str, pr_num: int, branch: str = "factory"):
+        self.show_toast(f"Fetching OBS build log for '{package}'...")
+
+        def worker():
+            log_text = self.service.get_obs_build_log(pr_num, package, branch=branch)
+            GLib.idle_add(lambda: BuildLogViewerWindow(self, project, package, pr_num, log_text).present())
+
+        self.executor.submit(worker)
+
+    def prompt_select_package_log(self, group: ss.StagingGroup, packages: List[str], obs: Dict):
+        """Presents a selection dialog when a group contains multiple packages with build logs."""
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            heading=f"Select Build Log (PR #{group.pr_id})",
+            body=f"Group tracks {len(packages)} packages. Choose which build log to view:"
+        )
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        content_box.set_margin_top(8)
+
+        failed_details = obs.get("failed_details", {})
+        drop_strings = []
+        for p in packages:
+            archs = failed_details.get(p, [])
+            if archs:
+                drop_strings.append(f"🔴 {p} [Failed: {', '.join(archs)}]")
+            else:
+                drop_strings.append(f"📦 {p}")
+
+        drop = Gtk.DropDown.new_from_strings(drop_strings)
+        content_box.append(drop)
+        dialog.set_extra_child(content_box)
+
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("view", "View Log")
+        dialog.set_response_appearance("view", Adw.ResponseAppearance.SUGGESTED)
+
+        def on_response(d, resp):
+            if resp == "view":
+                selected_idx = drop.get_selected()
+                if 0 <= selected_idx < len(packages):
+                    selected_pkg = packages[selected_idx]
+                    self.open_build_log_viewer(self.service.repo, selected_pkg, group.pr_id, branch=group.branch)
+
+        dialog.connect("response", on_response)
+        dialog.present()
+
+    def on_view_build_log_clicked(self, btn):
+        if not self.selected_group:
+            return
+        g = self.selected_group
+        obs = self.obs_status_cache.get(g.pr_id, {})
+        all_pkgs = g.package_names
+        failed_pkgs = obs.get("failed_pkgs", [])
+
+        # If multiple packages failed in this group, let maintainer pick
+        if len(failed_pkgs) > 1:
+            self.prompt_select_package_log(g, failed_pkgs, obs)
+            return
+        elif len(all_pkgs) > 1 and not failed_pkgs:
+            self.prompt_select_package_log(g, all_pkgs, obs)
+            return
+
+        pkg = failed_pkgs[0] if failed_pkgs else (all_pkgs[0] if all_pkgs else (g.host_package or ""))
+        if not pkg:
+            self.show_toast("No package identified to fetch build log.")
+            return
+
+        self.open_build_log_viewer(self.service.repo, pkg, g.pr_id, branch=g.branch)
 
     def on_add_single_package(self, package_name: str):
         if not self.selected_group:

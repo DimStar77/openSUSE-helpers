@@ -677,9 +677,7 @@ class StagingService:
             'pkg_repos': {'pkg': 'repo_name'},
             'succeeded': int,
             'building': int,
-            'excluded': int,
-            'total': int,
-            'total_raw': int
+            'total': int
         }
         """
         import subprocess
@@ -700,7 +698,7 @@ class StagingService:
                     "status": "none", "project": project, "total": 0,
                     "failed_pkgs": [], "failed_details": {}, "failed_archs": [],
                     "arch_summary": {}, "archs": [], "pkg_repos": {},
-                    "succeeded": 0, "building": 0, "excluded": 0
+                    "succeeded": 0, "building": 0
                 }
 
             root = ET.fromstring(res.stdout)
@@ -710,7 +708,7 @@ class StagingService:
                     "status": "none", "project": project, "total": 0,
                     "failed_pkgs": [], "failed_details": {}, "failed_archs": [],
                     "arch_summary": {}, "archs": [], "pkg_repos": {},
-                    "succeeded": 0, "building": 0, "excluded": 0
+                    "succeeded": 0, "building": 0
                 }
 
             failed_by_pkg = {}
@@ -795,8 +793,66 @@ class StagingService:
                 "status": "none", "project": project, "total": 0,
                 "failed_pkgs": [], "failed_details": {}, "failed_archs": [],
                 "arch_summary": {}, "archs": [], "pkg_repos": {},
-                "succeeded": 0, "building": 0, "excluded": 0, "error": str(e)
+                "succeeded": 0, "building": 0, "error": str(e)
             }
+
+    def get_obs_build_log(
+        self,
+        pr_id: int,
+        package: str,
+        arch: Optional[str] = None,
+        branch: str = "factory",
+        lines: int = 250
+    ) -> str:
+        """
+        Fetches the build log tail from OBS for a specific package in the staging project.
+        Automatically resolves the target architecture (prioritizing failing archs) and repository.
+        """
+        import subprocess
+
+        branch_name = "Factory" if branch.lower() in ("factory", "standard") else branch
+        project = f"{self.owner}:{branch_name}:PullRequest:{pr_id}"
+
+        obs_status = self.get_obs_build_status(pr_id, branch)
+        target_arch = arch
+        if not target_arch:
+            if package in obs_status.get("failed_details", {}):
+                target_arch = obs_status["failed_details"][package][0]
+            elif obs_status.get("failed_archs"):
+                target_arch = obs_status["failed_archs"][0]
+            elif "x86_64" in obs_status.get("archs", []) and obs_status.get("arch_summary", {}).get("x86_64", {}).get("excluded", 0) == 0:
+                target_arch = "x86_64"
+            elif obs_status.get("archs"):
+                non_excl = [a for a in obs_status["archs"] if obs_status.get("arch_summary", {}).get(a, {}).get("excluded", 0) == 0]
+                target_arch = non_excl[0] if non_excl else obs_status["archs"][0]
+            else:
+                target_arch = "x86_64"
+
+        target_repo = obs_status.get("pkg_repos", {}).get(package)
+        if not target_repo:
+            if target_arch in obs_status.get("arch_summary", {}):
+                target_repo = obs_status["arch_summary"][target_arch].get("repository")
+            if not target_repo:
+                target_repo = "openSUSE_Factory" if branch_name == "Factory" else "standard"
+
+        try:
+            cmd = ["osc", "api", f"/build/{project}/{target_repo}/{target_arch}/{package}/_log"]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=12)
+            if res.returncode != 0:
+                return f"⚠️ Unable to retrieve OBS build log for '{package}' ({target_arch}) in '{project}':\n{res.stderr.strip()}"
+
+            log_text = res.stdout
+            log_lines = log_text.splitlines()
+            if lines and len(log_lines) > lines:
+                header = f"=== OBS Build Log: {project} / {package} ({target_arch}) [Showing last {lines} of {len(log_lines)} lines] ===\n\n"
+                return header + "\n".join(log_lines[-lines:])
+            else:
+                header = f"=== OBS Build Log: {project} / {package} ({target_arch}) [{len(log_lines)} lines] ===\n\n"
+                return header + log_text
+        except subprocess.TimeoutExpired:
+            return f"⚠️ Timeout waiting for OBS build log for '{package}' in '{project}'."
+        except Exception as e:
+            return f"⚠️ Exception retrieving OBS build log: {e}"
 
     def audit_orphans(self, filter_branch: Optional[str] = None) -> List[OrphanPackagePR]:
         """

@@ -374,6 +374,24 @@ class TestStagingService(unittest.TestCase):
             self.assertEqual(st["excluded"], 1)
             self.assertEqual(st["failed_pkgs"], [])
 
+    def test_get_obs_build_log(self):
+        self.mock_client.owner = "GNOME"
+        log_lines = "\n".join(f"Line {i} of build log" for i in range(1, 101))
+        mock_res = MagicMock(returncode=0, stdout=log_lines)
+        mock_obs = {
+            "status": "failed",
+            "failed_details": {"gdm": ["aarch64"]},
+            "archs": ["aarch64", "x86_64"],
+            "pkg_repos": {"gdm": "openSUSE_Factory"}
+        }
+        with patch.object(self.service, "get_obs_build_status", return_value=mock_obs), patch("subprocess.run", return_value=mock_res):
+            log = self.service.get_obs_build_log(100, "gdm", lines=10)
+            self.assertIn("=== OBS Build Log: GNOME:Factory:PullRequest:100 / gdm (aarch64)", log)
+            self.assertIn("Line 100 of build log", log)
+            self.assertIn("Line 91 of build log", log)
+            self.assertNotIn("Line 80 of build log", log)
+
+
     def test_service_add_package_collision_guard(self):
         self.mock_client.get_pr.return_value = {
             "number": 100,
@@ -1153,6 +1171,9 @@ class TestGuiComponents(unittest.TestCase):
         self.assertEqual(row_zenity.get_title(), "zenity")
         self.assertIn("Host Package ★", row_zenity.get_subtitle())
 
+
+
+
     def test_staging_gui_conflict_guard(self):
         app = pg.StagingGuiApp(self.service)
         win = pg.StagingGuiWindow(app, self.service)
@@ -1163,6 +1184,47 @@ class TestGuiComponents(unittest.TestCase):
         # Accept button must be disabled due to conflict
         self.assertFalse(win.btn_accept.get_sensitive())
         self.assertIn("Blocked", win.btn_accept.get_tooltip_text())
+
+    def test_staging_gui_build_log_button(self):
+        app = pg.StagingGuiApp(self.service)
+        win = pg.StagingGuiWindow(app, self.service)
+
+        self.assertTrue(hasattr(win, "btn_build_log"))
+        group = ss.StagingGroup(100, "Group", "factory", "ref", "zenity", [])
+        win.select_group(group)
+        self.assertTrue(win.btn_build_log.get_sensitive())
+
+    def test_build_log_viewer_window_instantiation(self):
+        win = pg.BuildLogViewerWindow(None, "GNOME:Factory", "zenity", 100, "[   10s] Build error occurred")
+        self.assertIn("zenity", win.get_title())
+        self.assertIn("100", win.get_title())
+
+
+    def test_staging_gui_multi_package_log_prompt(self):
+        app = pg.StagingGuiApp(self.service)
+        win = pg.StagingGuiWindow(app, self.service)
+
+        tokens = [
+            pm.PackageToken("GNOME", "accountsservice", 5),
+            pm.PackageToken("GNOME", "adwaita-icon-theme", 8),
+        ]
+        group = ss.StagingGroup(1079, "Group 1079", "factory", "ref", "accountsservice", tokens)
+        win.select_group(group)
+        win.obs_status_cache[1079] = {
+            "status": "failed",
+            "failed_pkgs": ["accountsservice", "adwaita-icon-theme"],
+            "failed_details": {"accountsservice": ["x86_64"], "adwaita-icon-theme": ["aarch64"]}
+        }
+
+        win.prompt_select_package_log = MagicMock()
+        win.on_view_build_log_clicked(None)
+
+        win.prompt_select_package_log.assert_called_once_with(
+            group,
+            ["accountsservice", "adwaita-icon-theme"],
+            win.obs_status_cache[1079]
+        )
+
 
 if __name__ == '__main__':
     unittest.main()

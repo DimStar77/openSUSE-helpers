@@ -223,6 +223,8 @@ class StagingTUI:
                 self.jump_end()
             elif ch in (10, 10, curses.KEY_ENTER, ord("i")):
                 self.handle_inspect(stdscr)
+            elif ch in (ord("l"), ord("L")):
+                self.handle_view_build_log(stdscr)
             elif ch == ord(" "):
                 self.handle_toggle_selection()
             elif ch == ord("*"):
@@ -490,6 +492,173 @@ class StagingTUI:
             elif ch in (curses.KEY_PPAGE,):
                 scroll_pos = max(0, scroll_pos - 15)
             elif ch in (curses.KEY_NPAGE,):
+                scroll_pos = min(max(0, len(lines) - max_display), scroll_pos + 15)
+            elif ch in (curses.KEY_HOME, ord("g")):
+                scroll_pos = 0
+            elif ch in (curses.KEY_END, ord("G")):
+                scroll_pos = max(0, len(lines) - max_display)
+
+    def select_package_log_modal(self, stdscr, group: ss.StagingGroup, packages: List[str], obs: Dict) -> Optional[str]:
+        """Modal menu to select which package build log to view in a multi-package group."""
+        h, w = stdscr.getmaxyx()
+        modal_w = min(74, w - 4)
+        modal_h = min(16, len(packages) + 6)
+        start_y = max(1, (h - modal_h) // 2)
+        start_x = max(1, (w - modal_w) // 2)
+
+        win = curses.newwin(modal_h, modal_w, start_y, start_x)
+        win.box()
+
+        sel_idx = 0
+        failed_details = obs.get("failed_details", {})
+
+        while True:
+            win.erase()
+            win.box()
+            title = f" Select Package Build Log (PR #{group.pr_id}) "
+            win.addstr(0, max(2, (modal_w - len(title)) // 2), title[:modal_w - 4], curses.color_pair(3) | curses.A_BOLD)
+            win.addstr(1, 2, "Choose package log to view:", curses.color_pair(1) | curses.A_DIM)
+
+            for i, p in enumerate(packages):
+                if 2 + i >= modal_h - 2:
+                    break
+                is_selected = (i == sel_idx)
+                cursor = "▸ " if is_selected else "  "
+                archs = failed_details.get(p, [])
+                if archs:
+                    label = f"{cursor}🔴 {p} [Failed: {', '.join(archs)}]"
+                    attr = curses.color_pair(5) | (curses.A_BOLD if is_selected else 0)
+                else:
+                    label = f"{cursor}📦 {p}"
+                    attr = curses.color_pair(2 if is_selected else 1) | (curses.A_BOLD if is_selected else 0)
+
+                win.addstr(2 + i, 2, label[:modal_w - 4], attr)
+
+            foot = " Enter: View Log  •  q/Esc: Cancel "
+            win.addstr(modal_h - 2, 2, foot[:modal_w - 4], curses.color_pair(2) | curses.A_BOLD)
+            win.refresh()
+
+            ch = stdscr.getch()
+            if ch in (ord("q"), ord("Q"), 27):
+                return None
+            elif ch in (curses.KEY_UP, ord("k")):
+                sel_idx = max(0, sel_idx - 1)
+            elif ch in (curses.KEY_DOWN, ord("j")):
+                sel_idx = min(len(packages) - 1, sel_idx + 1)
+            elif ch in (10, curses.KEY_ENTER):
+                return packages[sel_idx]
+
+    def handle_view_build_log(self, stdscr):
+        """[l] / [L] Opens interactive OBS build failure log viewer modal."""
+        target = self.get_current_group()
+        if not target:
+            self.status_msg = "No group selected to view build log."
+            self.status_color = 3
+            return
+
+        pkg_name = ""
+        obs_status = self.get_cached_obs_status(target.pr_id, target.branch)
+
+        if self.active_col == 1:
+            members = self.get_current_group_members()
+            if members and 0 <= self.member_idx < len(members):
+                pkg_name = members[self.member_idx].package
+            elif target.host_package:
+                pkg_name = target.host_package
+        elif self.active_col == 2:
+            ungrouped_list = self.get_filtered_ungrouped()
+            if ungrouped_list and 0 <= self.ungrouped_idx < len(ungrouped_list):
+                u = ungrouped_list[self.ungrouped_idx]
+                pkg_name = u.host_package or (u.tokens[0].package if u.tokens else "")
+        elif self.active_col == 0:
+            failed_pkgs = obs_status.get("failed_pkgs", [])
+            all_pkgs = target.package_names
+            if len(failed_pkgs) > 1:
+                chosen = self.select_package_log_modal(stdscr, target, failed_pkgs, obs_status)
+                if not chosen:
+                    self.status_msg = "Log viewer cancelled."
+                    self.status_color = 1
+                    return
+                pkg_name = chosen
+            elif len(failed_pkgs) == 1:
+                pkg_name = failed_pkgs[0]
+            elif len(all_pkgs) > 1:
+                chosen = self.select_package_log_modal(stdscr, target, all_pkgs, obs_status)
+                if not chosen:
+                    self.status_msg = "Log viewer cancelled."
+                    self.status_color = 1
+                    return
+                pkg_name = chosen
+            elif target.tokens:
+                pkg_name = target.tokens[0].package
+            elif target.host_package:
+                pkg_name = target.host_package
+
+        if not pkg_name:
+            self.status_msg = "No package identified to fetch build log."
+            self.status_color = 3
+            return
+
+        self.draw_splash(stdscr, f"Fetching OBS build log for '{pkg_name}' (PR #{target.pr_id})...")
+        log_text = self.service.get_obs_build_log(target.pr_id, pkg_name, branch=target.branch)
+        self.show_log_viewer_modal(stdscr, target.pr_id, pkg_name, log_text)
+
+    def show_log_viewer_modal(self, stdscr, pr_id: int, pkg: str, log_text: str):
+        """Scrollable modal viewer for OBS build logs with error syntax highlighting."""
+        h, w = stdscr.getmaxyx()
+        modal_w = min(100, w - 4)
+        modal_h = min(32, h - 4)
+        start_y = max(1, (h - modal_h) // 2)
+        start_x = max(1, (w - modal_w) // 2)
+
+        win = curses.newwin(modal_h, modal_w, start_y, start_x)
+        win.box()
+
+        lines = log_text.splitlines()
+        scroll_pos = max(0, len(lines) - (modal_h - 4))
+        max_display = modal_h - 4
+
+        while True:
+            win.erase()
+            win.box()
+            title = f" OBS Build Log: {pkg} (PR #{pr_id}) [{len(lines)} lines] "
+            win.addstr(0, max(2, (modal_w - len(title)) // 2), title[:modal_w - 4], curses.color_pair(3) | curses.A_BOLD)
+
+            for i in range(max_display):
+                line_idx = scroll_pos + i
+                if line_idx >= len(lines):
+                    break
+                line = lines[line_idx]
+
+                lower_l = line.lower()
+                if "error:" in lower_l or "failed" in lower_l or "fatal:" in lower_l:
+                    attr = curses.color_pair(5) | curses.A_BOLD
+                elif "warning:" in lower_l:
+                    attr = curses.color_pair(4) | curses.A_BOLD
+                elif line.startswith("==="):
+                    attr = curses.color_pair(3) | curses.A_BOLD
+                else:
+                    attr = curses.color_pair(1)
+
+                win.addstr(1 + i, 2, line[:modal_w - 4], attr)
+
+            pos_pct = int(((scroll_pos + max_display) / max(1, len(lines))) * 100)
+            pos_pct = min(100, pos_pct)
+            foot = f" Pos: {scroll_pos + 1}/{len(lines)} ({pos_pct}%)  •  ↑/↓/PgUp/PgDn: Scroll  •  q/Esc: Close "
+            win.addstr(modal_h - 2, 2, foot[:modal_w - 4], curses.color_pair(2) | curses.A_BOLD)
+
+            win.refresh()
+            ch = stdscr.getch()
+
+            if ch in (ord("q"), ord("Q"), 27):
+                break
+            elif ch in (curses.KEY_UP, ord("k"), ord("K")):
+                scroll_pos = max(0, scroll_pos - 1)
+            elif ch in (curses.KEY_DOWN, ord("j"), ord("J")):
+                scroll_pos = min(max(0, len(lines) - max_display), scroll_pos + 1)
+            elif ch in (curses.KEY_PPAGE,):
+                scroll_pos = max(0, scroll_pos - 15)
+            elif ch in (curses.KEY_NPAGE, ord(" ")):
                 scroll_pos = min(max(0, len(lines) - max_display), scroll_pos + 15)
             elif ch in (curses.KEY_HOME, ord("g")):
                 scroll_pos = 0
@@ -1208,6 +1377,7 @@ class StagingTUI:
             "",
             "Inspection & Selection:",
             "  Enter / i           Inspect package PR details & unified changes diff",
+            "  l / L               View OBS build failure log for highlighted package/group",
             "  Space               Toggle [✓] multi-select mark on highlighted item",
             "  *                   Mark all visible items in active column",
             "  _                   Deselect all marks in active column",
@@ -1286,7 +1456,7 @@ class StagingTUI:
         stdscr.addstr(h - 2, 0, full_status[:w - 1], status_color)
 
         # Bottom Keybindings Guide
-        cmd_guide = "[Enter] Diff [Space] Mark [*] All [A] Add [D] Rem [v] Move [e] Rename [c] Comb [o] OK [O] Audit"
+        cmd_guide = "[Enter] Diff [l] Log [Space] Mark [*] All [A] Add [D] Rem [v] Move [e] Rename [c] Comb [o] OK"
         stdscr.addstr(h - 1, 0, cmd_guide[:w - 1], curses.color_pair(1) | curses.A_DIM)
 
         stdscr.refresh()

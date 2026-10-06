@@ -107,6 +107,7 @@ Launches the interactive 3-column Terminal User Interface (TUI) for visual queue
   - `Tab` / `1, 2, 3`: Switch active column.
   - `Home` / `End` (or `g` / `G`): Jump directly to the top / bottom of the active list.
   - `Enter` / `i`: Inspect highlighted package: view PR details & unified syntax-colored diff / changelog.
+  - `l` / `L`: View OBS build failure log for highlighted package or group in an interactive scrollable viewer with error syntax highlighting.
   - `Space`: Toggle multi-selection mark (`[✓]`) on the highlighted item.
   - `*`: Mark all visible items in the active column.
   - `_`: Deselect all items in the active column.
@@ -135,6 +136,7 @@ Launches the modern GTK4 / Libadwaita graphical staging manager interface (`pr-m
   - **Header Card**: In-place PR title renaming (`document-edit-symbolic`), target branch pills, host package indicator (★), live OBS build status pill (`Built`, `Building`, `Failed`), and an unambiguous active approval button (`✓ Accept #<id>`).
   - **Batch vs Active Separation**: Checkboxes in the sidebar dynamically reveal a dedicated batch action bar (`⎘ Combine (N)`, `✓ Accept (N)`, and clear `✕`) for marked sets, keeping multi-selection distinct from the focused group.
   - **Interactive Diff Viewer**: Built with `GtkSourceView 5` displaying syntax-highlighted git diffs and changelogs with line numbers and one-click clipboard export.
+  - **In-App OBS Build Log Inspector**: Dedicated `📋 Build Log` button in the header card and per-package `🔴 Log (<archs>)` buttons for failing group members to instantly inspect build failure logs without switching to the terminal.
   - **Dual Staging Work Area**:
     - **Group Members Panel**: Searchable list of bundled packages with upstream PR numbers, instant diff inspection, and single/batch removal.
     - **Ungrouped Staging Queue**: Searchable list of standalone package PRs with one-click addition into the active group or single-PR approval (`merge ok`).
