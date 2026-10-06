@@ -121,5 +121,39 @@ Sun Sep 27 18:38:01 UTC 2026 - Michael Gorse <mgorse@suse.com>
         s390x_entries = [e for e in entries if "Add patch for s390x." in e[1]]
         self.assertEqual(len(s390x_entries), 1)
 
+
+    def test_chronologically_sorted_incoming_not_redated(self):
+        """When incoming entry has a timestamp newer than ours, original date must be preserved."""
+        stage3_newer = """-------------------------------------------------------------------
+Sat Oct  3 10:20:51 UTC 2026 - Andreas Schwab <schwab@suse.de>
+
+- Fix build for riscv64.
+
+""" + self.stage1
+        merged = rc.merge_changes_structural(self.stage1, self.stage2, stage3_newer, is_cherry_pick=True)
+        entries = rc.parse_entries_list(merged)
+        self.assertIn("Andreas Schwab <schwab@suse.de>", entries[0][0])
+        self.assertIn("Sat Oct  3 10:20:51 UTC 2026", entries[0][0], "Original incoming date was modified!")
+
+    def test_chronologically_sorted_branch_merge_not_redated(self):
+        """When branch merge entries on next are already newer than incoming entries, no dates are altered."""
+        # stage2 has Dominique (Oct 2), Michael (Sep 27)
+        # stage3_older has Contributor (Sep 25) which is older than Michael (Sep 27) but newer than Bjørn (Sep 23)
+        stage3_older = """-------------------------------------------------------------------
+Fri Sep 25 12:00:00 UTC 2026 - Contributor <contrib@example.com>
+
+- Stable bugfix from factory.
+
+""" + self.stage1
+        merged = rc.merge_changes_structural(self.stage1, self.stage2, stage3_older, is_cherry_pick=False)
+        entries = rc.parse_entries_list(merged)
+        # Check that Dominique, Michael, and Contributor all preserve their exact timestamps
+        self.assertIn("Dominique Leuenberger <dimstar@opensuse.org>", entries[0][0])
+        self.assertIn("Fri Oct  2 14:55:25 UTC 2026", entries[0][0])
+        self.assertIn("Michael Gorse <mgorse@suse.com>", entries[1][0])
+        self.assertIn("Sun Sep 27 18:38:01 UTC 2026", entries[1][0])
+        self.assertIn("Contributor <contrib@example.com>", entries[2][0])
+        self.assertIn("Fri Sep 25 12:00:00 UTC 2026", entries[2][0])
+
 if __name__ == '__main__':
     unittest.main()

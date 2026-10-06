@@ -1,61 +1,154 @@
 #!/usr/bin/env python3
 """
 Helper for fetching and merging contributor Gitea Pull Requests onto HEAD.
-Integrates with openSUSE resolve-changes merge driver to ensure proper
-changelog placement, author attribution, and date redating.
-Includes a collision guard to safely leave changes staged when spec patch
-conflicts are detected, and supports squashing multi-commit PRs into atomic commits.
+Preserves original commit hashes, attribution, and signatures via fast-forward
+when HEAD is an ancestor of the PR (such as forwarding next into factory).
+For non-fast-forward merges, performs a clean merge preserving PR commits
+in the history graph, validating that .changes remains chronologically sorted,
+and only redating if chronological ordering is broken.
+Supports squashing multi-commit PRs into atomic commits when explicitly requested.
+Includes a spec collision guard to safely leave changes staged when patch conflicts are detected.
 """
 
 import glob
 import os
 import re
 import sys
+import time
+import datetime
 import subprocess
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 
 # Ensure terminal colors if available
-BOLD = "\033[1m"
-CYAN = "\033[36m"
-GREEN = "\033[32m"
-YELLOW = "\033[33m"
-RED = "\033[31m"
-RESET = "\033[0m"
+BOLD = "\x1b[1m"
+CYAN = "\x1b[36m"
+GREEN = "\x1b[32m"
+YELLOW = "\x1b[33m"
+RED = "\x1b[31m"
+RESET = "\x1b[0m"
 
-def check_spec_collisions(spec_path: str) -> List[str]:
+def check_spec_collisions_content(content: str) -> List[str]:
     """
-    Scans a .spec file for duplicate Patch<N> or Source<N> declarations that
+    Scans .spec file content for duplicate Patch<N> or Source<N> declarations that
     may indicate an upstream/branch merge collision needing maintainer review.
     """
-    if not os.path.isfile(spec_path):
-        return []
-
     collisions = []
     seen_tags = {}
     re_tag = re.compile(r'^\s*(Patch|Source)(\d+)\s*:\s*(.+)$', re.IGNORECASE)
 
-    try:
-        with open(spec_path, 'r', encoding='utf-8', errors='ignore') as f:
-            lines = f.readlines()
-
-        for idx, line in enumerate(lines, 1):
-            m = re_tag.match(line)
-            if m:
-                tag_type = m.group(1).capitalize()
-                tag_num = m.group(2)
-                tag_name = f"{tag_type}{tag_num}"
-                val = m.group(3).strip()
-                if tag_name in seen_tags:
-                    prev_idx, prev_val = seen_tags[tag_name]
-                    collisions.append(
-                        f"Duplicate {tag_name}: on line {idx} ('{val}') conflicts with line {prev_idx} ('{prev_val}')"
-                    )
-                else:
-                    seen_tags[tag_name] = (idx, val)
-    except Exception:
-        pass
+    for idx, line in enumerate(content.splitlines(), 1):
+        m = re_tag.match(line)
+        if m:
+            tag_type = m.group(1).capitalize()
+            tag_num = m.group(2)
+            tag_name = f"{tag_type}{tag_num}"
+            val = m.group(3).strip()
+            if tag_name in seen_tags:
+                prev_idx, prev_val = seen_tags[tag_name]
+                collisions.append(
+                    f"Duplicate {tag_name}: on line {idx} ('{val}') conflicts with line {prev_idx} ('{prev_val}')"
+                )
+            else:
+                seen_tags[tag_name] = (idx, val)
 
     return collisions
+
+def check_spec_collisions(spec_path: str) -> List[str]:
+    """Scans a .spec file path for duplicate Patch<N> or Source<N> declarations."""
+    if not os.path.isfile(spec_path):
+        return []
+    try:
+        with open(spec_path, 'r', encoding='utf-8', errors='ignore') as f:
+            return check_spec_collisions_content(f.read())
+    except Exception:
+        return []
+
+def parse_changelog_date(header: str) -> Optional[datetime.datetime]:
+    """Parses standard openSUSE .changes header timestamp into a datetime object."""
+    parts = header.split(" - ", 1)
+    if len(parts) < 2:
+        parts = header.split("- ", 1)
+    date_str = parts[0].strip()
+    clean_date = re.sub(r'\s+', ' ', date_str)
+    tokens = clean_date.split()
+    if len(tokens) >= 5:
+        try:
+            if len(tokens) == 6:
+                no_tz = f"{tokens[0]} {tokens[1]} {tokens[2]} {tokens[3]} {tokens[5]}"
+            else:
+                no_tz = " ".join(tokens[:5])
+            return datetime.datetime.strptime(no_tz, "%a %b %d %H:%M:%S %Y")
+        except Exception:
+            pass
+    try:
+        return datetime.datetime.strptime(clean_date[:10], "%Y-%m-%d")
+    except Exception:
+        pass
+    return None
+
+def is_changes_chronologically_sorted(content: str) -> bool:
+    """
+    Returns True if all parsed changelog entries in content are in
+    valid non-increasing (reverse-chronological) order from top to bottom.
+    """
+    raw_entries = content.split("-------------------------------------------------------------------\n")
+    dates = []
+    for raw in raw_entries:
+        raw_str = raw.strip()
+        if not raw_str:
+            continue
+        header = raw_str.splitlines()[0].strip()
+        dt = parse_changelog_date(header)
+        if dt:
+            dates.append(dt)
+    for i in range(len(dates) - 1):
+        if dates[i] < dates[i + 1]:
+            return False
+    return True
+
+def redate_entry_header(header: str, timestamp_sec: float) -> str:
+    """Replaces the entry timestamp in header with formatted system time."""
+    struct_time = time.localtime(timestamp_sec)
+    new_dt_str = time.strftime('%a %b %e %H:%M:%S %Z %Y', struct_time)
+    parts = header.split(" - ", 1)
+    if len(parts) == 2:
+        return f"{new_dt_str} - {parts[1]}"
+    parts = header.split("- ", 1)
+    if len(parts) == 2:
+        return f"{new_dt_str} - {parts[1]}"
+    return f"{new_dt_str} - anonymous"
+
+def fix_changes_chronological_order(content: str) -> str:
+    """
+    Redates out-of-order entries in a changelog file to current system time,
+    preserving the rest of the file untouched.
+    """
+    raw_entries = content.split("-------------------------------------------------------------------\n")
+    entries = []
+    for raw in raw_entries:
+        raw_str = raw.strip()
+        if not raw_str:
+            continue
+        lines = raw_str.splitlines()
+        header = lines[0].strip() if lines else ""
+        entries.append((header, raw_str))
+
+    now_ts = time.time()
+    for idx in range(len(entries) - 1):
+        dt_curr = parse_changelog_date(entries[idx][0])
+        dt_next = parse_changelog_date(entries[idx + 1][0])
+        if dt_curr and dt_next and dt_curr < dt_next:
+            new_hdr = redate_entry_header(entries[idx][0], now_ts - idx)
+            lines = entries[idx][1].splitlines()
+            if lines:
+                lines[0] = new_hdr
+                new_raw = "\n".join(lines)
+            else:
+                new_raw = new_hdr
+            entries[idx] = (new_hdr, new_raw)
+
+    separator = "-------------------------------------------------------------------\n"
+    return separator + separator.join(e[1] + "\n\n" for e in entries)
 
 def get_pr_commits(package_dir: str, target_commit: str) -> List[str]:
     """Discovers all commits belonging to the PR in chronological order by finding the closest merge base."""
@@ -154,8 +247,11 @@ def merge_pull_request(
 ) -> bool:
     """
     Applies and merges a contributor pull request onto current branch HEAD.
-    Redates the contributor's changelog entry to current system time and places it
-    at the very top of .changes with proper attribution.
+    Preserves original commit hashes, attribution, and signatures via fast-forward
+    when HEAD is an ancestor of the PR (such as forwarding next into factory).
+    For non-fast-forward merges, performs a clean merge preserving PR commits
+    in the history graph, validating that .changes remains chronologically sorted,
+    and only redating if chronological ordering is broken.
     When squash=True, multiple PR commits are squashed into a single atomic commit.
     """
     pkg_dir = os.path.abspath(package_dir)
@@ -191,12 +287,13 @@ def merge_pull_request(
 
     commits = pr_info.get("commits", [pr_info["commit_sha"]])
     commit_count = len(commits)
+    target_sha = pr_info["commit_sha"]
 
     print(f"{BOLD}{'='*72}{RESET}")
     mode_label = " (SQUASH)" if (squash and commit_count > 1) else ""
     print(f"📥 {BOLD}GECKOPIT PR MERGE{mode_label}: {CYAN}{pkg_name}{RESET} (PR #{pr_id})")
     print(f"{BOLD}{'='*72}{RESET}")
-    print(f"  Head Commit: {pr_info['commit_sha'][:10]}")
+    print(f"  Head Commit: {target_sha[:10]}")
     print(f"  Author:      {pr_info['author']}")
     print(f"  Date:        {pr_info['date']}")
     print(f"  Subject:     {pr_info['subject']}")
@@ -205,13 +302,155 @@ def merge_pull_request(
     print(f"  Files:       {', '.join(pr_info['files'])}")
     print(f"{BOLD}{'='*72}{RESET}")
 
-    # Set RESOLVE_CHANGES_OP=cherry-pick for the merge driver
-    env = dict(os.environ)
-    env["RESOLVE_CHANGES_OP"] = "cherry-pick"
+    current_head = subprocess.check_output(
+        ["git", "-C", pkg_dir, "rev-parse", "HEAD"],
+        text=True
+    ).strip()
 
-    # 4. Apply commits onto HEAD
-    if squash or commit_count == 1:
-        # Apply all commits sequentially into the index without intermediate commits
+    try:
+        merge_base = subprocess.check_output(
+            ["git", "-C", pkg_dir, "merge-base", "HEAD", target_sha],
+            text=True, stderr=subprocess.DEVNULL
+        ).strip()
+    except Exception:
+        merge_base = ""
+
+    is_fast_forward = (merge_base == current_head)
+
+    # 4. Fast-forward merge when HEAD is an ancestor and squash is not requested
+    if is_fast_forward and not squash:
+        # Check spec collisions in target commit
+        spec_collisions = []
+        spec_files = glob.glob(os.path.join(pkg_dir, "*.spec"))
+        for sf in spec_files:
+            rel_sf = os.path.relpath(sf, pkg_dir)
+            try:
+                spec_content = subprocess.check_output(
+                    ["git", "-C", pkg_dir, "show", f"{target_sha}:{rel_sf}"],
+                    text=True, stderr=subprocess.DEVNULL
+                )
+                cols = check_spec_collisions_content(spec_content)
+                if cols:
+                    spec_collisions.extend([(os.path.basename(sf), c) for c in cols])
+            except Exception:
+                pass
+
+        if spec_collisions:
+            print(f"\n{YELLOW}⚠️  Detected potential spec collision(s) needing maintainer adjustment:{RESET}")
+            for sf_name, col_msg in spec_collisions:
+                print(f"   • [{sf_name}] {col_msg}")
+            # Stage changes with merge --no-ff --no-commit so maintainer can review
+            subprocess.run(["git", "-C", pkg_dir, "merge", "--no-ff", "--no-commit", target_sha], capture_output=True)
+            print(f"\n{CYAN}ℹ️  Changes left staged without auto-committing.{RESET}")
+            print(f"   After adjusting the spec file, complete the commit with:")
+            print(f"     {BOLD}git commit -c FETCH_HEAD{RESET}")
+            return True
+
+        if auto_commit:
+            ff_res = subprocess.run(
+                ["git", "-C", pkg_dir, "merge", "--ff-only", target_sha],
+                capture_output=True,
+                text=True
+            )
+            if ff_res.returncode == 0:
+                print(f"{GREEN}🚀 Successfully fast-forwarded to PR #{pr_id} ({target_sha[:7]})!{RESET}")
+                print(f"   Preserved original commit hashes, attribution, and signatures without alterations.")
+                log_out = subprocess.check_output(
+                    ["git", "-C", pkg_dir, "--no-pager", "log", "-1", "--oneline"],
+                    text=True
+                ).strip()
+                print(f"   {BOLD}{log_out}{RESET}")
+                return True
+            else:
+                print(f"{RED}❌ Fast-forward merge failed:{RESET}\n{ff_res.stderr}", file=sys.stderr)
+                return False
+        else:
+            subprocess.run(["git", "-C", pkg_dir, "merge", "--no-ff", "--no-commit", target_sha], check=True)
+            print(f"ℹ️  Changes from PR #{pr_id} staged with '--no-commit'. Review staged diff and commit when ready.")
+            return True
+
+    # 5. Non-fast-forward 3-way merge
+    elif not squash:
+        merge_res = subprocess.run(
+            ["git", "-C", pkg_dir, "merge", "--no-commit", target_sha],
+            capture_output=True,
+            text=True
+        )
+        if merge_res.returncode != 0:
+            conflicts = subprocess.check_output(
+                ["git", "-C", pkg_dir, "diff", "--name-only", "--diff-filter=U"],
+                text=True
+            ).splitlines()
+            if conflicts:
+                print(f"{RED}❌ Conflict encountered during merge of PR #{pr_id}:{RESET} {', '.join(conflicts)}", file=sys.stderr)
+                print("   The merge driver resolved changelog/spec where possible.", file=sys.stderr)
+                print(f"   Please inspect and resolve remaining conflicts, then commit with:", file=sys.stderr)
+                print(f"     git commit", file=sys.stderr)
+                return False
+            else:
+                print(f"{RED}❌ Merge failed for PR #{pr_id}:{RESET}\n{merge_res.stderr}", file=sys.stderr)
+                return False
+
+        # Inspect resulting .changes file for chronological ordering
+        changes_files = glob.glob(os.path.join(pkg_dir, "*.changes"))
+        for cf in changes_files:
+            try:
+                with open(cf, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                if not is_changes_chronologically_sorted(content):
+                    print(f"🕒 Adjusting out-of-order changelog timestamp in {os.path.basename(cf)}...", file=sys.stderr)
+                    fixed_content = fix_changes_chronological_order(content)
+                    with open(cf, "w", encoding="utf-8") as f:
+                        f.write(fixed_content)
+                    subprocess.run(["git", "-C", pkg_dir, "add", cf], check=True)
+                else:
+                    print(f"✅ {os.path.basename(cf)} is chronologically sorted. Preserving original timestamps.")
+            except Exception as e:
+                print(f"{YELLOW}⚠️ Could not check changelog ordering: {e}{RESET}", file=sys.stderr)
+
+        # Spec collision check
+        spec_collisions = []
+        spec_files = glob.glob(os.path.join(pkg_dir, "*.spec"))
+        for sf in spec_files:
+            cols = check_spec_collisions(sf)
+            if cols:
+                spec_collisions.extend([(os.path.basename(sf), c) for c in cols])
+
+        if spec_collisions:
+            print(f"\n{YELLOW}⚠️  Detected potential spec collision(s) needing maintainer adjustment:{RESET}")
+            for sf_name, col_msg in spec_collisions:
+                print(f"   • [{sf_name}] {col_msg}")
+            print(f"\n{CYAN}ℹ️  Changes left staged without auto-committing.{RESET}")
+            print(f"   After adjusting the spec file, complete the commit with:")
+            print(f"     {BOLD}git commit{RESET}")
+            return True
+
+        if auto_commit:
+            commit_msg = f"Merge pull request #{pr_id} from {pr_info['author']}: {pr_info['subject']}"
+            commit_res = subprocess.run(
+                ["git", "-C", pkg_dir, "commit", "-m", commit_msg],
+                capture_output=True,
+                text=True
+            )
+            if commit_res.returncode == 0:
+                print(f"{GREEN}🚀 Successfully merged PR #{pr_id} into HEAD (merge commit)!{RESET}")
+                print(f"   Original PR commit {target_sha[:7]} preserved in history graph.")
+                log_out = subprocess.check_output(
+                    ["git", "-C", pkg_dir, "--no-pager", "log", "-1", "--oneline"],
+                    text=True
+                ).strip()
+                print(f"   {BOLD}{log_out}{RESET}")
+                return True
+            else:
+                print(f"{YELLOW}⚠️  Files are staged, but automated commit returned non-zero:{RESET}\n{commit_res.stderr}", file=sys.stderr)
+                return True
+        else:
+            print(f"ℹ️  Changes from PR #{pr_id} staged with '--no-commit'. Review staged diff and commit when ready.")
+            return True
+
+    # 6. Squashed PR mode (when squash=True is explicitly passed)
+    else:
+        env = dict(os.environ)
         for c_sha in commits:
             cp_res = subprocess.run(
                 ["git", "-C", pkg_dir, "cherry-pick", "--no-commit", c_sha],
@@ -226,17 +465,29 @@ def merge_pull_request(
                 ).splitlines()
                 if conflicts:
                     print(f"{RED}❌ Conflict encountered during cherry-pick of {c_sha[:7]}:{RESET} {', '.join(conflicts)}", file=sys.stderr)
-                    print("   The merge driver resolved changelog/spec where possible.", file=sys.stderr)
-                    print(f"   Please inspect and resolve remaining conflicts, then commit with:", file=sys.stderr)
-                    print(f"     git commit --author=\"{pr_info['author']}\"", file=sys.stderr)
                     return False
                 else:
                     print(f"{RED}❌ Cherry-pick failed for {c_sha[:7]}:{RESET}\n{cp_res.stderr}", file=sys.stderr)
                     return False
 
-        print(f"✅ Changes applied cleanly on top of HEAD.")
+        # Inspect resulting .changes file
+        changes_files = glob.glob(os.path.join(pkg_dir, "*.changes"))
+        for cf in changes_files:
+            try:
+                with open(cf, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                if not is_changes_chronologically_sorted(content):
+                    print(f"🕒 Adjusting out-of-order changelog timestamp in {os.path.basename(cf)}...", file=sys.stderr)
+                    fixed_content = fix_changes_chronological_order(content)
+                    with open(cf, "w", encoding="utf-8") as f:
+                        f.write(fixed_content)
+                    subprocess.run(["git", "-C", pkg_dir, "add", cf], check=True)
+                else:
+                    print(f"✅ {os.path.basename(cf)} is chronologically sorted. Preserving original timestamps.")
+            except Exception as e:
+                pass
 
-        # 5. Collision Guard: Inspect merged .spec file for duplicate patch/source tag conflicts
+        # Spec collision check
         spec_collisions = []
         spec_files = glob.glob(os.path.join(pkg_dir, "*.spec"))
         for sf in spec_files:
@@ -249,45 +500,29 @@ def merge_pull_request(
             for sf_name, col_msg in spec_collisions:
                 print(f"   • [{sf_name}] {col_msg}")
             print(f"\n{CYAN}ℹ️  Changes left staged without auto-committing.{RESET}")
-            print(f"   After adjusting the spec file, complete the commit with:")
-            print(f"     {BOLD}git commit -c FETCH_HEAD{RESET}")
             return True
 
-        # 6. Commit if auto_commit is requested
         if auto_commit:
-            if commit_count > 1 and squash:
-                # Format squashed commit message
-                subject = pr_info["subject"]
-                if f"#{pr_id}" not in subject:
-                    subject = f"{subject} (PR #{pr_id})"
+            subject = pr_info["subject"]
+            if f"#{pr_id}" not in subject:
+                subject = f"{subject} (PR #{pr_id})"
 
-                bullet_lines = []
-                for c_sha in commits:
-                    c_subj = subprocess.check_output(
-                        ["git", "-C", pkg_dir, "log", "-1", "--pretty=format:%s", c_sha],
-                        text=True
-                    ).strip()
-                    bullet_lines.append(f"- {c_subj}")
+            bullet_lines = []
+            for c_sha in commits:
+                c_subj = subprocess.check_output(
+                    ["git", "-C", pkg_dir, "log", "-1", "--pretty=format:%s", c_sha],
+                    text=True
+                ).strip()
+                bullet_lines.append(f"- {c_subj}")
 
-                commit_msg = f"{subject}\n\nSquashed commits from PR #{pr_id}:\n" + "\n".join(bullet_lines)
-            else:
-                commit_msg = pr_info["full_msg"]
-                if f"#{pr_id}" not in commit_msg:
-                    subject = pr_info["subject"]
-                    rest = "\n".join(commit_msg.splitlines()[1:]).strip()
-                    if rest:
-                        commit_msg = f"{subject} (PR #{pr_id})\n\n{rest}"
-                    else:
-                        commit_msg = f"{subject} (PR #{pr_id})"
-
+            commit_msg = f"{subject}\n\nSquashed commits from PR #{pr_id}:\n" + "\n".join(bullet_lines)
             commit_res = subprocess.run(
                 ["git", "-C", pkg_dir, "commit", f"--author={pr_info['author']}", "-m", commit_msg],
                 capture_output=True,
                 text=True
             )
             if commit_res.returncode == 0:
-                squash_str = f" and squashed {commit_count} commits" if (squash and commit_count > 1) else ""
-                print(f"{GREEN}🚀 Successfully merged{squash_str} from PR #{pr_id} on top of HEAD!{RESET}")
+                print(f"{GREEN}🚀 Successfully merged and squashed {commit_count} commits from PR #{pr_id} on top of HEAD!{RESET}")
                 log_out = subprocess.check_output(
                     ["git", "-C", pkg_dir, "--no-pager", "log", "-1", "--oneline"],
                     text=True
@@ -298,75 +533,8 @@ def merge_pull_request(
                 print(f"{YELLOW}⚠️  Files are staged, but automated commit returned non-zero:{RESET}\n{commit_res.stderr}", file=sys.stderr)
                 return True
         else:
-            print(f"ℹ️  Changes staged with '--no-commit'. Review staged diff and commit when ready.")
+            print(f"ℹ️  Changes squashed and staged with '--no-commit'. Review staged diff and commit when ready.")
             return True
-
-    else:
-        # Multi-commit non-squash: apply and commit each commit sequentially preserving individual commits
-        for idx, c_sha in enumerate(commits, 1):
-            cp_res = subprocess.run(
-                ["git", "-C", pkg_dir, "cherry-pick", "--no-commit", c_sha],
-                env=env,
-                capture_output=True,
-                text=True
-            )
-            if cp_res.returncode != 0:
-                conflicts = subprocess.check_output(
-                    ["git", "-C", pkg_dir, "diff", "--name-only", "--diff-filter=U"],
-                    text=True
-                ).splitlines()
-                if conflicts:
-                    print(f"{RED}❌ Conflict encountered during cherry-pick of {c_sha[:7]} ({idx}/{commit_count}):{RESET} {', '.join(conflicts)}", file=sys.stderr)
-                    return False
-                else:
-                    print(f"{RED}❌ Cherry-pick failed for {c_sha[:7]}:{RESET}\n{cp_res.stderr}", file=sys.stderr)
-                    return False
-
-            # Check collisions on the final commit before committing
-            if idx == commit_count:
-                spec_collisions = []
-                spec_files = glob.glob(os.path.join(pkg_dir, "*.spec"))
-                for sf in spec_files:
-                    cols = check_spec_collisions(sf)
-                    if cols:
-                        spec_collisions.extend([(os.path.basename(sf), c) for c in cols])
-
-                if spec_collisions:
-                    print(f"\n{YELLOW}⚠️  Detected potential spec collision(s) needing maintainer adjustment:{RESET}")
-                    for sf_name, col_msg in spec_collisions:
-                        print(f"   • [{sf_name}] {col_msg}")
-                    print(f"\n{CYAN}ℹ️  Changes left staged without auto-committing.{RESET}")
-                    print(f"   After adjusting the spec file, complete the commit with:")
-                    print(f"     {BOLD}git commit -c FETCH_HEAD{RESET}")
-                    return True
-
-            if auto_commit:
-                c_author = subprocess.check_output(
-                    ["git", "-C", pkg_dir, "log", "-1", "--pretty=format:%an <%ae>", c_sha],
-                    text=True
-                ).strip()
-                c_msg = subprocess.check_output(
-                    ["git", "-C", pkg_dir, "log", "-1", "--pretty=format:%B", c_sha],
-                    text=True
-                ).strip()
-                if idx == commit_count and f"#{pr_id}" not in c_msg:
-                    c_subj = subprocess.check_output(
-                        ["git", "-C", pkg_dir, "log", "-1", "--pretty=format:%s", c_sha],
-                        text=True
-                    ).strip()
-                    c_rest = "\n".join(c_msg.splitlines()[1:]).strip()
-                    c_msg = f"{c_subj} (PR #{pr_id})\n\n{c_rest}" if c_rest else f"{c_subj} (PR #{pr_id})"
-
-                subprocess.run(
-                    ["git", "-C", pkg_dir, "commit", f"--author={c_author}", "-m", c_msg],
-                    check=True
-                )
-            else:
-                print(f"ℹ️  Commit {c_sha[:7]} ({idx}/{commit_count}) staged with '--no-commit'.")
-
-        print(f"{GREEN}🚀 Successfully applied {commit_count} commits from PR #{pr_id} on top of HEAD!{RESET}")
-        return True
-
 
 
 try:

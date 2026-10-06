@@ -14,6 +14,8 @@ Features:
 import os
 import sys
 import time
+import datetime
+import re
 import subprocess
 
 def parse_entries_list(content):
@@ -61,6 +63,42 @@ def redate_entry(entry, timestamp_sec):
         new_raw_text = raw_text
 
     return (new_header, new_raw_text)
+
+
+def parse_header_date(header):
+    """Parses openSUSE changelog header timestamp into datetime."""
+    parts = header.split(' - ', 1)
+    if len(parts) < 2:
+        parts = header.split('- ', 1)
+    date_str = parts[0].strip()
+    clean_date = re.sub(r'\s+', ' ', date_str)
+    tokens = clean_date.split()
+    if len(tokens) >= 5:
+        try:
+            if len(tokens) == 6:
+                no_tz = f'{tokens[0]} {tokens[1]} {tokens[2]} {tokens[3]} {tokens[5]}'
+            else:
+                no_tz = ' '.join(tokens[:5])
+            return datetime.datetime.strptime(no_tz, '%a %b %d %H:%M:%S %Y')
+        except Exception:
+            pass
+    try:
+        return datetime.datetime.strptime(clean_date[:10], '%Y-%m-%d')
+    except Exception:
+        pass
+    return None
+
+def are_entries_chronologically_sorted(entries):
+    """Returns True if parsed entry dates are in non-increasing order (newest first)."""
+    dates = []
+    for e in entries:
+        dt = parse_header_date(e[0])
+        if dt:
+            dates.append(dt)
+    for i in range(len(dates) - 1):
+        if dates[i] < dates[i + 1]:
+            return False
+    return True
 
 def get_merge_operation():
     """
@@ -154,28 +192,38 @@ def merge_changes_structural(stage1_content, stage2_content, stage3_content, is_
 
     if is_cherry_pick:
         # In cherry-pick / PR merge, incoming change sits on top of HEAD.
-        # Redate new_theirs entries to current system time so they sit cleanly on top of HEAD.
-        if new_theirs:
-            print("🕒 Git Merge Driver: Redating incoming cherry-pick entries to 'now'...", file=sys.stderr)
-            now_ts = time.time()
-            redated_theirs = []
-            for i, entry in enumerate(new_theirs):
-                ts = now_ts - i
-                redated_theirs.append(redate_entry(entry, ts))
-            new_theirs = redated_theirs
         final_entries = new_theirs + new_ours + stage1_entries
+        if not are_entries_chronologically_sorted(final_entries):
+            # Redate new_theirs to current system time only when out of chronological order
+            if new_theirs:
+                print("🕒 Git Merge Driver: Redating incoming cherry-pick entries to 'now'...", file=sys.stderr)
+                now_ts = time.time()
+                redated_theirs = []
+                for i, entry in enumerate(new_theirs):
+                    ts = now_ts - i
+                    redated_theirs.append(redate_entry(entry, ts))
+                new_theirs = redated_theirs
+                final_entries = new_theirs + new_ours + stage1_entries
+        else:
+            print("🕒 Git Merge Driver: Incoming entries are chronologically sorted. Preserving original dates.", file=sys.stderr)
     else:
         # Branch merge (e.g. factory into next):
         # Development entries on next (new_ours) sit on top of stable factory entries (new_theirs).
-        if new_ours and new_theirs:
-            print("🕒 Git Merge Driver: Redating 'next' entries to 'now'...", file=sys.stderr)
-            now_ts = time.time()
-            redated_ours = []
-            for i, entry in enumerate(new_ours):
-                ts = now_ts - i
-                redated_ours.append(redate_entry(entry, ts))
-            new_ours = redated_ours
         final_entries = new_ours + new_theirs + stage1_entries
+        if not are_entries_chronologically_sorted(final_entries):
+            # Development entries on next must sit on top of factory entries.
+            # Since an entry on next is older than an incoming factory entry, redate new_ours to 'now'.
+            if new_ours and new_theirs:
+                print("🕒 Git Merge Driver: Redating 'next' entries to 'now'...", file=sys.stderr)
+                now_ts = time.time()
+                redated_ours = []
+                for i, entry in enumerate(new_ours):
+                    ts = now_ts - i
+                    redated_ours.append(redate_entry(entry, ts))
+                new_ours = redated_ours
+            final_entries = new_ours + new_theirs + stage1_entries
+        else:
+            print("🕒 Git Merge Driver: Changelog entries are chronologically sorted. Preserving original dates.", file=sys.stderr)
 
     separator = "-------------------------------------------------------------------\n"
     return separator + (separator).join(e[1] + "\n\n" for e in final_entries)
