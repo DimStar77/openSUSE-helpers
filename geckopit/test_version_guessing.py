@@ -284,6 +284,163 @@ class TestSyncWindow(unittest.TestCase):
         # Verify that json.dump was called with max_workers=15
         mock_file.assert_called()
 
+    def test_workspace_profile_add_preserves_existing_profiles(self):
+        """Verifies that adding a new profile preserves existing profiles instead of removing them."""
+        import gi
+        gi.require_version('Gtk', '4.0')
+        gi.require_version('Adw', '1')
+        from gi.repository import Gtk, Adw
+        from geckopit import WorkspaceManagerDialog
+
+        win = Gtk.Window()
+        win.toast_overlay = mock.MagicMock()
+
+        config = mock.MagicMock()
+        config.workspaces = {
+            "GNOME": {
+                "stable_path": "/tmp",
+                "stable_branch": "factory",
+                "unstable_path": None,
+                "unstable_branch": None,
+                "ignored_unstable_versions": {}
+            }
+        }
+        config.active_workspace = "GNOME"
+        config.max_workers = 25
+
+        callback = mock.MagicMock()
+        dlg = WorkspaceManagerDialog(win, config, callback)
+
+        # Initially 1 profile
+        self.assertEqual(sorted(config.workspaces.keys()), ["GNOME"])
+
+        # Click Add New Profile
+        dlg.on_add_profile_clicked(None)
+        self.assertTrue(dlg.is_adding_new)
+        self.assertIsNone(dlg.editing_ws_name)
+
+        # Enter details for new profile
+        dlg.name_entry.set_text("KDE")
+        dlg.stable_path_entry.set_text("/tmp")
+        dlg.stable_br_entry.set_text("factory")
+
+        # Save profile
+        dlg.on_save_clicked(None)
+
+        # Both profiles must be present!
+        self.assertIn("GNOME", config.workspaces)
+        self.assertIn("KDE", config.workspaces)
+        self.assertEqual(config.active_workspace, "KDE")
+        config.save.assert_called()
+        callback.assert_called()
+
+    def test_workspace_profile_rename_and_collision_guards(self):
+        """Tests that renaming an existing profile cleans up the old name and guards against duplicate names."""
+        import gi
+        gi.require_version('Gtk', '4.0')
+        gi.require_version('Adw', '1')
+        from gi.repository import Gtk, Adw
+        from geckopit import WorkspaceManagerDialog
+
+        win = Gtk.Window()
+        win.toast_overlay = mock.MagicMock()
+
+        config = mock.MagicMock()
+        config.workspaces = {
+            "GNOME": {
+                "stable_path": "/tmp",
+                "stable_branch": "factory",
+                "unstable_path": None,
+                "unstable_branch": None,
+                "ignored_unstable_versions": {}
+            },
+            "KDE": {
+                "stable_path": "/tmp",
+                "stable_branch": "factory",
+                "unstable_path": None,
+                "unstable_branch": None,
+                "ignored_unstable_versions": {}
+            }
+        }
+        config.active_workspace = "GNOME"
+        config.max_workers = 25
+
+        callback = mock.MagicMock()
+
+        # 1. Name collision guard when renaming
+        dlg = WorkspaceManagerDialog(win, config, callback)
+        dlg.name_entry.set_text("KDE") # Collides with existing KDE
+        dlg.on_save_clicked(None)
+        self.assertEqual(sorted(config.workspaces.keys()), ["GNOME", "KDE"])
+        win.toast_overlay.add_toast.assert_called()
+
+        # 2. Legitimate rename
+        win.toast_overlay.reset_mock()
+        dlg.name_entry.set_text("GNOME_Devel")
+        dlg.on_save_clicked(None)
+        self.assertNotIn("GNOME", config.workspaces)
+        self.assertIn("GNOME_Devel", config.workspaces)
+        self.assertIn("KDE", config.workspaces)
+        self.assertEqual(config.active_workspace, "GNOME_Devel")
+
+        # 3. Name collision guard when adding new profile
+        dlg2 = WorkspaceManagerDialog(win, config, callback)
+        dlg2.on_add_profile_clicked(None)
+        dlg2.name_entry.set_text("KDE")
+        dlg2.stable_path_entry.set_text("/tmp")
+        win.toast_overlay.reset_mock()
+        dlg2.on_save_clicked(None)
+        # KDE was not overwritten or removed
+        self.assertEqual(sorted(config.workspaces.keys()), ["GNOME_Devel", "KDE"])
+        win.toast_overlay.add_toast.assert_called()
+
+    def test_workspace_profile_add_mode_switch_back(self):
+        """Tests that selecting an existing profile in the dropdown exits Add New mode cleanly."""
+        import gi
+        gi.require_version('Gtk', '4.0')
+        gi.require_version('Adw', '1')
+        from gi.repository import Gtk, Adw
+        from geckopit import WorkspaceManagerDialog
+
+        win = Gtk.Window()
+        win.toast_overlay = mock.MagicMock()
+
+        config = mock.MagicMock()
+        config.workspaces = {
+            "GNOME": {
+                "stable_path": "/tmp",
+                "stable_branch": "factory",
+                "unstable_path": None,
+                "unstable_branch": None,
+                "ignored_unstable_versions": {}
+            },
+            "KDE": {
+                "stable_path": "/tmp",
+                "stable_branch": "factory",
+                "unstable_path": None,
+                "unstable_branch": None,
+                "ignored_unstable_versions": {}
+            }
+        }
+        config.active_workspace = "GNOME"
+        config.max_workers = 25
+
+        callback = mock.MagicMock()
+        dlg = WorkspaceManagerDialog(win, config, callback)
+
+        # Click Add New
+        dlg.on_add_profile_clicked(None)
+        self.assertTrue(dlg.is_adding_new)
+        self.assertEqual(dlg.profile_model.get_n_items(), 3)
+        self.assertEqual(dlg.profile_combo.get_selected(), 2)
+
+        # Switch back to KDE (index 1)
+        dlg.profile_combo.set_selected(1)
+        self.assertFalse(dlg.is_adding_new)
+        self.assertEqual(dlg.editing_ws_name, "KDE")
+        self.assertEqual(dlg.profile_model.get_n_items(), 2)
+        self.assertEqual(dlg.name_entry.get_text(), "KDE")
+
 
     def test_keyboard_navigation_and_filter_shortcuts(self):
         import gi

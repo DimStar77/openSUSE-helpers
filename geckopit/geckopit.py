@@ -861,14 +861,14 @@ class WorkspaceConfig:
 
         if is_gnome_style:
             # Autodetection succeeded! Overwrite generic "Default" so we have a clean GNOME profile
-            self.workspaces = {
-                "GNOME": {
-                    "stable_path": stable_guess,
-                    "stable_branch": "factory",
-                    "unstable_path": unstable_guess if unstable_guess else None,
-                    "unstable_branch": "next" if unstable_guess else None
-                }
+            self.workspaces["GNOME"] = {
+                "stable_path": stable_guess,
+                "stable_branch": "factory",
+                "unstable_path": unstable_guess if unstable_guess else None,
+                "unstable_branch": "next" if unstable_guess else None
             }
+            if "Default" in self.workspaces:
+                del self.workspaces["Default"]
             self.active_workspace = "GNOME"
             self.save()
             return
@@ -877,14 +877,14 @@ class WorkspaceConfig:
         if has_sub_repos:
             # Autodetection succeeded for local sub-repos! Overwrite generic "Default"
             folder_name = current_folder_name
-            self.workspaces = {
-                folder_name: {
-                    "stable_path": cwd,
-                    "stable_branch": "factory",
-                    "unstable_path": None,
-                    "unstable_branch": None
-                }
+            self.workspaces[folder_name] = {
+                "stable_path": cwd,
+                "stable_branch": "factory",
+                "unstable_path": None,
+                "unstable_branch": None
             }
+            if "Default" in self.workspaces:
+                del self.workspaces["Default"]
             self.active_workspace = folder_name
             self.save()
 
@@ -1236,6 +1236,11 @@ class WorkspaceManagerDialog(Gtk.Window):
         self.callback_on_save = callback_on_save
         self.ws_names = sorted(self.config.workspaces.keys())
 
+        # State tracking for editing existing profile vs creating a new one
+        self.is_adding_new = False
+        self.editing_ws_name = self.config.active_workspace if self.config.active_workspace in self.ws_names else (self.ws_names[0] if self.ws_names else None)
+        self.updating_combo = False
+
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         main_box.set_margin_start(18)
         main_box.set_margin_end(18)
@@ -1251,7 +1256,8 @@ class WorkspaceManagerDialog(Gtk.Window):
         selector_box.append(lbl_sel)
 
         # DropDown for profiles list
-        self.profile_combo = Gtk.DropDown.new_from_strings(self.ws_names)
+        self.profile_model = Gtk.StringList.new(self.ws_names)
+        self.profile_combo = Gtk.DropDown.new(self.profile_model, None)
         if self.config.active_workspace in self.ws_names:
             idx = self.ws_names.index(self.config.active_workspace)
             self.profile_combo.set_selected(idx)
@@ -1446,6 +1452,8 @@ class WorkspaceManagerDialog(Gtk.Window):
 
     def load_profile_to_fields(self, ws_name):
         prof = self.config.workspaces.get(ws_name, {})
+        self.is_adding_new = False
+        self.editing_ws_name = ws_name
         self.name_entry.set_text(ws_name)
         self.stable_path_entry.set_text(prof.get("stable_path", "") or "")
         self.stable_br_entry.set_text(prof.get("stable_branch", "factory") or "factory")
@@ -1456,9 +1464,21 @@ class WorkspaceManagerDialog(Gtk.Window):
         self.update_ignored_list_ui()
 
     def on_profile_selection_changed(self, dropdown, pspec):
+        if self.updating_combo:
+            return
         active_idx = dropdown.get_selected()
         if 0 <= active_idx < len(self.ws_names):
             ws_name = self.ws_names[active_idx]
+            self.is_adding_new = False
+            self.editing_ws_name = ws_name
+
+            # If temporary "+ New Profile" item exists in model, cleanly remove it
+            if self.profile_model.get_n_items() > len(self.ws_names):
+                self.updating_combo = True
+                self.profile_model.remove(len(self.ws_names))
+                self.profile_combo.set_selected(active_idx)
+                self.updating_combo = False
+
             self.load_profile_to_fields(ws_name)
 
     def on_browse_clicked(self, btn, entry, is_stable=True):
@@ -1543,14 +1563,36 @@ class WorkspaceManagerDialog(Gtk.Window):
         dialog.show()
 
     def on_add_profile_clicked(self, btn):
+        if self.is_adding_new:
+            self.name_entry.grab_focus()
+            self.name_entry.select_region(0, -1)
+            return
+
+        self.is_adding_new = True
+        self.editing_ws_name = None
+
+        # Add temporary "+ New Profile" item to combo and select it
+        self.updating_combo = True
+        if self.profile_model.get_n_items() == len(self.ws_names):
+            self.profile_model.append("➕ New Profile")
+        self.profile_combo.set_selected(len(self.ws_names))
+        self.updating_combo = False
+
         self.name_entry.set_text("New Profile")
         self.stable_path_entry.set_text("")
-        self.stable_br_entry.set_text("")
+        self.stable_br_entry.set_text("factory")
         self.unstable_path_entry.set_text("")
         self.unstable_br_entry.set_text("")
+        self.current_ignored_versions = {}
+        self.update_ignored_list_ui()
+        self.del_btn.set_sensitive(False)
+
         self.name_entry.grab_focus()
+        self.name_entry.select_region(0, -1)
 
     def on_delete_profile_clicked(self, btn):
+        if self.is_adding_new:
+            return
         active_idx = self.profile_combo.get_selected()
         if 0 <= active_idx < len(self.ws_names):
             ws_name = self.ws_names[active_idx]
@@ -1561,11 +1603,15 @@ class WorkspaceManagerDialog(Gtk.Window):
                 self.config.save()
 
                 # Rebuild dropdown model
-                model = Gtk.StringList.new(self.ws_names)
-                self.profile_combo.set_model(model)
+                self.updating_combo = True
+                self.profile_model = Gtk.StringList.new(self.ws_names)
+                self.profile_combo.set_model(self.profile_model)
                 if self.config.active_workspace in self.ws_names:
                     idx = self.ws_names.index(self.config.active_workspace)
                     self.profile_combo.set_selected(idx)
+                self.updating_combo = False
+
+                self.load_profile_to_fields(self.config.active_workspace)
 
     def on_save_clicked(self, btn):
         ws_name = self.name_entry.get_text().strip()
@@ -1575,15 +1621,38 @@ class WorkspaceManagerDialog(Gtk.Window):
         unstable_b = self.unstable_br_entry.get_text().strip() or None
 
         if not ws_name:
+            if hasattr(self.parent_window, "toast_overlay") and self.parent_window.toast_overlay:
+                toast = Adw.Toast.new("Profile Name cannot be empty.")
+                self.parent_window.toast_overlay.add_toast(toast)
             return
         if not stable_p or not os.path.exists(stable_p):
-            toast = Adw.Toast.new("Stable Path cannot be empty and must exist on disk.")
-            self.parent_window.toast_overlay.add_toast(toast)
+            if hasattr(self.parent_window, "toast_overlay") and self.parent_window.toast_overlay:
+                toast = Adw.Toast.new("Stable Path cannot be empty and must exist on disk.")
+                self.parent_window.toast_overlay.add_toast(toast)
             return
 
         if not unstable_p:
             unstable_p = None
             unstable_b = None
+
+        if self.is_adding_new:
+            # We are creating a NEW profile: ensure no duplicate name collision
+            if ws_name in self.config.workspaces:
+                if hasattr(self.parent_window, "toast_overlay") and self.parent_window.toast_overlay:
+                    toast = Adw.Toast.new(f"A profile named '{ws_name}' already exists.")
+                    self.parent_window.toast_overlay.add_toast(toast)
+                return
+        else:
+            # We are editing/renaming an existing profile
+            if self.editing_ws_name and ws_name != self.editing_ws_name:
+                if ws_name in self.config.workspaces:
+                    if hasattr(self.parent_window, "toast_overlay") and self.parent_window.toast_overlay:
+                        toast = Adw.Toast.new(f"A profile named '{ws_name}' already exists.")
+                        self.parent_window.toast_overlay.add_toast(toast)
+                    return
+                # Clean up old profile name if renamed
+                if self.editing_ws_name in self.config.workspaces:
+                    del self.config.workspaces[self.editing_ws_name]
 
         self.config.workspaces[ws_name] = {
             "stable_path": stable_p,
@@ -1592,13 +1661,6 @@ class WorkspaceManagerDialog(Gtk.Window):
             "unstable_branch": unstable_b,
             "ignored_unstable_versions": dict(getattr(self, "current_ignored_versions", {}))
         }
-
-        # If they renamed a profile, delete the old one
-        active_idx = self.profile_combo.get_selected()
-        old_ws_name = self.ws_names[active_idx] if 0 <= active_idx < len(self.ws_names) else None
-        if old_ws_name and old_ws_name != ws_name:
-            if old_ws_name in self.config.workspaces:
-                del self.config.workspaces[old_ws_name]
 
         self.config.active_workspace = ws_name
         self.config.max_workers = int(self.concurrency_spin.get_value())
