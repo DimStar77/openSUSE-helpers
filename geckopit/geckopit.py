@@ -1702,6 +1702,7 @@ class SyncWindow(Adw.ApplicationWindow):
         # Core data
         self.repos = []
         self.package_data = {}
+        self.scan_generation = 0
         self.load_workspace_repositories()
 
         # Background workers configured with daemon threads so they terminate on exit
@@ -2170,6 +2171,7 @@ class SyncWindow(Adw.ApplicationWindow):
         dialog.present()
 
     def reload_workspace(self):
+        self.scan_generation = getattr(self, "scan_generation", 0) + 1
         # Update stable and unstable branch maps
         active_prof = self.config.get_active_profile()
         self.stable_p = active_prof.get("stable_path", ".") or "."
@@ -2895,7 +2897,9 @@ class SyncWindow(Adw.ApplicationWindow):
         )
         return wt
 
-    def run_bg_sync_single(self, repo):
+    def run_bg_sync_single(self, repo, gen=None):
+        if gen is not None and gen != getattr(self, "scan_generation", 0):
+            return
         name, data = sb.check_repo_sync(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
         wt_data = self.check_worktrees_for_repo(repo)
         pr_data = {"has_pr": False}
@@ -2903,9 +2907,18 @@ class SyncWindow(Adw.ApplicationWindow):
             next_ahead = data.get("next_ahead", 0)
             if next_ahead > 0:
                 _, pr_data = sb.check_repo_pr(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
-        GLib.idle_add(self.update_sync_row_single, name, data, wt_data, pr_data)
+        if gen is not None and gen != getattr(self, "scan_generation", 0):
+            return
+        if gen is not None:
+            GLib.idle_add(self.update_sync_row_single, name, data, wt_data, pr_data, gen)
+        else:
+            GLib.idle_add(self.update_sync_row_single, name, data, wt_data, pr_data)
 
-    def update_sync_row_single(self, name, data, wt_data=None, pr_data=None):
+    def update_sync_row_single(self, name, data, wt_data=None, pr_data=None, gen=None):
+        if gen is not None and gen != getattr(self, "scan_generation", 0):
+            return
+        if name not in self.package_data:
+            return
         if data.get("status") == "success":
             self.package_data[name]["sync"] = data
             if wt_data:
@@ -2923,11 +2936,22 @@ class SyncWindow(Adw.ApplicationWindow):
             self.package_data[name]["sync"] = data
             self.update_row_ui(name)
 
-    def run_bg_version_single(self, repo):
+    def run_bg_version_single(self, repo, gen=None):
+        if gen is not None and gen != getattr(self, "scan_generation", 0):
+            return
         name, data = sb.check_repo_version(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p, ignored_unstable_versions=self.ignored_unstable_versions, skip_fetch=True)
-        GLib.idle_add(self.update_version_row_single, name, data)
+        if gen is not None and gen != getattr(self, "scan_generation", 0):
+            return
+        if gen is not None:
+            GLib.idle_add(self.update_version_row_single, name, data, gen)
+        else:
+            GLib.idle_add(self.update_version_row_single, name, data)
 
-    def update_version_row_single(self, name, data):
+    def update_version_row_single(self, name, data, gen=None):
+        if gen is not None and gen != getattr(self, "scan_generation", 0):
+            return
+        if name not in self.package_data:
+            return
         if data.get("status") == "success":
             self.package_data[name]["version"] = data
             self.refreshed_version_packages.add(name)
@@ -2937,7 +2961,9 @@ class SyncWindow(Adw.ApplicationWindow):
                 self.update_detail_version_ui(name)
                 self.update_detail_title(name)
 
-    def run_bg_forward_single(self, repo):
+    def run_bg_forward_single(self, repo, gen=None):
+        if gen is not None and gen != getattr(self, "scan_generation", 0):
+            return
         sync_data = self.package_data.get(repo, {}).get("sync")
         if not sync_data or sync_data.get("status") != "success":
             _, sync_data = sb.check_repo_sync(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
@@ -2946,9 +2972,18 @@ class SyncWindow(Adw.ApplicationWindow):
             next_ahead = sync_data.get("next_ahead", 0)
             if next_ahead > 0:
                 _, pr_data = sb.check_repo_pr(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
-        GLib.idle_add(self.update_forward_row_single, repo, sync_data, pr_data)
+        if gen is not None and gen != getattr(self, "scan_generation", 0):
+            return
+        if gen is not None:
+            GLib.idle_add(self.update_forward_row_single, repo, sync_data, pr_data, gen)
+        else:
+            GLib.idle_add(self.update_forward_row_single, repo, sync_data, pr_data)
 
-    def update_forward_row_single(self, name, sync_data, pr_data):
+    def update_forward_row_single(self, name, sync_data, pr_data, gen=None):
+        if gen is not None and gen != getattr(self, "scan_generation", 0):
+            return
+        if name not in self.package_data:
+            return
         if sync_data.get("status") == "success":
             self.package_data[name]["sync"] = sync_data
         self.package_data[name]["pr"] = pr_data
@@ -4453,6 +4488,9 @@ class SyncWindow(Adw.ApplicationWindow):
         local_stable_ver = sb.get_local_package_version(stable_repo_p)
         local_unstable_ver = sb.get_local_package_version(unstable_repo_p) if unstable_repo_p else None
 
+        if package_name not in self.package_data:
+            return
+
         ver = self.package_data.setdefault(package_name, {}).setdefault("version", {})
         if local_stable_ver:
             ver["factory_ver"] = local_stable_ver
@@ -4933,14 +4971,17 @@ class SyncWindow(Adw.ApplicationWindow):
 
         self.sync_completed_count = 0
         self.update_progress_ui()
+        current_gen = getattr(self, "scan_generation", 0)
 
         for repo in self.repos:
             try:
-                self.sync_executor.submit(self.run_bg_sync, repo)
+                self.sync_executor.submit(self.run_bg_sync, repo, current_gen)
             except RuntimeError:
                 break
 
-    def run_bg_sync(self, repo):
+    def run_bg_sync(self, repo, gen=None):
+        if gen is not None and gen != getattr(self, "scan_generation", 0):
+            return
         kwargs = {
             "stable_branch": self.stable_b,
             "unstable_branch": self.unstable_b,
@@ -4951,6 +4992,8 @@ class SyncWindow(Adw.ApplicationWindow):
             kwargs["known_not_in_pool"] = known_nip
 
         name, data = sb.check_repo_sync(repo, **kwargs)
+        if gen is not None and gen != getattr(self, "scan_generation", 0):
+            return
         if data.get("pool_status") == "Not in Pool" and isinstance(getattr(self, "known_not_in_pool", None), set):
             self.known_not_in_pool.add(name)
         wt_data = self.check_worktrees_for_repo(repo)
@@ -4959,7 +5002,12 @@ class SyncWindow(Adw.ApplicationWindow):
             next_ahead = data.get("next_ahead", 0)
             if next_ahead > 0:
                 _, pr_data = sb.check_repo_pr(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
-        GLib.idle_add(self.add_sync_result, name, data, wt_data, pr_data)
+        if gen is not None and gen != getattr(self, "scan_generation", 0):
+            return
+        if gen is not None:
+            GLib.idle_add(self.add_sync_result, name, data, wt_data, pr_data, gen)
+        else:
+            GLib.idle_add(self.add_sync_result, name, data, wt_data, pr_data)
 
     def check_and_mark_package_refreshed(self, name):
         if name in self.refreshed_sync_packages and name in self.refreshed_version_packages:
@@ -4969,7 +5017,12 @@ class SyncWindow(Adw.ApplicationWindow):
             if getattr(self, "current_selected_package", None) == name:
                 self.update_detail_title(name)
 
-    def add_sync_result(self, name, data, wt_data=None, pr_data=None):
+    def add_sync_result(self, name, data, wt_data=None, pr_data=None, gen=None):
+        if gen is not None and gen != getattr(self, "scan_generation", 0):
+            return
+        if name not in self.package_data:
+            return
+
         self.sync_completed_count += 1
 
         if data.get("status") == "success":
@@ -4997,18 +5050,31 @@ class SyncWindow(Adw.ApplicationWindow):
 
         self.ver_completed_count = 0
         self.update_progress_ui()
+        current_gen = getattr(self, "scan_generation", 0)
 
         for repo in self.repos:
             try:
-                self.ver_executor.submit(self.run_bg_version, repo)
+                self.ver_executor.submit(self.run_bg_version, repo, current_gen)
             except RuntimeError:
                 break
 
-    def run_bg_version(self, repo):
+    def run_bg_version(self, repo, gen=None):
+        if gen is not None and gen != getattr(self, "scan_generation", 0):
+            return
         name, data = sb.check_repo_version(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p, ignored_unstable_versions=self.ignored_unstable_versions, skip_fetch=True)
-        GLib.idle_add(self.add_version_result, name, data)
+        if gen is not None and gen != getattr(self, "scan_generation", 0):
+            return
+        if gen is not None:
+            GLib.idle_add(self.add_version_result, name, data, gen)
+        else:
+            GLib.idle_add(self.add_version_result, name, data)
 
-    def add_version_result(self, name, data):
+    def add_version_result(self, name, data, gen=None):
+        if gen is not None and gen != getattr(self, "scan_generation", 0):
+            return
+        if name not in self.package_data:
+            return
+
         self.ver_completed_count += 1
 
         if data.get("status") == "success":
@@ -5029,13 +5095,16 @@ class SyncWindow(Adw.ApplicationWindow):
             return
 
         self.fwd_completed_count = 0
+        current_gen = getattr(self, "scan_generation", 0)
         for repo in self.repos:
             try:
-                self.sync_executor.submit(self.run_bg_forward, repo)
+                self.sync_executor.submit(self.run_bg_forward, repo, current_gen)
             except RuntimeError:
                 break
 
-    def run_bg_forward(self, repo):
+    def run_bg_forward(self, repo, gen=None):
+        if gen is not None and gen != getattr(self, "scan_generation", 0):
+            return
         sync_data = self.package_data.get(repo, {}).get("sync")
         if not sync_data or sync_data.get("status") != "success":
             _, sync_data = sb.check_repo_sync(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
@@ -5044,9 +5113,19 @@ class SyncWindow(Adw.ApplicationWindow):
             next_ahead = sync_data.get("next_ahead", 0)
             if next_ahead > 0:
                 _, pr_data = sb.check_repo_pr(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
-        GLib.idle_add(self.add_forward_result, repo, sync_data, pr_data)
+        if gen is not None and gen != getattr(self, "scan_generation", 0):
+            return
+        if gen is not None:
+            GLib.idle_add(self.add_forward_result, repo, sync_data, pr_data, gen)
+        else:
+            GLib.idle_add(self.add_forward_result, repo, sync_data, pr_data)
 
-    def add_forward_result(self, name, sync_data, pr_data):
+    def add_forward_result(self, name, sync_data, pr_data, gen=None):
+        if gen is not None and gen != getattr(self, "scan_generation", 0):
+            return
+        if name not in self.package_data:
+            return
+
         self.fwd_completed_count += 1
 
         if sync_data.get("status") == "success":

@@ -394,6 +394,51 @@ class TestSyncWindow(unittest.TestCase):
         self.assertEqual(sorted(config.workspaces.keys()), ["GNOME_Devel", "KDE"])
         win.toast_overlay.add_toast.assert_called()
 
+    def test_background_scan_generation_guard_and_keyerror_prevention(self):
+        """Tests that stale callbacks from previous profiles are dropped and do not raise KeyError."""
+        from geckopit import SyncWindow
+
+        mock_win = mock.MagicMock(spec=SyncWindow)
+        mock_win.scan_generation = 2
+        mock_win.package_data = {"pkgA": {"sync": {}, "version": {}, "pr": {}}}
+        mock_win.refreshed_version_packages = set()
+        mock_win.refreshed_sync_packages = set()
+
+        # 1. Stale generation result should be ignored
+        SyncWindow.add_version_result(mock_win, "pkgA", {"status": "success"}, gen=1)
+        self.assertEqual(mock_win.package_data["pkgA"]["version"], {})
+
+        # 2. Package not in package_data (e.g. from previous profile) should NOT raise KeyError
+        SyncWindow.add_version_result(mock_win, "cairomm", {"status": "success"}, gen=2)
+        SyncWindow.add_sync_result(mock_win, "caribou", {"status": "success"}, gen=2)
+        SyncWindow.add_forward_result(mock_win, "calls", {"status": "success"}, {"has_pr": False}, gen=2)
+
+        SyncWindow.update_version_row_single(mock_win, "cairomm", {"status": "success"}, gen=2)
+        SyncWindow.update_sync_row_single(mock_win, "caribou", {"status": "success"}, gen=2)
+        SyncWindow.update_forward_row_single(mock_win, "calls", {"status": "success"}, {"has_pr": False}, gen=2)
+
+    def test_header_profile_changed_defers_reload(self):
+        """Tests that changing profile in the header combo defers reload to GLib.idle_add without segfaulting."""
+        import gi
+        gi.require_version('Gtk', '4.0')
+        from gi.repository import Gtk
+        from geckopit import SyncWindow
+
+        mock_win = mock.MagicMock(spec=SyncWindow)
+        mock_win.config = mock.MagicMock()
+        mock_win.config.workspaces = {"GNOME": {}, "KDE": {}}
+        mock_win.config.active_workspace = "GNOME"
+        mock_win.is_reloading = False
+
+        dropdown = Gtk.DropDown.new_from_strings(["GNOME", "KDE"])
+        dropdown.set_selected(1) # KDE
+
+        with mock.patch("gi.repository.GLib.idle_add") as mock_idle_add:
+            SyncWindow.on_header_profile_changed(mock_win, dropdown, None)
+            self.assertEqual(mock_win.config.active_workspace, "KDE")
+            mock_win.config.save.assert_called_once()
+            mock_idle_add.assert_called_once_with(mock_win._on_header_reload_idle)
+
     def test_workspace_profile_add_mode_switch_back(self):
         """Tests that selecting an existing profile in the dropdown exits Add New mode cleanly."""
         import gi
@@ -441,28 +486,6 @@ class TestSyncWindow(unittest.TestCase):
         self.assertEqual(dlg.profile_model.get_n_items(), 2)
         self.assertEqual(dlg.name_entry.get_text(), "KDE")
 
-
-    def test_header_profile_changed_defers_reload(self):
-        """Tests that changing profile in the header combo defers reload to GLib.idle_add without segfaulting."""
-        import gi
-        gi.require_version('Gtk', '4.0')
-        from gi.repository import Gtk
-        from geckopit import SyncWindow
-
-        mock_win = mock.MagicMock(spec=SyncWindow)
-        mock_win.config = mock.MagicMock()
-        mock_win.config.workspaces = {"GNOME": {}, "KDE": {}}
-        mock_win.config.active_workspace = "GNOME"
-        mock_win.is_reloading = False
-
-        dropdown = Gtk.DropDown.new_from_strings(["GNOME", "KDE"])
-        dropdown.set_selected(1) # KDE
-
-        with mock.patch("gi.repository.GLib.idle_add") as mock_idle_add:
-            SyncWindow.on_header_profile_changed(mock_win, dropdown, None)
-            self.assertEqual(mock_win.config.active_workspace, "KDE")
-            mock_win.config.save.assert_called_once()
-            mock_idle_add.assert_called_once_with(mock_win._on_header_reload_idle)
 
     def test_keyboard_navigation_and_filter_shortcuts(self):
         import gi
