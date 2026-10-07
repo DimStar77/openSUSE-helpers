@@ -442,6 +442,28 @@ class TestSyncWindow(unittest.TestCase):
         self.assertEqual(dlg.name_entry.get_text(), "KDE")
 
 
+    def test_header_profile_changed_defers_reload(self):
+        """Tests that changing profile in the header combo defers reload to GLib.idle_add without segfaulting."""
+        import gi
+        gi.require_version('Gtk', '4.0')
+        from gi.repository import Gtk
+        from geckopit import SyncWindow
+
+        mock_win = mock.MagicMock(spec=SyncWindow)
+        mock_win.config = mock.MagicMock()
+        mock_win.config.workspaces = {"GNOME": {}, "KDE": {}}
+        mock_win.config.active_workspace = "GNOME"
+        mock_win.is_reloading = False
+
+        dropdown = Gtk.DropDown.new_from_strings(["GNOME", "KDE"])
+        dropdown.set_selected(1) # KDE
+
+        with mock.patch("gi.repository.GLib.idle_add") as mock_idle_add:
+            SyncWindow.on_header_profile_changed(mock_win, dropdown, None)
+            self.assertEqual(mock_win.config.active_workspace, "KDE")
+            mock_win.config.save.assert_called_once()
+            mock_idle_add.assert_called_once_with(mock_win._on_header_reload_idle)
+
     def test_keyboard_navigation_and_filter_shortcuts(self):
         import gi
         gi.require_version('Gtk', '4.0')

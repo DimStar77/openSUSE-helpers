@@ -2128,16 +2128,20 @@ class SyncWindow(Adw.ApplicationWindow):
 
     def update_header_profile_combo(self):
         ws_names = sorted(self.config.workspaces.keys())
-        model = Gtk.StringList.new(ws_names)
+        model = self.header_combo.get_model()
+        current_names = []
+        if model:
+            current_names = [model.get_string(i) for i in range(model.get_n_items())]
 
-        # Set is_reloading to True to block signals during data rebuild
         self.is_reloading = True
-        self.header_combo.set_model(model)
+        if current_names != ws_names:
+            self.header_combo.set_model(Gtk.StringList.new(ws_names))
 
         active_ws = self.config.active_workspace
         if active_ws in ws_names:
             idx = ws_names.index(active_ws)
-            self.header_combo.set_selected(idx)
+            if self.header_combo.get_selected() != idx:
+                self.header_combo.set_selected(idx)
         self.is_reloading = False
 
     def on_header_profile_changed(self, dropdown, pspec):
@@ -2151,7 +2155,11 @@ class SyncWindow(Adw.ApplicationWindow):
             if ws_name != self.config.active_workspace:
                 self.config.active_workspace = ws_name
                 self.config.save()
-                self.reload_workspace()
+                GLib.idle_add(self._on_header_reload_idle)
+
+    def _on_header_reload_idle(self):
+        self.reload_workspace()
+        return False
 
     def on_environment_setup_clicked(self, btn=None):
         dialog = EnvironmentSetupDialog(self)
