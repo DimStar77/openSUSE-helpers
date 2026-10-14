@@ -691,5 +691,72 @@ for path in sys.argv[1:]:
                 c = f.read()
             self.assertIn("- Rebase sle.patch.", c)
 
+
+    def test_rebase_patch_cli_multi_file_sequential_walkthrough(self):
+        """Tests that rebase_patch_cli handles patches touching multiple failing files via sequential walkthrough."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            src_dir = os.path.join(tmpdir, "pkg-1.0")
+            os.makedirs(src_dir)
+            with open(os.path.join(src_dir, "fileA.c"), "w") as f:
+                f.write("int a = 1;\nint b = 2;\n")
+            with open(os.path.join(src_dir, "fileB.c"), "w") as f:
+                f.write("int x = 10;\nint y = 20;\n")
+
+            tar_path = os.path.join(tmpdir, "pkg-1.0.tar.xz")
+            with tarfile.open(tar_path, "w:xz") as tf:
+                tf.add(src_dir, arcname="pkg-1.0")
+
+            # Patch touching both fileA and fileB with bad context
+            patch_path = os.path.join(tmpdir, "multi.patch")
+            with open(patch_path, "w") as f:
+                f.write("""--- a/fileA.c
++++ b/fileA.c
+@@ -1,2 +1,2 @@
+ wrong context A
+-int b = 2;
++int b = 200;
+--- a/fileB.c
++++ b/fileB.c
+@@ -1,2 +1,2 @@
+ wrong context B
+-int y = 20;
++int y = 2000;
+""")
+
+            with open(os.path.join(tmpdir, "pkg.spec"), "w") as f:
+                f.write("""Name: pkg
+Version: 1.0
+Source0: %{name}-%{version}.tar.xz
+Patch0: multi.patch
+""")
+
+            # Mock editor replaces in whatever file is passed to it
+            editor_script = os.path.join(tmpdir, "mock_multi_editor.py")
+            with open(editor_script, "w") as f:
+                f.write("""import sys
+for path in sys.argv[1:]:
+    if path.endswith("fileA.c"):
+        with open(path, "r") as f: c = f.read()
+        with open(path, "w") as f: f.write(c.replace("int b = 2;", "int b = 200;"))
+    elif path.endswith("fileB.c"):
+        with open(path, "r") as f: c = f.read()
+        with open(path, "w") as f: f.write(c.replace("int y = 20;", "int y = 2000;"))
+""")
+
+            orig_editor = os.environ.get("EDITOR")
+            try:
+                os.environ["EDITOR"] = f"python3 {editor_script}"
+                ok = rebase_patch_cli(tmpdir)
+                self.assertTrue(ok)
+            finally:
+                if orig_editor:
+                    os.environ["EDITOR"] = orig_editor
+                else:
+                    os.environ.pop("EDITOR", None)
+
+            # Both files should now apply cleanly in sequence
+            res_after = check_patches_sequential(tmpdir)
+            self.assertTrue(res_after["success"])
+
 if __name__ == '__main__':
     unittest.main()

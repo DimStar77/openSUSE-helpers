@@ -1153,25 +1153,43 @@ def rebase_patch_cli(
             subprocess.run([shell_env.get("SHELL", "/bin/bash")], cwd=tmpdir, env=shell_env)
         else:
             editor = get_default_editor(pkg_dir)
-            print(f"✏️  {CYAN}Opening editor ({editor}) to resolve rejected hunks.{RESET}")
-            print(f"   Save changes and close the editor when done.\n")
-
-            edit_targets = []
-            for sf in target_sources:
-                edit_targets.append(sf)
-                rf = sf + ".rej"
-                if os.path.exists(rf):
-                    edit_targets.append(rf)
-
             editor_parts = shlex.split(editor)
             editor_bin = os.path.basename(editor_parts[0]) if editor_parts else ""
 
-            if "vim" in editor_bin and len(edit_targets) >= 2:
-                cmd = editor_parts + ["-O", edit_targets[0], edit_targets[1]]
-            else:
-                cmd = editor_parts + (edit_targets[:1] if edit_targets else [tmpdir])
+            if rej_files:
+                # Group rejected hunks by failing source file
+                failing_pairs = []
+                for rf in rej_files:
+                    source_f = rf[:-4]
+                    if os.path.exists(source_f):
+                        failing_pairs.append((source_f, rf))
 
-            subprocess.run(cmd, cwd=tmpdir)
+                total_files = len(failing_pairs)
+                for idx, (sf, rf) in enumerate(failing_pairs, 1):
+                    rel_sf = os.path.relpath(sf, tmpdir)
+                    rel_rf = os.path.relpath(rf, tmpdir)
+                    if total_files > 1:
+                        print(f"✏️  {CYAN}[{idx}/{total_files}] Resolving {YELLOW}{rel_sf}{RESET} ({editor})...")
+                    else:
+                        print(f"✏️  {CYAN}Opening editor ({editor}) to resolve {YELLOW}{rel_sf}{RESET}...")
+                    print(f"   Save changes and close the editor when done.\n")
+
+                    if "vim" in editor_bin and os.path.exists(rf):
+                        cmd = editor_parts + ["-O", sf, rf]
+                    else:
+                        cmd = editor_parts + [sf]
+
+                    res_ed = subprocess.run(cmd, cwd=tmpdir)
+                    if res_ed.returncode != 0:
+                        print(f"{YELLOW}⚠️  Editor exited with status {res_ed.returncode}. Aborting rebase.{RESET}\n")
+                        return False
+            else:
+                print(f"✏️  {CYAN}Opening editor ({editor}) to review target file(s)...{RESET}\n")
+                targets = target_sources if target_sources else [tmpdir]
+                for sf in targets:
+                    res_ed = subprocess.run(editor_parts + [sf], cwd=tmpdir)
+                    if res_ed.returncode != 0:
+                        return False
 
         # Remove any leftover .rej and .orig files before diffing
         for f in glob.glob(os.path.join(tmpdir, "**", "*.rej"), recursive=True) + glob.glob(os.path.join(tmpdir, "**", "*.orig"), recursive=True):

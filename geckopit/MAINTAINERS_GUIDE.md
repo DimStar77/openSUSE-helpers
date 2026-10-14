@@ -307,7 +307,7 @@ geckopit-cli --rebase-patch --shell
 *   **Quiet SLE Summary & Failure Classification**: Differentiates hunk conflicts (`conflict`) from missing files (`missing_file`). Evaluates SLE-only patches (`Patch1000+`, distro conditionals) quietly without blocking openSUSE upgrades (`ℹ️  SLE status: X/Y apply cleanly`), with `--sle` and `--verbose` options for deep triage.
 *   **Unconditional SLE-Tagged Safety**: Ensures patches tagged `# PATCH-*-SLE` that are applied unconditionally across openSUSE in `%prep` remain classified as openSUSE patches and are verified in the primary run.
 *   **Resume After Rebase**: Re-run anytime after editing or refreshing a patch—runs in milliseconds without requiring directory teardowns or manual quilt setup resets.
-*   **Upgrade Pre-Flight & Rebase**: Integrated directly into `geckopit-cli --upgrade` and Cockpit update engines; suggests `geckopit-cli --rebase-patch` upon failure and automatically records `- Rebase FOO.patch.` in `*.changes`.
+*   **Upgrade Pre-Flight & Rebase**: Integrated directly into `geckopit-cli --upgrade` and Cockpit update engines; suggests `geckopit-cli --rebase-patch` upon failure, handles multi-file rebase conflicts via sequential `[1/N]` walkthroughs, and automatically records `- Rebase FOO.patch.` in `*.changes`.
 
 ### 🔍 4. Workspace Batch Audits
 From the workspace root directory, run parallel batch audits across all packages:
