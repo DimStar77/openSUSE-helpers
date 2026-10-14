@@ -221,8 +221,8 @@ def check_patches_sequential(
 ) -> Dict[str, Any]:
     """
     Sequentially tests downstream patches against the upstream source tree.
-    Halts immediately upon the first failing openSUSE patch, while logging SLE-only
-    patch issues informatively without blocking openSUSE upgrades.
+    Validates openSUSE patches in the primary sequential log, while testing SLE-only
+    patches quietly and summarizing them without noise.
     Returns a dictionary summarizing applied, failed, and skipped patches.
     """
     log = on_log or (lambda msg: None)
@@ -238,11 +238,15 @@ def check_patches_sequential(
             "applied": [],
             "failed_patch": None,
             "failure_reason": None,
+            "sle_status": {"total": 0, "clean": 0, "failed": 0, "failed_patches": []},
             "sle_issues": [],
             "error_message": None,
             "skipped": [],
             "source_type": "none"
         }
+
+    opensuse_patches = [p for p in patch_infos if not p.get("is_sle")]
+    sle_patches = [p for p in patch_infos if p.get("is_sle")]
 
     # 1. Check for OBS SCM upstream git repository
     service_file = os.path.join(pkg_dir, "_service")
@@ -267,7 +271,6 @@ def check_patches_sequential(
 
         if os.path.isdir(os.path.join(repo_dir, ".git")):
             applied = []
-            sle_issues = []
             failed_patch = None
             failure_reason = None
             error_message = None
@@ -276,22 +279,16 @@ def check_patches_sequential(
                 subprocess.run(["git", "-C", repo_dir, "reset", "--hard", "HEAD"], capture_output=True)
                 subprocess.run(["git", "-C", repo_dir, "clean", "-fd"], capture_output=True)
 
-                for idx, p_info in enumerate(patch_infos, 1):
+                for idx, p_info in enumerate(opensuse_patches, 1):
                     p = p_info["name"]
-                    is_sle = p_info.get("is_sle", False)
                     p_path = os.path.join(pkg_dir, p)
 
                     if not os.path.isfile(p_path):
-                        if is_sle:
-                            sle_issues.append({"patch": p, "reason": "missing_file", "error": f"Patch '{p}' missing on disk"})
-                            log(f"[{idx}/{len(patch_infos)}] ℹ️  {p} (SLE-only): File missing on disk (non-blocking for openSUSE)")
-                            continue
-                        else:
-                            failed_patch = p
-                            failure_reason = "missing_file"
-                            error_message = f"Patch file '{p}' does not exist on disk"
-                            log(f"[{idx}/{len(patch_infos)}] ❌ {p}: File missing on disk!")
-                            break
+                        failed_patch = p
+                        failure_reason = "missing_file"
+                        error_message = f"Patch file '{p}' does not exist on disk"
+                        log(f"[{idx}/{len(opensuse_patches)}] ❌ {p}: File missing on disk!")
+                        break
 
                     applied_cleanly = False
                     err_out = ""
@@ -307,41 +304,57 @@ def check_patches_sequential(
 
                     if applied_cleanly:
                         applied.append(p)
-                        tag = " (SLE-only)" if is_sle else ""
-                        log(f"[{idx}/{len(patch_infos)}] ✅ {p}{tag}: Applied cleanly")
+                        log(f"[{idx}/{len(opensuse_patches)}] ✅ {p}: Applied cleanly")
                     else:
                         p_targets = get_patch_target_files(p_path)
                         missing_targets = [tf for tf in p_targets if not os.path.exists(os.path.join(repo_dir, tf))]
                         reason = "missing_file" if missing_targets else "conflict"
+                        failed_patch = p
+                        failure_reason = reason
+                        error_message = err_out or "git apply returned non-zero"
+                        log(f"[{idx}/{len(opensuse_patches)}] ❌ {p}: Failed to apply!")
+                        if err_out:
+                            for l in err_out.splitlines()[:4]:
+                                log(f"    {l}")
+                        break
 
-                        if is_sle:
-                            sle_issues.append({"patch": p, "reason": reason, "error": err_out})
-                            r_msg = "target file absent" if reason == "missing_file" else "conflict"
-                            log(f"[{idx}/{len(patch_infos)}] ℹ️  {p} (SLE-only): Does not apply cleanly ({r_msg}, non-blocking for openSUSE)")
-                            if err_out:
-                                for l in err_out.splitlines()[:2]:
-                                    log(f"    {l}")
+                sle_clean = []
+                sle_failed = []
+                if failed_patch is None and sle_patches:
+                    for p_info in sle_patches:
+                        p = p_info["name"]
+                        p_path = os.path.join(pkg_dir, p)
+                        if not os.path.isfile(p_path):
+                            sle_failed.append(p)
+                            continue
+                        r_p1 = subprocess.run(["git", "-C", repo_dir, "apply", "-p1", p_path], capture_output=True, text=True)
+                        if r_p1.returncode == 0:
+                            sle_clean.append(p)
                         else:
-                            failed_patch = p
-                            failure_reason = reason
-                            error_message = err_out or "git apply returned non-zero"
-                            log(f"[{idx}/{len(patch_infos)}] ❌ {p}: Failed to apply!")
-                            if err_out:
-                                for l in err_out.splitlines()[:4]:
-                                    log(f"    {l}")
-                            break
+                            r_p0 = subprocess.run(["git", "-C", repo_dir, "apply", "-p0", p_path], capture_output=True, text=True)
+                            if r_p0.returncode == 0:
+                                sle_clean.append(p)
+                            else:
+                                sle_failed.append(p)
             finally:
                 subprocess.run(["git", "-C", repo_dir, "reset", "--hard", "HEAD"], capture_output=True)
                 subprocess.run(["git", "-C", repo_dir, "clean", "-fd"], capture_output=True)
 
-            skipped = [pi["name"] for pi in patch_infos[idx:]] if failed_patch else []
+            skipped = [pi["name"] for pi in opensuse_patches[idx:]] if failed_patch else []
+            sle_stat = {
+                "total": len(sle_patches),
+                "clean": len(sle_clean),
+                "failed": len(sle_failed),
+                "failed_patches": sle_failed
+            }
             return {
                 "success": failed_patch is None,
-                "total": len(patch_infos),
+                "total": len(opensuse_patches),
                 "applied": applied,
                 "failed_patch": failed_patch,
                 "failure_reason": failure_reason,
-                "sle_issues": sle_issues,
+                "sle_status": sle_stat,
+                "sle_issues": [{"patch": p, "reason": "conflict"} for p in sle_failed],
                 "error_message": error_message,
                 "skipped": skipped,
                 "source_type": "obs_scm",
@@ -352,16 +365,17 @@ def check_patches_sequential(
     archive_path = find_primary_source_archive(pkg_dir, spec_details)
 
     if not archive_path:
-        first_patch = patch_infos[0]["name"] if patch_infos else None
+        first_patch = opensuse_patches[0]["name"] if opensuse_patches else (patch_infos[0]["name"] if patch_infos else None)
         return {
             "success": False,
-            "total": len(patch_infos),
+            "total": len(opensuse_patches),
             "applied": [],
             "failed_patch": first_patch,
             "failure_reason": "missing_file",
+            "sle_status": {"total": len(sle_patches), "clean": 0, "failed": len(sle_patches), "failed_patches": [p["name"] for p in sle_patches]},
             "sle_issues": [],
             "error_message": "No source archive or upstream git clone found to test patches against.",
-            "skipped": [pi["name"] for pi in patch_infos[1:]] if len(patch_infos) > 1 else [],
+            "skipped": [pi["name"] for pi in opensuse_patches[1:]] if len(opensuse_patches) > 1 else [],
             "source_type": "none"
         }
     is_lfs, oid, size = parse_lfs_pointer(archive_path)
@@ -378,7 +392,6 @@ def check_patches_sequential(
             all_target_files.add(tf)
 
     applied = []
-    sle_issues = []
     failed_patch = None
     failure_reason = None
     error_message = None
@@ -398,16 +411,17 @@ def check_patches_sequential(
                                 if src_f:
                                     out_f.write(src_f.read())
             except Exception as e:
-                first_patch = patch_infos[0]["name"] if patch_infos else None
+                first_patch = opensuse_patches[0]["name"] if opensuse_patches else (patch_infos[0]["name"] if patch_infos else None)
                 return {
                     "success": False,
-                    "total": len(patch_infos),
+                    "total": len(opensuse_patches),
                     "applied": [],
                     "failed_patch": first_patch,
                     "failure_reason": "missing_file",
+                    "sle_status": {"total": len(sle_patches), "clean": 0, "failed": len(sle_patches), "failed_patches": [p["name"] for p in sle_patches]},
                     "sle_issues": [],
                     "error_message": f"Failed to extract target files from {os.path.basename(archive_path)}: {e}",
-                    "skipped": [pi["name"] for pi in patch_infos[1:]] if len(patch_infos) > 1 else [],
+                    "skipped": [pi["name"] for pi in opensuse_patches[1:]] if len(opensuse_patches) > 1 else [],
                     "source_type": "tarball",
                     "source_target": os.path.basename(archive_path)
                 }
@@ -468,22 +482,16 @@ def check_patches_sequential(
             subprocess.run(["git", "-C", tmpdir, "add", "."], check=True)
             subprocess.run(["git", "-C", tmpdir, "commit", "-q", "-m", "upstream", "--allow-empty"], check=True)
 
-            for idx, p_info in enumerate(patch_infos, 1):
+            for idx, p_info in enumerate(opensuse_patches, 1):
                 p = p_info["name"]
-                is_sle = p_info.get("is_sle", False)
                 p_path = os.path.join(pkg_dir, p)
 
                 if not os.path.isfile(p_path):
-                    if is_sle:
-                        sle_issues.append({"patch": p, "reason": "missing_file", "error": f"Patch '{p}' missing on disk"})
-                        log(f"[{idx}/{len(patch_infos)}] ℹ️  {p} (SLE-only): File missing on disk (non-blocking for openSUSE)")
-                        continue
-                    else:
-                        failed_patch = p
-                        failure_reason = "missing_file"
-                        error_message = f"Patch file '{p}' does not exist on disk"
-                        log(f"[{idx}/{len(patch_infos)}] ❌ {p}: File missing on disk!")
-                        break
+                    failed_patch = p
+                    failure_reason = "missing_file"
+                    error_message = f"Patch file '{p}' does not exist on disk"
+                    log(f"[{idx}/{len(opensuse_patches)}] ❌ {p}: File missing on disk!")
+                    break
 
                 applied_cleanly = False
                 err_out = ""
@@ -501,8 +509,7 @@ def check_patches_sequential(
                     subprocess.run(["git", "-C", tmpdir, "add", "."], check=True)
                     subprocess.run(["git", "-C", tmpdir, "commit", "-q", "-m", f"apply {p}", "--allow-empty"], check=True)
                     applied.append(p)
-                    tag = " (SLE-only)" if is_sle else ""
-                    log(f"[{idx}/{len(patch_infos)}] ✅ {p}{tag}: Applied cleanly")
+                    log(f"[{idx}/{len(opensuse_patches)}] ✅ {p}: Applied cleanly")
                 else:
                     p_targets = get_patch_target_files(p_path)
                     missing_targets = [
@@ -511,46 +518,73 @@ def check_patches_sequential(
                            not os.path.exists(os.path.join(tmpdir, tf.split('/', 1)[-1]))
                     ]
                     reason = "missing_file" if missing_targets else "conflict"
+                    failed_patch = p
+                    failure_reason = reason
+                    error_message = err_out or "patch apply failed"
+                    log(f"[{idx}/{len(opensuse_patches)}] ❌ {p}: Failed to apply!")
+                    if err_out:
+                        for l in err_out.splitlines()[:4]:
+                            log(f"    {l}")
+                    break
 
-                    if is_sle:
-                        sle_issues.append({"patch": p, "reason": reason, "error": err_out})
-                        r_msg = "target file absent" if reason == "missing_file" else "conflict"
-                        log(f"[{idx}/{len(patch_infos)}] ℹ️  {p} (SLE-only): Does not apply cleanly ({r_msg}, non-blocking for openSUSE)")
-                        if err_out:
-                            for l in err_out.splitlines()[:2]:
-                                log(f"    {l}")
+            # Quietly evaluate SLE-only patches if openSUSE patches succeeded
+            sle_clean = []
+            sle_failed = []
+            if failed_patch is None and sle_patches:
+                for p_info in sle_patches:
+                    p = p_info["name"]
+                    p_path = os.path.join(pkg_dir, p)
+                    if not os.path.isfile(p_path):
+                        sle_failed.append(p)
+                        continue
+
+                    applied_cleanly = False
+                    r_p1 = subprocess.run(["git", "-C", tmpdir, "apply", "-p1", p_path], capture_output=True, text=True)
+                    if r_p1.returncode == 0:
+                        applied_cleanly = True
                     else:
-                        failed_patch = p
-                        failure_reason = reason
-                        error_message = err_out or "patch apply failed"
-                        log(f"[{idx}/{len(patch_infos)}] ❌ {p}: Failed to apply!")
-                        if err_out:
-                            for l in err_out.splitlines()[:4]:
-                                log(f"    {l}")
-                        break
+                        r_p0 = subprocess.run(["git", "-C", tmpdir, "apply", "-p0", p_path], capture_output=True, text=True)
+                        if r_p0.returncode == 0:
+                            applied_cleanly = True
+
+                    if applied_cleanly:
+                        subprocess.run(["git", "-C", tmpdir, "add", "."], check=True)
+                        subprocess.run(["git", "-C", tmpdir, "commit", "-q", "-m", f"apply {p}", "--allow-empty"], check=True)
+                        sle_clean.append(p)
+                    else:
+                        sle_failed.append(p)
+
     except Exception as e:
-        first_patch = patch_infos[0]["name"] if patch_infos else None
+        first_patch = opensuse_patches[0]["name"] if opensuse_patches else (patch_infos[0]["name"] if patch_infos else None)
         return {
             "success": False,
-            "total": len(patch_infos),
+            "total": len(opensuse_patches),
             "applied": applied,
             "failed_patch": failed_patch or first_patch,
             "failure_reason": failure_reason or "conflict",
-            "sle_issues": sle_issues,
+            "sle_status": {"total": len(sle_patches), "clean": 0, "failed": len(sle_patches), "failed_patches": [p["name"] for p in sle_patches]},
+            "sle_issues": [{"patch": p["name"], "reason": "conflict"} for p in sle_patches],
             "error_message": f"Unexpected error during patch verification: {e}",
-            "skipped": [pi["name"] for pi in patch_infos[len(applied) + len(sle_issues):]],
+            "skipped": [pi["name"] for pi in opensuse_patches[idx:]] if failed_patch else [],
             "source_type": "tarball",
             "source_target": os.path.basename(archive_path)
         }
 
-    skipped = [pi["name"] for pi in patch_infos[idx:]] if failed_patch else []
+    skipped = [pi["name"] for pi in opensuse_patches[idx:]] if failed_patch else []
+    sle_stat = {
+        "total": len(sle_patches),
+        "clean": len(sle_clean),
+        "failed": len(sle_failed),
+        "failed_patches": sle_failed
+    }
     return {
         "success": failed_patch is None,
-        "total": len(patch_infos),
+        "total": len(opensuse_patches),
         "applied": applied,
         "failed_patch": failed_patch,
         "failure_reason": failure_reason,
-        "sle_issues": sle_issues,
+        "sle_status": sle_stat,
+        "sle_issues": [{"patch": p, "reason": "conflict"} for p in sle_failed],
         "error_message": error_message,
         "skipped": skipped,
         "source_type": "tarball",
@@ -575,26 +609,22 @@ def run_check_patches_cli(package_dir: str) -> bool:
     sle_count = sum(1 for p in patch_infos if p.get("is_sle", False))
     common_count = len(patch_infos) - sle_count
     if sle_count > 0:
-        print(f"  Patches in Spec: {len(patch_infos)} patch(es) declared ({common_count} openSUSE, {sle_count} SLE-only)")
+        print(f"  Patches: {common_count} openSUSE declared ({sle_count} SLE-only)")
     else:
-        print(f"  Patches in Spec: {len(patch_infos)} patch(es) declared")
+        print(f"  Patches: {common_count} openSUSE declared")
 
     res = check_patches_sequential(pkg_dir, on_log=lambda msg: print(f"  {msg}"))
 
     print(f"{BOLD}{'='*80}{RESET}")
     if res["success"]:
-        sle_issues = res.get("sle_issues", [])
-        if sle_count > 0:
-            sle_applied = len([p for p in patch_infos if p.get("is_sle") and p["name"] in res["applied"]])
-            print(f"{GREEN}🎉 All {common_count} openSUSE downstream patch(es) applied cleanly in sequence ({sle_applied}/{sle_count} SLE patches applied cleanly)!{RESET}")
-            if sle_issues:
-                print(f"{CYAN}ℹ️  Notice: {len(sle_issues)} SLE-only patch(es) did not apply cleanly (heads-up for SLE maintainers):{RESET}")
-                for item in sle_issues:
-                    r_info = f" ({item['reason']})" if item.get('reason') else ""
-                    print(f"   • {YELLOW}{item['patch']}{RESET}{r_info}")
-            print()
-        else:
-            print(f"{GREEN}🎉 All {res['total']} downstream patch(es) applied cleanly in sequence!{RESET}\n")
+        print(f"{GREEN}🎉 All {res['total']} openSUSE downstream patch(es) applied cleanly in sequence!{RESET}")
+        sle_stat = res.get("sle_status", {})
+        if sle_stat.get("total", 0) > 0:
+            if sle_stat["failed"] > 0:
+                print(f"{CYAN}ℹ️  SLE status: {sle_stat['clean']}/{sle_stat['total']} apply cleanly ({sle_stat['failed']} conflict against new upstream).{RESET}")
+            else:
+                print(f"{CYAN}ℹ️  SLE status: All {sle_stat['total']} SLE-only patch(es) apply cleanly.{RESET}")
+        print()
         return True
     else:
         print(f"{RED}⚠️  Sequential verification HALTED at '{res['failed_patch']}'!{RESET}")

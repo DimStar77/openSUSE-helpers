@@ -812,9 +812,12 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
                 else:
                     log(f"⚠️  Notice: Downstream patch '{p_res['failed_patch']}' fails to apply to {new_ver or rev}!")
                     log("   Run 'geckopit-cli --check-patches' to inspect and re-verify after rebasing.")
-            if p_res.get("sle_issues"):
-                for s_item in p_res["sle_issues"]:
-                    log(f"ℹ️  Info: SLE-only patch '{s_item['patch']}' does not apply cleanly to {new_ver or rev} (non-blocking for openSUSE).")
+            sle_stat = p_res.get("sle_status", {})
+            if sle_stat.get("total", 0) > 0:
+                if sle_stat["failed"] > 0:
+                    log(f"ℹ️  SLE status: {sle_stat['clean']}/{sle_stat['total']} apply cleanly ({sle_stat['failed']} conflict against new upstream).")
+                else:
+                    log(f"ℹ️  SLE status: All {sle_stat['total']} SLE-only patch(es) apply cleanly.")
         except Exception:
             pass
 
