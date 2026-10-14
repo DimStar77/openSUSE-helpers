@@ -389,5 +389,46 @@ Patch1001: sle.patch
 
             self.assertTrue(run_check_patches_cli(tmpdir, verbose=True))
 
+    def test_unconditional_patch_tagged_sle_is_checked_in_normal_run(self):
+        """Tests that an unconditionally applied patch tagged with # PATCH-*-SLE is checked as a normal blocking openSUSE patch."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tar_dir = os.path.join(tmpdir, "src")
+            os.makedirs(tar_dir)
+            with open(os.path.join(tar_dir, "file.txt"), "w") as f:
+                f.write("base line\n")
+
+            tar_path = os.path.join(tmpdir, "pkg-1.0.tar.xz")
+            with tarfile.open(tar_path, "w:xz") as tf:
+                tf.add(tar_dir, arcname="pkg-1.0")
+
+            # Patch has conflict
+            with open(os.path.join(tmpdir, "fix-bsc12345.patch"), "w") as f:
+                f.write("""--- a/file.txt
++++ b/file.txt
+@@ -1,1 +1,2 @@
+ wrong context
++added line
+""")
+
+            # Spec tags patch with # PATCH-FIX-SLE but applies it unconditionally (Patch1 < 1000, not in %if)
+            with open(os.path.join(tmpdir, "pkg.spec"), "w") as f:
+                f.write("""Name: pkg
+Version: 1.0
+Source0: %{name}-%{version}.tar.xz
+# PATCH-FIX-SLE fix-bsc12345.patch bsc#123456 -- Fix crash
+Patch1: fix-bsc12345.patch
+
+%prep
+%autosetup -p1
+""")
+
+            spec_details = get_spec_details(tmpdir)
+            self.assertFalse(spec_details["patches"][0]["is_sle"], "Unconditionally applied Patch1 must have is_sle=False")
+
+            res = check_patches_sequential(tmpdir)
+            self.assertFalse(res["success"], "Unconditional patch failure must halt verification as a blocking failure")
+            self.assertEqual(res["failed_patch"], "fix-bsc12345.patch")
+            self.assertEqual(res["sle_status"]["total"], 0, "No SLE-only patches should be registered")
+
 if __name__ == '__main__':
     unittest.main()

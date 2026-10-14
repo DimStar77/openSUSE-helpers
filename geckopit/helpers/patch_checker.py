@@ -68,7 +68,8 @@ def get_patch_target_files(patch_path: str) -> List[str]:
 def get_spec_details(package_dir: str) -> Dict[str, Any]:
     """
     Parses package .spec file to extract macros, Name, Version, Sources, and Patches.
-    Preserves declaration order, expands macros, and identifies SLE/conditional patch status.
+    Preserves declaration order, expands macros, and identifies SLE-only conditional patch status.
+    Unconditionally applied patches (even if tagged # PATCH-*-SLE) remain part of the normal openSUSE run.
     """
     spec_files = glob.glob(os.path.join(package_dir, "*.spec"))
     if not spec_files:
@@ -76,52 +77,68 @@ def get_spec_details(package_dir: str) -> Dict[str, Any]:
 
     macros: Dict[str, str] = {}
     sources: Dict[int, str] = {}
-    patches: List[Dict[str, Any]] = []
+    raw_patches: List[Dict[str, Any]] = []
+    sle_patch_nums = set()
+    sle_autopatch_min: Optional[int] = None
 
     re_macro = re.compile(r'^\s*%(?:define|global)\s+(\w+)\s+(.+)$', re.IGNORECASE)
     re_tag = re.compile(r'^\s*(Name|Version)\s*:\s*(.+)$', re.IGNORECASE)
     re_source = re.compile(r'^\s*Source(\d+)?\s*:\s*(\S+)', re.IGNORECASE)
     re_patch = re.compile(r'^\s*Patch(\d+)?\s*:\s*(\S+)', re.IGNORECASE)
+    re_section = re.compile(r'^\s*%(prep|build|install|check|clean|files|changelog|package|description)\b', re.IGNORECASE)
 
+    current_depth = 0
     in_sle_block = False
     sle_block_depth = 0
-    current_depth = 0
-    prev_comment = ""
+    in_prep = False
 
     try:
         with open(spec_files[0], 'r', encoding='utf-8', errors='ignore') as f:
             for line in f:
                 stripped = line.strip()
                 if stripped.startswith('#'):
-                    prev_comment += " " + stripped
                     continue
 
-                if re.match(r'^\s*%if', line, re.IGNORECASE):
+                m_sec = re_section.match(line)
+                if m_sec:
+                    sec_name = m_sec.group(1).lower()
+                    in_prep = (sec_name == "prep")
+
+                if re.match(r'^\s*%if\b', line, re.IGNORECASE):
                     current_depth += 1
-                    if re.search(r'%if\s+(?:!0%\{\?is_opensuse\}|0%\{\?sle_version\})', line, re.IGNORECASE):
+                    if re.search(r'%if\s+(?:!0%\{\?is_opensuse\}|0%\{\?sle_version\}|0%\{\?suse_version\}\s*<\s*1699)', line, re.IGNORECASE):
                         in_sle_block = True
                         sle_block_depth = current_depth
-                elif re.match(r'^\s*%endif', line, re.IGNORECASE):
+                elif re.match(r'^\s*%endif\b', line, re.IGNORECASE):
                     if in_sle_block and current_depth == sle_block_depth:
                         in_sle_block = False
                     current_depth = max(0, current_depth - 1)
 
+                if in_prep and in_sle_block:
+                    # Detect %patch -P <num> or %patch<num> applied under SLE conditions
+                    m_papply = re.search(r'%patch(?:(?:\s+-(?:P\s+|[a-zA-Z0-9]*P))(\d+)|\s+(\d+)|(\d+))', line)
+                    if m_papply:
+                        pnum = m_papply.group(1) or m_papply.group(2) or m_papply.group(3)
+                        if pnum:
+                            sle_patch_nums.add(int(pnum))
+                    # Detect %autopatch -m <num> under SLE conditions
+                    m_auto = re.search(r'%autopatch\b.*?-m\s+(\d+)', line)
+                    if m_auto:
+                        sle_autopatch_min = int(m_auto.group(1))
+
                 m_mac = re_macro.match(line)
                 if m_mac:
                     macros[m_mac.group(1)] = m_mac.group(2).strip()
-                    prev_comment = ""
                     continue
                 m_tag = re_tag.match(line)
                 if m_tag:
                     macros[m_tag.group(1).lower()] = m_tag.group(2).strip()
-                    prev_comment = ""
                     continue
                 m_src = re_source.match(line)
                 if m_src:
                     num_str = m_src.group(1)
                     s_num = int(num_str) if num_str is not None else 0
                     sources[s_num] = m_src.group(2).strip()
-                    prev_comment = ""
                     continue
                 m_p = re_patch.match(line)
                 if m_p:
@@ -129,20 +146,29 @@ def get_spec_details(package_dir: str) -> Dict[str, Any]:
                     p_num = int(num_str) if num_str is not None else 0
                     raw_name = m_p.group(2).strip()
                     expanded = expand_macros(raw_name, macros)
-                    is_sle = (
-                        p_num >= 1000 or
-                        in_sle_block or
-                        bool(re.search(r'PATCH-(?:FIX|FEATURE)-SLE', prev_comment, re.IGNORECASE))
-                    )
-                    patches.append({
+                    raw_patches.append({
                         "name": os.path.basename(expanded),
                         "num": p_num,
                         "raw": raw_name,
-                        "is_sle": is_sle
+                        "declared_in_sle_block": in_sle_block
                     })
-                    prev_comment = ""
     except Exception:
         pass
+
+    patches: List[Dict[str, Any]] = []
+    for rp in raw_patches:
+        is_sle = (
+            rp["num"] >= 1000 or
+            rp["declared_in_sle_block"] or
+            rp["num"] in sle_patch_nums or
+            (sle_autopatch_min is not None and rp["num"] >= sle_autopatch_min)
+        )
+        patches.append({
+            "name": rp["name"],
+            "num": rp["num"],
+            "raw": rp["raw"],
+            "is_sle": is_sle
+        })
 
     return {
         "name": macros.get("name", ""),
