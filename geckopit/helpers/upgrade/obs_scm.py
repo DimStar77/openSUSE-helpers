@@ -807,8 +807,14 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
             import patch_checker
             p_res = patch_checker.check_patches_sequential(self.package_dir)
             if not p_res["success"] and p_res["failed_patch"]:
-                log(f"⚠️  Notice: Downstream patch '{p_res['failed_patch']}' fails to apply to {new_ver or rev}!")
-                log("   Run 'geckopit-cli --check-patches' to inspect and re-verify after rebasing.")
+                if p_res.get("failure_reason") == "missing_file":
+                    log(f"ℹ️  Notice: Downstream patch '{p_res['failed_patch']}' targets unresolvable files in available archives (unverified).")
+                else:
+                    log(f"⚠️  Notice: Downstream patch '{p_res['failed_patch']}' fails to apply to {new_ver or rev}!")
+                    log("   Run 'geckopit-cli --check-patches' to inspect and re-verify after rebasing.")
+            if p_res.get("sle_issues"):
+                for s_item in p_res["sle_issues"]:
+                    log(f"ℹ️  Info: SLE-only patch '{s_item['patch']}' does not apply cleanly to {new_ver or rev} (non-blocking for openSUSE).")
         except Exception:
             pass
 

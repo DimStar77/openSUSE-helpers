@@ -234,5 +234,120 @@ Patch2: patch2.patch
             self.assertEqual(res["applied"], ["patch1.patch", "patch2.patch"])
             self.assertIsNone(res["failed_patch"])
 
+    def test_check_patches_sle_only_failure_is_non_blocking_info(self):
+        """Tests that SLE-only patch (Patch1000+) failures are non-blocking for openSUSE and captured in sle_issues."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # 1. Primary archive with file.txt
+            tar_dir = os.path.join(tmpdir, "src")
+            os.makedirs(tar_dir)
+            with open(os.path.join(tar_dir, "file.txt"), "w") as f:
+                f.write("openSUSE line 1\nline 2\n")
+
+            tar_path = os.path.join(tmpdir, "mytest-1.0.tar.xz")
+            with tarfile.open(tar_path, "w:xz") as tf:
+                tf.add(tar_dir, arcname="mytest-1.0")
+
+            # 2. Patch 1: openSUSE patch applies cleanly
+            p1_content = """--- a/file.txt
++++ b/file.txt
+@@ -1,2 +1,3 @@
+ openSUSE line 1
++openSUSE patch line
+ line 2
+"""
+            with open(os.path.join(tmpdir, "opensuse.patch"), "w") as f:
+                f.write(p1_content)
+
+            # 3. Patch 1001: SLE-only patch that conflicts
+            p1001_content = """--- a/file.txt
++++ b/file.txt
+@@ -1,2 +1,3 @@
+ non-existent line
++sle patch
+ line 2
+"""
+            with open(os.path.join(tmpdir, "sle-feature.patch"), "w") as f:
+                f.write(p1001_content)
+
+            # 4. Spec file declaring Patch1 (openSUSE) and Patch1001 (SLE-only)
+            spec_path = os.path.join(tmpdir, "mytest.spec")
+            with open(spec_path, "w") as f:
+                f.write("""Name: mytest
+Version: 1.0
+Source0: %{name}-%{version}.tar.xz
+Patch1: opensuse.patch
+# PATCH-FEATURE-SLE sle-feature.patch -- SLE only feature
+Patch1001: sle-feature.patch
+""")
+
+            res = check_patches_sequential(tmpdir)
+            self.assertTrue(res["success"], "openSUSE verification should succeed despite SLE patch conflict")
+            self.assertEqual(res["applied"], ["opensuse.patch"])
+            self.assertIsNone(res["failed_patch"])
+            self.assertEqual(len(res["sle_issues"]), 1)
+            self.assertEqual(res["sle_issues"][0]["patch"], "sle-feature.patch")
+            self.assertEqual(res["sle_issues"][0]["reason"], "conflict")
+
+            cli_ok = run_check_patches_cli(tmpdir)
+            self.assertTrue(cli_ok, "CLI pre-flight check should return True for openSUSE contributors")
+
+    def test_check_patches_distinguishes_conflict_and_missing_file(self):
+        """Tests failure_reason differentiation between hunk conflict on existing file vs missing target file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # 1. Primary archive with existing.c
+            tar_dir = os.path.join(tmpdir, "src")
+            os.makedirs(tar_dir)
+            with open(os.path.join(tar_dir, "existing.c"), "w") as f:
+                f.write("int x = 1;\n")
+
+            tar_path = os.path.join(tmpdir, "failtest-1.0.tar.xz")
+            with tarfile.open(tar_path, "w:xz") as tf:
+                tf.add(tar_dir, arcname="failtest-1.0")
+
+            # 2. Patch targeting existing file but with conflict
+            p_conflict = """--- a/existing.c
++++ b/existing.c
+@@ -1,1 +1,2 @@
+ int x = 999;
++int y = 2;
+"""
+            with open(os.path.join(tmpdir, "conflict.patch"), "w") as f:
+                f.write(p_conflict)
+
+            spec_path = os.path.join(tmpdir, "failtest.spec")
+            with open(spec_path, "w") as f:
+                f.write("""Name: failtest
+Version: 1.0
+Source0: %{name}-%{version}.tar.xz
+Patch1: conflict.patch
+""")
+
+            res_conflict = check_patches_sequential(tmpdir)
+            self.assertFalse(res_conflict["success"])
+            self.assertEqual(res_conflict["failed_patch"], "conflict.patch")
+            self.assertEqual(res_conflict["failure_reason"], "conflict")
+
+            # 3. Now test missing file patch
+            p_missing = """--- a/nonexistent.c
++++ b/nonexistent.c
+@@ -1,1 +1,2 @@
+ void func();
++void other();
+"""
+            with open(os.path.join(tmpdir, "missing.patch"), "w") as f:
+                f.write(p_missing)
+
+            with open(spec_path, "w") as f:
+                f.write("""Name: failtest
+Version: 1.0
+Source0: %{name}-%{version}.tar.xz
+Patch1: missing.patch
+""")
+
+            res_missing = check_patches_sequential(tmpdir)
+            self.assertFalse(res_missing["success"])
+            self.assertEqual(res_missing["failed_patch"], "missing.patch")
+            self.assertEqual(res_missing["failure_reason"], "missing_file")
+
 if __name__ == '__main__':
     unittest.main()
