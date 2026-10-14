@@ -8,6 +8,7 @@ with automatic dark/light mode support, and opens it in default browser.
 import os
 import sys
 import subprocess
+import re
 from typing import Optional
 
 try:
@@ -176,14 +177,59 @@ hr {{
 """
 
 
+def normalize_markdown_lists(text: str) -> str:
+    """
+    Ensures that bullet lists and numbered lists are preceded by a blank line
+    if they directly follow a paragraph line (CommonMark / GFM compatibility for Python-Markdown).
+    """
+    lines = text.splitlines()
+    out = []
+    in_code_block = False
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_code_block = not in_code_block
+            out.append(line)
+            continue
+
+        if not in_code_block and i > 0:
+            prev = lines[i - 1].strip()
+            is_list_item = (
+                stripped.startswith("* ") or
+                stripped.startswith("- ") or
+                stripped.startswith("+ ") or
+                bool(re.match(r"^\d+\.\s", stripped))
+            )
+            if is_list_item and prev and not (
+                prev.startswith("#") or
+                prev.startswith("* ") or
+                prev.startswith("- ") or
+                prev.startswith("+ ") or
+                bool(re.match(r"^\d+\.\s", prev)) or
+                prev.startswith("|") or
+                prev.startswith(">") or
+                prev.startswith("---") or
+                prev.startswith("===") or
+                prev == ""
+            ):
+                out.append("")
+
+        out.append(line)
+
+    return "\n".join(out)
+
+
 def render_markdown_to_html(md_text: str, title: str = "Geckopit User Guide") -> str:
     """Renders raw Markdown text into a complete, styled HTML document."""
     if not markdown:
         raise RuntimeError("python-markdown is required to compile documentation.")
 
+    clean_md = normalize_markdown_lists(md_text)
     md = markdown.Markdown(extensions=["tables", "fenced_code", "toc"])
-    body_html = md.convert(md_text)
+    body_html = md.convert(clean_md)
     return HTML_TEMPLATE.format(title=title, content=body_html)
+
 
 
 def get_doc_paths(base_dir: Optional[str] = None):

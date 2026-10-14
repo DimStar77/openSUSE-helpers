@@ -25,6 +25,7 @@ This guide is organized by packaging tasks. Each section provides dedicated, ste
 ## 🚀 1. Overview & Cockpit Layout
 
 Geckopit provides two complementary interfaces:
+
 * **Cockpit GUI (`geckopit`)**: A responsive desktop application with real-time multi-branch tracking, embedded terminal tabs, 1-click update/merge/PR actions, and syntax-highlighted code diffing.
 * **Terminal CLI (`geckopit-cli`)**: A fast command-line suite for single-package inspection, batch audits, headless upgrades, and whitespace-sanitized commits.
 
@@ -33,6 +34,7 @@ Geckopit provides two complementary interfaces:
 ![Geckopit Cockpit Layout Overview](./docs/images/figure1_cockpit_overview.png)
 
 The Cockpit is organized into four main functional regions:
+
 1. **HeaderBar**: Switch workspace profiles, run background multi-workspace sync, and adjust preferences.
 2. **Package Master Sidebar**: Search bar, linked filter toolbar, and real-time package list with status badges.
 3. **Detail Workspace**: Dual pipeline cards (`Stable` and `Unstable`), inline Meson drift repair, and code-diff viewer.
@@ -147,6 +149,7 @@ When an upstream project releases a new version, Geckopit automates the entire u
 fetching new sources ➔ bumping the version in `.spec` ➔ extracting upstream release notes ➔ wrapping changelog bullets at standard 79 columns ➔ dropping merged patches ➔ checking for Meson dependency bumps.
 
 Geckopit automatically adapts to how the package is maintained:
+
 * **Service-managed packages (`_service`)**: Fetches upstream Git commits, drops merged patches, and updates packaging metadata.
 * **Direct tarball packages (`.spec`)**: Reads downloaded source archives, extracts changelogs, and updates spec files.
 
@@ -216,6 +219,7 @@ geckopit-cli --rebase-patch --shell
 When a patch fails due to upstream refactoring or shifted context, running `quilt setup` creates messy `.pc` directories, unpacks gigabytes of archives, and requires manual copying and directory deletions.
 
 `geckopit-cli --rebase-patch` replaces the entire quilt workflow with a native, zero-setup Git scratch workspace:
+
 * **Auto-Targeting (openSUSE & SLE)**: Automatically detects the first failing openSUSE patch. If all openSUSE patches apply cleanly, it automatically falls through to target failing SLE patches (or explicitly via `--sle`).
 * **Preceding Patch Replay**: Sets up an ephemeral Git repository in `/tmp`, replaying preceding patches in `.spec` declaration order. For SLE patches, all openSUSE patches are replayed first, followed by any preceding clean SLE patches.
 * **Reject Triage**: Applies the target patch with rejected hunks (`.rej`) and displays them in full color in the terminal.
@@ -225,6 +229,7 @@ When a patch fails due to upstream refactoring or shifted context, running `quil
 * **Already-Merged Intelligence**: If the patch changes are already present upstream in reverse, it alerts you immediately that the patch has been merged and can be dropped from the `.spec` file.
 
 **Key Verification Principles**:
+
 * **Sequential Dependency Chaining**: Unlike isolated file checks, patches are applied sequentially (`Patch0` ➔ `Patch1` ➔ `Patch2`), allowing dependent patches to chain on top of earlier modifications.
 * **Halt at First Failure**: Like quilt, the engine immediately halts at the first failing openSUSE patch to prevent misleading cascade failures.
 * **Multi-Archive & Subproject Resolution**: Resolves primary source archives strictly from `.spec` declarations (`Source0` / `Source`) and macro expansions rather than filesystem timestamps. If downstream patches target files inside subprojects or vendor tarballs (e.g. `subprojects/gvc` in `gnome-shell`), matching members from declared secondary archives (`Source1`, `Source2`) are automatically unpacked into target directories before testing patches.
@@ -234,6 +239,7 @@ When a patch fails due to upstream refactoring or shifted context, running `quil
   ℹ️  SLE status: 4/10 apply cleanly (6 conflict against new upstream).
   ```
   Pass `--sle` or `--verbose` to view the exact failing files and diff traces for SLE patches.
+
 * **Unconditional SLE-Tagged Safety**: Patches preceded by `# PATCH-*-SLE` comments that are applied unconditionally across openSUSE in `%prep` remain classified as openSUSE patches and are verified in the primary blocking check.
 * **Resume After Rebase**: When a patch fails, simply edit and fix the patch in your editor, then re-run `geckopit-cli --check-patches`. The engine verifies in ~0.1s without needing directory teardowns, `.pc` deletions, or manual quilt resets!
 * **Automated Upgrade Integration**: `geckopit-cli --upgrade` automatically triggers this pre-flight check after dropping merged patches, immediately alerting you if any remaining downstream patch needs rebasing before you commit.
@@ -252,6 +258,7 @@ Upstream projects often bump minimum dependency constraints in `meson.build`, `C
    ```text
    ⚠️ Meson Drift: 1 unversioned  [🔧 Fix in .spec]
    ```
+
 2. Hover over the banner or right-click to view the exact requirements.
 3. Click **`🔧 Fix in .spec`**.
 4. Geckopit immediately updates the `BuildRequires:` declaration in the `.spec` file (or updates the corresponding `%define` macro if defined), appends the standard changelog entry (`- Update version dependencies according to meson.build.`), and refreshes the view.
@@ -344,6 +351,7 @@ geckopit-cli --merge-pr 24 --no-commit
 ```
 
 **Key PR Merge Capabilities**:
+
 * **Direct Origin Fetch**: Fetches `pull/<ID>/head` directly from `origin` without needing contributor fork URLs or commit SHAs.
 * **Fast-Forward & Signature Preservation**: When HEAD is an ancestor of the PR (such as promoting `next ➔ factory` or applying a clean contributor branch), merges using `git merge --ff-only`, preserving 100% of original commit hashes, attribution, and existing GPG signatures without prompting for maintainer keys. For non-fast-forward merges, creates clean merge commits with PR commits intact as Parent 2 in Git history.
 * **Locale-Independent Changelog Engine**: Parses and redates openSUSE `.changes` headers (`LC_ALL=POSIX date`) using explicit English weekday and month tables, ensuring date ordering validation and redated headers are 100% immune to regional desktop locale settings (e.g. `de_CH.UTF-8`).
@@ -417,6 +425,7 @@ geckopit-cli --commit --no-edit
 ```
 
 **Defensive Protections:**
+
 * Automatically strips trailing whitespace from modified `.spec`, `.changes`, and packaging files before staging.
 * Stages only packaging files and source services, ignoring untracked build artifacts, cloned upstream directories, and temporary review logs.
 * Extracts newly added entries from `*.changes` and pre-populates your `$EDITOR` commit template.
@@ -452,6 +461,7 @@ Power users never need to reach for the mouse. Geckopit provides full keyboard c
 ## 🛠️ Appendix: Packaging Environment Setup & Onboarding
 
 When setting up Geckopit on a new machine, laptop, or Flatpak installation, four developer pillars must be configured to fetch sources, manage pull requests, and commit changes:
+
 1. **Git Identity**: Your `user.name` and `user.email` used in commit headers.
 2. **SSH Authentication**: An SSH keypair and authenticated connection to `gitea@src.opensuse.org`.
 3. **Open Build Service (OBS)**: Your openSUSE credentials in `~/.config/osc/oscrc`.
