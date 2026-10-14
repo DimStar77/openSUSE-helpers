@@ -63,27 +63,56 @@ def check_spec_collisions(spec_path: str) -> List[str]:
     except Exception:
         return []
 
+ENGLISH_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+ENGLISH_MONTHS = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+MONTH_MAP = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
 def parse_changelog_date(header: str) -> Optional[datetime.datetime]:
-    """Parses standard openSUSE .changes header timestamp into a datetime object."""
+    """
+    Parses standard openSUSE .changes header timestamp into a datetime object.
+    Decodes English month names and numeric time tokens explicitly so parsing is
+    100% immune to regional desktop locale settings (e.g. LC_TIME).
+    """
     parts = header.split(" - ", 1)
     if len(parts) < 2:
         parts = header.split("- ", 1)
     date_str = parts[0].strip()
     clean_date = re.sub(r'\s+', ' ', date_str)
     tokens = clean_date.split()
+
     if len(tokens) >= 5:
+        mon_str = tokens[1].lower()
+        if mon_str in MONTH_MAP:
+            try:
+                month = MONTH_MAP[mon_str]
+                day = int(tokens[2])
+                year = int(tokens[-1])
+                time_parts = [int(p) for p in tokens[3].split(":")]
+                hour = time_parts[0]
+                minute = time_parts[1] if len(time_parts) > 1 else 0
+                second = time_parts[2] if len(time_parts) > 2 else 0
+                return datetime.datetime(year, month, day, hour, minute, second)
+            except (ValueError, IndexError):
+                pass
+
+    if len(tokens) == 4 and tokens[1].lower() in MONTH_MAP:
         try:
-            if len(tokens) == 6:
-                no_tz = f"{tokens[0]} {tokens[1]} {tokens[2]} {tokens[3]} {tokens[5]}"
-            else:
-                no_tz = " ".join(tokens[:5])
-            return datetime.datetime.strptime(no_tz, "%a %b %d %H:%M:%S %Y")
+            month = MONTH_MAP[tokens[1].lower()]
+            day = int(tokens[2])
+            year = int(tokens[3])
+            return datetime.datetime(year, month, day, 0, 0, 0)
+        except (ValueError, IndexError):
+            pass
+
+    if len(clean_date) >= 10 and clean_date[4] == '-' and clean_date[7] == '-':
+        try:
+            return datetime.datetime.strptime(clean_date[:10], "%Y-%m-%d")
         except Exception:
             pass
-    try:
-        return datetime.datetime.strptime(clean_date[:10], "%Y-%m-%d")
-    except Exception:
-        pass
+
     return None
 
 def is_changes_chronologically_sorted(content: str) -> bool:
@@ -107,9 +136,15 @@ def is_changes_chronologically_sorted(content: str) -> bool:
     return True
 
 def redate_entry_header(header: str, timestamp_sec: float) -> str:
-    """Replaces the entry timestamp in header with formatted system time."""
+    """
+    Replaces the entry timestamp in header with formatted system time in standard
+    openSUSE changelog format (matching 'LC_ALL=POSIX date', immune to system locale).
+    """
     struct_time = time.localtime(timestamp_sec)
-    new_dt_str = time.strftime('%a %b %e %H:%M:%S %Z %Y', struct_time)
+    day_name = ENGLISH_DAYS[struct_time.tm_wday]
+    mon_name = ENGLISH_MONTHS[struct_time.tm_mon]
+    tz_name = time.strftime('%Z', struct_time) or "UTC"
+    new_dt_str = f"{day_name} {mon_name} {struct_time.tm_mday:2d} {struct_time.tm_hour:02d}:{struct_time.tm_min:02d}:{struct_time.tm_sec:02d} {tz_name} {struct_time.tm_year}"
     parts = header.split(" - ", 1)
     if len(parts) == 2:
         return f"{new_dt_str} - {parts[1]}"

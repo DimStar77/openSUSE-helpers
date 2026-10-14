@@ -7,7 +7,7 @@ import subprocess
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'helpers'))
-from pr_helper import check_spec_collisions, get_pr_commits, merge_pull_request, is_changes_chronologically_sorted, fix_changes_chronological_order
+from pr_helper import check_spec_collisions, get_pr_commits, merge_pull_request, is_changes_chronologically_sorted, fix_changes_chronological_order, parse_changelog_date, redate_entry_header
 
 class TestPrHelper(unittest.TestCase):
 
@@ -335,6 +335,43 @@ Tue Oct  6 12:00:00 UTC 2026 - B <b@example.com>
         fixed = fix_changes_chronological_order(unsorted)
         self.assertTrue(is_changes_chronologically_sorted(fixed))
         self.assertIn("Newer entry below", fixed)
+
+
+    def test_parse_and_redate_changelog_date_locale_independence(self):
+        """Tests that parse_changelog_date and redate_entry_header remain correct regardless of system locale."""
+        import locale
+        orig_locale = locale.getlocale(locale.LC_TIME)
+        try:
+            for loc in ['de_CH.UTF-8', 'de_DE.UTF-8', 'fr_FR.UTF-8', 'C']:
+                try:
+                    locale.setlocale(locale.LC_ALL, loc)
+                    break
+                except Exception:
+                    continue
+
+            header_utc = "Fri Oct  2 12:00:00 UTC 2026 - Contributor <contrib@example.com>"
+            dt = parse_changelog_date(header_utc)
+            self.assertIsNotNone(dt)
+            self.assertEqual(dt.year, 2026)
+            self.assertEqual(dt.month, 10)
+            self.assertEqual(dt.day, 2)
+            self.assertEqual(dt.hour, 12)
+
+            header_cest = "Wed Sep 30 18:51:33 CEST 2026 - Maintainer <maint@example.com>"
+            dt_cest = parse_changelog_date(header_cest)
+            self.assertIsNotNone(dt_cest)
+            self.assertEqual(dt_cest.year, 2026)
+            self.assertEqual(dt_cest.month, 9)
+            self.assertEqual(dt_cest.day, 30)
+
+            redated = redate_entry_header(header_utc, 1790942400)
+            self.assertIn("Oct", redated)
+            self.assertIn("Contributor <contrib@example.com>", redated)
+        finally:
+            try:
+                locale.setlocale(locale.LC_ALL, orig_locale)
+            except Exception:
+                pass
 
 if __name__ == '__main__':
     unittest.main()
