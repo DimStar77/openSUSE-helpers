@@ -338,6 +338,55 @@ def check_patches_sequential(
                     "source_target": os.path.basename(archive_path)
                 }
 
+            # Secondary archives: locate any target files not present in the primary archive
+            # (e.g. git submodules or vendor tarballs placed into subprojects/ during %prep)
+            missing_targets = [
+                t for t in all_target_files
+                if '/' in t and not os.path.exists(os.path.join(tmpdir, t))
+            ]
+
+            if missing_targets:
+                all_archives = glob.glob(os.path.join(pkg_dir, "*.tar.*")) +                                glob.glob(os.path.join(pkg_dir, "*.obscpio")) +                                glob.glob(os.path.join(pkg_dir, "*.zip"))
+                secondary_archives = [
+                    a for a in all_archives
+                    if os.path.abspath(a) != os.path.abspath(archive_path)
+                ]
+
+                for sec_arch in secondary_archives:
+                    if not missing_targets:
+                        break
+                    sec_path = sec_arch
+                    sec_lfs, s_oid, s_size = parse_lfs_pointer(sec_path)
+                    if sec_lfs:
+                        s_loc = find_local_lfs_object(pkg_dir, s_oid)
+                        if s_loc:
+                            sec_path = s_loc
+
+                    try:
+                        if tarfile.is_tarfile(sec_path):
+                            with tarfile.open(sec_path, mode="r:*") as stf:
+                                for member in stf.getmembers():
+                                    if not member.isfile():
+                                        continue
+                                    m_parts = member.name.split("/", 1)
+                                    m_rel = m_parts[1] if len(m_parts) > 1 else m_parts[0]
+                                    m_base = os.path.basename(member.name)
+
+                                    for target in list(missing_targets):
+                                        t_base = os.path.basename(target)
+                                        if m_rel == target or target.endswith(m_rel) or (m_base == t_base and len(m_base) > 3):
+                                            dest = os.path.join(tmpdir, target)
+                                            if not os.path.exists(dest):
+                                                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                                                with open(dest, "wb") as out_f:
+                                                    src_f = stf.extractfile(member)
+                                                    if src_f:
+                                                        out_f.write(src_f.read())
+                                                if target in missing_targets:
+                                                    missing_targets.remove(target)
+                    except Exception:
+                        pass
+
             # Initialize a temporary git repository so git apply handles hunks accurately
             subprocess.run(["git", "-C", tmpdir, "init", "-q"], check=True)
             subprocess.run(["git", "-C", tmpdir, "config", "user.name", "Test"], check=True)

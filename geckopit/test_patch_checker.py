@@ -175,5 +175,64 @@ Patch1: patch1.patch
             self.assertTrue(res["success"])
             self.assertEqual(res["applied"], ["patch1.patch"])
 
+    def test_check_patches_multi_archive_subproject_resolution(self):
+        """Tests that patch targets in subprojects/ are populated from secondary archives (e.g. gitmodules)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # 1. Primary archive with main.c
+            main_dir = os.path.join(tmpdir, "main_src")
+            os.makedirs(main_dir)
+            with open(os.path.join(main_dir, "main.c"), "w") as f:
+                f.write("int main() { return 0; }\n")
+
+            primary_tar = os.path.join(tmpdir, "myprogram-1.0.tar.xz")
+            with tarfile.open(primary_tar, "w:xz") as tf:
+                tf.add(main_dir, arcname="myprogram-1.0")
+
+            # 2. Secondary gitmodule archive with subproject file
+            sub_dir = os.path.join(tmpdir, "sub_src")
+            os.makedirs(sub_dir)
+            with open(os.path.join(sub_dir, "helper.c"), "w") as f:
+                f.write("void helper() {}\n")
+
+            sub_tar = os.path.join(tmpdir, "submodule-0.gitmodule.tar.xz")
+            with tarfile.open(sub_tar, "w:xz") as tf:
+                tf.add(sub_dir, arcname="submodule-0.gitmodule")
+
+            # 3. Patch 1 for primary file
+            p1_content = """--- a/main.c
++++ b/main.c
+@@ -1,1 +1,2 @@
++/* patch1 */
+ int main() { return 0; }
+"""
+            with open(os.path.join(tmpdir, "patch1.patch"), "w") as f:
+                f.write(p1_content)
+
+            # 4. Patch 2 for subproject file placed at subprojects/sub/helper.c
+            p2_content = """--- a/subprojects/sub/helper.c
++++ b/subprojects/sub/helper.c
+@@ -1,1 +1,2 @@
++/* patch2 */
+ void helper() {}
+"""
+            with open(os.path.join(tmpdir, "patch2.patch"), "w") as f:
+                f.write(p2_content)
+
+            # 5. Spec file declaring both sources and both patches
+            spec_path = os.path.join(tmpdir, "myprogram.spec")
+            with open(spec_path, "w") as f:
+                f.write("""Name: myprogram
+Version: 1.0
+Source0: %{name}-%{version}.tar.xz
+Source1: submodule-0.gitmodule.tar.xz
+Patch1: patch1.patch
+Patch2: patch2.patch
+""")
+
+            res = check_patches_sequential(tmpdir)
+            self.assertTrue(res["success"])
+            self.assertEqual(res["applied"], ["patch1.patch", "patch2.patch"])
+            self.assertIsNone(res["failed_patch"])
+
 if __name__ == '__main__':
     unittest.main()
