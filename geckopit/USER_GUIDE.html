@@ -350,7 +350,28 @@ geckopit-cli webkitgtk --check-patches
 # Display detailed SLE patch conflict traces beneath the summary
 geckopit-cli --check-patches --sle
 geckopit-cli --check-patches --verbose
+
+# Interactively rebase a failing downstream patch in-place without quilt
+geckopit-cli --rebase-patch
+
+# Target a specific patch by name
+geckopit-cli --rebase-patch g-s-d-skip-donation.patch
+
+# Rebase failing SLE patches (or auto-targets SLE if openSUSE patches are clean)
+geckopit-cli --rebase-patch --sle
+
+# Or drop into a scratch subshell instead of launching an editor
+geckopit-cli --rebase-patch --shell
 </code></pre>
+<h3 id="interactive-patch-rebaser-rebase-patch">🔧 Interactive Patch Rebaser (<code>--rebase-patch</code>)</h3>
+<p>When a patch fails due to upstream refactoring or shifted context, running <code>quilt setup</code> creates messy <code>.pc</code> directories, unpacks gigabytes of archives, and requires manual copying and directory deletions.</p>
+<p><code>geckopit-cli --rebase-patch</code> replaces the entire quilt workflow with a native, zero-setup Git scratch workspace:
+* <strong>Auto-Targeting (openSUSE &amp; SLE)</strong>: Automatically detects the first failing openSUSE patch. If all openSUSE patches apply cleanly, it automatically falls through to target failing SLE patches (or explicitly via <code>--sle</code>).
+* <strong>Preceding Patch Replay</strong>: Sets up an ephemeral Git repository in <code>/tmp</code>, replaying preceding patches in <code>.spec</code> declaration order. For SLE patches, all openSUSE patches are replayed first, followed by any preceding clean SLE patches.
+* <strong>Reject Triage</strong>: Applies the target patch with rejected hunks (<code>.rej</code>) and displays them in full color in the terminal.
+* <strong>Git-Identical Editor Resolution</strong>: Launches your editor following Git's exact 5-tier resolution order (<code>$GIT_EDITOR</code> ➔ <code>core.editor</code> ➔ <code>$VISUAL</code> ➔ <code>$EDITOR</code> ➔ <code>vi</code>/<code>vim</code>), opening <code>vim -O file.c file.c.rej</code> side-by-side when using Vim. If <code>--shell</code> is supplied, drops into an interactive scratch subshell.
+* <strong>In-Place Update &amp; Changelog Recording</strong>: Automatically captures <code>git diff</code>, preserves the original patch header / description / bug references (<code>bsc#...</code>), updates the patch file on disk, records <code>- Rebase {patch}.</code> in <code>*.changes</code> (cleanly appending to an in-flight upgrade entry or invoking <code>osc vc</code>), runs <code>geckopit-cli --check-patches</code>, and cleans up all scratch files.
+* <strong>Already-Merged Intelligence</strong>: If the patch changes are already present upstream in reverse, it alerts you immediately that the patch has been merged and can be dropped from the <code>.spec</code> file.</p>
 <p><strong>Key Verification Principles</strong>:
 * <strong>Sequential Dependency Chaining</strong>: Unlike isolated file checks, patches are applied sequentially (<code>Patch0</code> ➔ <code>Patch1</code> ➔ <code>Patch2</code>), allowing dependent patches to chain on top of earlier modifications.
 * <strong>Halt at First Failure</strong>: Like quilt, the engine immediately halts at the first failing openSUSE patch to prevent misleading cascade failures.

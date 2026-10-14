@@ -1020,6 +1020,7 @@ KNOWN_OPTIONS = {
     "--todo",
     "--upgrade", "-u",
     "--check-patches", "--verbose", "--sle",
+    "--rebase-patch", "--shell",
     "--commit", "-c", "--no-edit",
     "--audit-deps", "-d", "--fix-deps",
     "--list-prs", "--merge-pr", "--squash", "--no-commit",
@@ -1080,6 +1081,8 @@ def print_help():
     print("                     Upgrades package to specified revision (default: @PARENT_TAG@).")
     print(f"  {sb.BOLD}--check-patches{sb.RESET}    Sequentially verifies downstream patches apply against upstream source.")
     print(f"  {sb.BOLD}--verbose, --sle{sb.RESET}   With --check-patches, displays detailed SLE patch conflict breakdown.")
+    print(f"  {sb.BOLD}--rebase-patch [NAME]{sb.RESET} Interactively rebases a failing downstream patch against upstream sources.")
+    print(f"  {sb.BOLD}--shell{sb.RESET}               With --rebase-patch, drops into a scratch subshell instead of launching $EDITOR.")
     print(f"  {sb.BOLD}-c, --commit{sb.RESET}       Stages packaging files, cleans whitespaces, and commits via $EDITOR.")
     print(f"  {sb.BOLD}-d, --audit-deps{sb.RESET}   Audits upstream build dependencies against .spec BuildRequires.")
     print(f"  {sb.BOLD}--fix-deps{sb.RESET}         Bumps .spec BuildRequires to match upstream build files and logs changes.")
@@ -1227,6 +1230,25 @@ def main():
             sys.exit(1)
         verbose = "--verbose" in sys.argv or "--sle" in sys.argv
         sys.exit(0 if patch_checker.run_check_patches_cli(target_pkg_dir, verbose=verbose) else 1)
+
+    # Execute rebase-patch mode
+    if any(arg == "--rebase-patch" or arg.startswith("--rebase-patch=") for arg in sys.argv):
+        if not target_pkg_dir:
+            print(f"{sb.RED}[Error]{sb.RESET} --rebase-patch must be run inside a package directory (or target a package).", file=sys.stderr)
+            sys.exit(1)
+        patch_arg = None
+        for i, a in enumerate(sys.argv):
+            if a.startswith("--rebase-patch="):
+                patch_arg = a.split("=", 1)[1].strip()
+            elif a == "--rebase-patch" and i + 1 < len(sys.argv) and not sys.argv[i + 1].startswith("-"):
+                val = sys.argv[i + 1]
+                if target_arg and val == target_arg and i + 2 < len(sys.argv) and not sys.argv[i + 2].startswith("-"):
+                    patch_arg = sys.argv[i + 2]
+                elif val != target_arg:
+                    patch_arg = val
+        shell_mode = "--shell" in sys.argv
+        sle_mode = "--sle" in sys.argv
+        sys.exit(0 if patch_checker.rebase_patch_cli(target_pkg_dir, patch_name=patch_arg, shell_mode=shell_mode, sle_mode=sle_mode) else 1)
 
     # Execute list-prs mode
     if "--list-prs" in sys.argv:

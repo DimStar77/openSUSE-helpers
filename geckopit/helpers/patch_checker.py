@@ -15,6 +15,8 @@ import glob
 import tarfile
 import tempfile
 import subprocess
+import shlex
+import shutil
 from typing import Optional, List, Dict, Any, Callable
 
 # Ensure terminal colors if available
@@ -305,6 +307,8 @@ def check_patches_sequential(
             try:
                 subprocess.run(["git", "-C", repo_dir, "reset", "--hard", "HEAD"], capture_output=True)
                 subprocess.run(["git", "-C", repo_dir, "clean", "-fd"], capture_output=True)
+                subprocess.run(["git", "-C", repo_dir, "submodule", "foreach", "--recursive", "git", "reset", "--hard", "HEAD"], capture_output=True)
+                subprocess.run(["git", "-C", repo_dir, "submodule", "foreach", "--recursive", "git", "clean", "-fd"], capture_output=True)
 
                 for idx, p_info in enumerate(opensuse_patches, 1):
                     p = p_info["name"]
@@ -333,6 +337,17 @@ def check_patches_sequential(
                         applied.append(p)
                         log(f"[{idx}/{len(opensuse_patches)}] ✅ {p}: Applied cleanly")
                     else:
+                        # Check if patch is already merged upstream in reverse
+                        rev_check = subprocess.run(["git", "-C", repo_dir, "apply", "-R", "--check", "-p1", p_path], capture_output=True)
+                        if rev_check.returncode != 0:
+                            rev_check = subprocess.run(["git", "-C", repo_dir, "apply", "-R", "--check", "-p0", p_path], capture_output=True)
+                        if rev_check.returncode == 0:
+                            failed_patch = p
+                            failure_reason = "already_merged"
+                            error_message = f"Patch '{p}' is already merged upstream"
+                            log(f"[{idx}/{len(opensuse_patches)}] ℹ️  {p}: Already merged upstream (can be dropped)")
+                            break
+
                         p_targets = get_patch_target_files(p_path)
                         missing_targets = [tf for tf in p_targets if not os.path.exists(os.path.join(repo_dir, tf))]
                         reason = "missing_file" if missing_targets else "conflict"
@@ -390,6 +405,8 @@ def check_patches_sequential(
             finally:
                 subprocess.run(["git", "-C", repo_dir, "reset", "--hard", "HEAD"], capture_output=True)
                 subprocess.run(["git", "-C", repo_dir, "clean", "-fd"], capture_output=True)
+                subprocess.run(["git", "-C", repo_dir, "submodule", "foreach", "--recursive", "git", "reset", "--hard", "HEAD"], capture_output=True)
+                subprocess.run(["git", "-C", repo_dir, "submodule", "foreach", "--recursive", "git", "clean", "-fd"], capture_output=True)
 
             skipped = [pi["name"] for pi in opensuse_patches[idx:]] if failed_patch else []
             sle_stat = {
@@ -563,6 +580,17 @@ def check_patches_sequential(
                     applied.append(p)
                     log(f"[{idx}/{len(opensuse_patches)}] ✅ {p}: Applied cleanly")
                 else:
+                    # Check if patch is already merged upstream in reverse
+                    rev_check = subprocess.run(["git", "-C", tmpdir, "apply", "-R", "--check", "-p1", p_path], capture_output=True)
+                    if rev_check.returncode != 0:
+                        rev_check = subprocess.run(["git", "-C", tmpdir, "apply", "-R", "--check", "-p0", p_path], capture_output=True)
+                    if rev_check.returncode == 0:
+                        failed_patch = p
+                        failure_reason = "already_merged"
+                        error_message = f"Patch '{p}' is already merged upstream"
+                        log(f"[{idx}/{len(opensuse_patches)}] ℹ️  {p}: Already merged upstream (can be dropped)")
+                        break
+
                     p_targets = get_patch_target_files(p_path)
                     missing_targets = [
                         tf for tf in p_targets
@@ -708,14 +736,478 @@ def run_check_patches_cli(package_dir: str, verbose: bool = False) -> bool:
                                 print(f"      {DIM}{l}{RESET}")
             else:
                 print(f"{CYAN}ℹ️  SLE status: All {sle_stat['total']} SLE-only patch(es) apply cleanly.{RESET}")
+
+        if sle_stat.get("failed", 0) > 0:
+            print(f"💡 {CYAN}To rebase failing SLE patch(es):{RESET}")
+            print(f"     {BOLD}geckopit-cli --rebase-patch --sle{RESET}")
         print()
         return True
     else:
-        print(f"{RED}⚠️  Sequential verification HALTED at '{res['failed_patch']}'!{RESET}")
+        if res.get("failure_reason") == "already_merged":
+            print(f"{YELLOW}ℹ️  Sequential verification HALTED at '{res['failed_patch']}' (Already Merged Upstream)!{RESET}")
+            print(f"💡 {GREEN}The changes from '{res['failed_patch']}' are already present in the upstream release.{RESET}")
+            print(f"   You can safely drop this patch from {pkg_name}.spec and delete the file.\n")
+        else:
+            print(f"{RED}⚠️  Sequential verification HALTED at '{res['failed_patch']}'!{RESET}")
         if res["applied"]:
             print(f"   • Successfully applied: {', '.join(res['applied'])}")
         if res["skipped"]:
             print(f"   • Skipped pending: {', '.join(res['skipped'])}")
         print(f"\n{CYAN}ℹ️  To re-verify after rebasing, simply re-run:{RESET}")
         print(f"     {BOLD}geckopit-cli --check-patches{RESET}\n")
+        print(f"💡 {CYAN}Or rebase interactively without quilt:{RESET}")
+        print(f"     {BOLD}geckopit-cli --rebase-patch {res['failed_patch']}{RESET}\n")
         return False
+
+def record_patch_rebase_changelog(package_dir: str, patch_name: str) -> bool:
+    """
+    Records a '- Rebase {patch_name}.' entry in the package's .changes file.
+    If the .changes file currently has an uncommitted entry from an in-flight upgrade,
+    the bullet is cleanly appended to the active top entry. Otherwise, runs 'osc vc -m'.
+    """
+    changes_files = glob.glob(os.path.join(package_dir, "*.changes"))
+    if not changes_files:
+        return False
+    changes_path = os.path.abspath(changes_files[0])
+    bullet = f"- Rebase {patch_name}."
+
+    try:
+        with open(changes_path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+
+        # Prevent duplicate entries if user re-runs rebase
+        if bullet in content or f"- Rebase {patch_name}:" in content or f"- Rebased {patch_name}" in content:
+            return True
+
+        # Check if .changes is currently modified in git (e.g. from an in-flight --upgrade)
+        is_dirty = False
+        try:
+            res = subprocess.run(
+                ["git", "-C", package_dir, "status", "--porcelain", os.path.basename(changes_path)],
+                capture_output=True, text=True
+            )
+            if res.stdout.strip():
+                is_dirty = True
+        except Exception:
+            pass
+
+        if is_dirty:
+            # Append to current top entry
+            parts = content.split("-------------------------------------------------------------------\n")
+            for i in range(len(parts)):
+                if parts[i].strip():
+                    entry = parts[i].rstrip()
+                    parts[i] = entry + "\n" + bullet + "\n\n"
+                    break
+            new_content = "-------------------------------------------------------------------\n".join(parts)
+            with open(changes_path, "w", encoding="utf-8") as f:
+                f.write(new_content)
+            print(f"📝 Appended '{bullet}' to active changelog entry in {os.path.basename(changes_path)}")
+            return True
+
+        # Standalone rebase: try osc vc first
+        try:
+            r = subprocess.run(
+                ["osc", "vc", "-m", f"Rebase {patch_name}."],
+                cwd=package_dir, capture_output=True, text=True
+            )
+            if r.returncode == 0:
+                print(f"📝 Recorded changelog entry via 'osc vc': {bullet}")
+                return True
+        except Exception:
+            pass
+
+        # Fallback to direct prepending
+        import datetime
+        now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%a %b %d %H:%M:%S UTC %Y")
+        user_name = os.environ.get("USER", "maintainer")
+        user_email = os.environ.get("MAIL", f"{user_name}@opensuse.org")
+        new_entry = f"-------------------------------------------------------------------\n{now_str} - {user_email}\n\n{bullet}\n\n"
+        with open(changes_path, "w", encoding="utf-8") as f:
+            f.write(new_entry + content)
+        print(f"📝 Recorded changelog entry in {os.path.basename(changes_path)}")
+        return True
+    except Exception as e:
+        print(f"⚠️  Could not record changelog entry: {e}", file=sys.stderr)
+        return False
+
+
+def get_default_editor(package_dir: Optional[str] = None) -> str:
+    """
+    Resolves the user's preferred editor matching Git's exact resolution precedence (git/editor.c):
+      1. $GIT_EDITOR environment variable
+      2. 'core.editor' configuration option (local repository, global, or system)
+      3. $VISUAL environment variable
+      4. $EDITOR environment variable
+      5. Default system fallback: 'vi' (or 'vim')
+    """
+    # 1. $GIT_EDITOR
+    val = os.environ.get("GIT_EDITOR")
+    if val and val.strip():
+        return val.strip()
+
+    # 2. core.editor from Git config
+    cmd = ["git"]
+    if package_dir and os.path.isdir(package_dir):
+        cmd += ["-C", package_dir]
+    cmd += ["config", "--get", "core.editor"]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        git_editor = res.stdout.strip()
+        if git_editor:
+            return git_editor
+    except Exception:
+        pass
+
+    # Direct check of ~/.gitconfig if git command was overridden or returned empty
+    try:
+        gitconfig_path = os.path.expanduser("~/.gitconfig")
+        if os.path.isfile(gitconfig_path):
+            with open(gitconfig_path, "r", encoding="utf-8", errors="ignore") as f:
+                in_core = False
+                for line in f:
+                    sline = line.strip()
+                    if sline.startswith("[") and sline.endswith("]"):
+                        in_core = (sline.lower() == "[core]")
+                    elif in_core and "=" in sline:
+                        k, v = sline.split("=", 1)
+                        if k.strip().lower() == "editor" and v.strip():
+                            return v.strip()
+    except Exception:
+        pass
+
+    # 3. $VISUAL
+    val = os.environ.get("VISUAL")
+    if val and val.strip():
+        return val.strip()
+
+    # 4. $EDITOR
+    val = os.environ.get("EDITOR")
+    if val and val.strip():
+        return val.strip()
+
+    # 5. Default fallback: vi (or vim)
+    for cand in ("vi", "vim"):
+        if shutil.which(cand):
+            return cand
+
+    return "nano"
+
+def rebase_patch_cli(
+    package_dir: str,
+    patch_name: Optional[str] = None,
+    shell_mode: bool = False,
+    sle_mode: bool = False
+) -> bool:
+    """
+    Interactively rebases a failing downstream patch against the current upstream sources.
+    Sets up a temporary Git scratch workspace, applies preceding patches in .spec sequence,
+    applies the target patch with rejected hunks, and spawns $EDITOR or an interactive subshell.
+    Upon exit, automatically updates the patch file on disk preserving headers, and re-verifies.
+    """
+    pkg_dir = os.path.abspath(package_dir)
+    pkg_name = os.path.basename(pkg_dir)
+
+    spec_details = get_spec_details(pkg_dir)
+    patch_infos = spec_details.get("patches", [])
+    if not patch_infos:
+        print(f"{RED}[Error]{RESET} No downstream patches declared in {pkg_name}.spec.", file=sys.stderr)
+        return False
+
+    target_patch = None
+    target_is_sle = False
+
+    if patch_name:
+        clean_target = os.path.basename(patch_name)
+        for p in patch_infos:
+            if p["name"] == clean_target or p["name"] == patch_name:
+                target_patch = p["name"]
+                target_is_sle = bool(p.get("is_sle"))
+                break
+        if not target_patch:
+            print(f"{RED}[Error]{RESET} Patch '{patch_name}' is not declared in {pkg_name}.spec.", file=sys.stderr)
+            return False
+    else:
+        # Auto-detect failing patch (openSUSE first, then SLE)
+        print(f"🔍 Analyzing downstream patch sequence for {CYAN}{pkg_name}{RESET}...")
+        res = check_patches_sequential(pkg_dir)
+        sle_stat = res.get("sle_status", {})
+        sle_failed = sle_stat.get("failed_patches", [])
+
+        if sle_mode:
+            if not sle_failed:
+                print(f"{GREEN}🎉 All {sle_stat.get('total', 0)} SLE-only patch(es) already apply cleanly! No rebasing needed.{RESET}\n")
+                return True
+            target_patch = sle_failed[0]
+            target_is_sle = True
+            print(f"🎯 Auto-targeting first failing SLE patch: {BOLD}{CYAN}{target_patch}{RESET}\n")
+        else:
+            if not res["success"] and res.get("failed_patch"):
+                target_patch = res["failed_patch"]
+                target_is_sle = False
+                print(f"🎯 Auto-targeting first failing openSUSE patch: {BOLD}{CYAN}{target_patch}{RESET}\n")
+            elif sle_failed:
+                target_patch = sle_failed[0]
+                target_is_sle = True
+                print(f"{GREEN}🎉 All {res['total']} openSUSE patch(es) apply cleanly!{RESET}")
+                print(f"🎯 Auto-targeting first failing SLE patch: {BOLD}{CYAN}{target_patch}{RESET}\n")
+            else:
+                print(f"{GREEN}🎉 All {res['total']} downstream patch(es) already apply cleanly! No rebasing needed.{RESET}\n")
+                return True
+
+    target_patch_path = os.path.join(pkg_dir, target_patch)
+    if not os.path.isfile(target_patch_path):
+        print(f"{RED}[Error]{RESET} Patch file '{target_patch}' does not exist on disk.", file=sys.stderr)
+        return False
+
+    # Find patches preceding target_patch
+    target_idx = -1
+    for idx, p in enumerate(patch_infos):
+        if p["name"] == target_patch:
+            target_idx = idx
+            break
+
+    if target_is_sle:
+        # SLE patches apply on top of ALL openSUSE patches, plus any preceding SLE patches
+        opensuse_preceding = [p["name"] for p in patch_infos if not p.get("is_sle")]
+        sle_preceding = [p["name"] for p in patch_infos[:target_idx] if p.get("is_sle")]
+        preceding_patches = opensuse_preceding + sle_preceding
+    else:
+        preceding_patches = [p["name"] for p in patch_infos[:target_idx] if not p.get("is_sle")]
+
+    # 1. Identify primary source: OBS SCM git repo first (matching check_patches_sequential), then source archive
+    service_file = os.path.join(pkg_dir, "_service")
+    is_obs_scm = False
+    if os.path.isfile(service_file):
+        try:
+            with open(service_file, 'r', encoding='utf-8', errors='ignore') as sf:
+                c = sf.read()
+                if "obs_scm" in c or "tar_scm" in c:
+                    is_obs_scm = True
+        except Exception:
+            pass
+
+    repo_dir = None
+    if is_obs_scm:
+        cand_repo = os.path.join(pkg_dir, pkg_name)
+        if os.path.isdir(os.path.join(cand_repo, ".git")):
+            repo_dir = cand_repo
+        else:
+            for item in os.listdir(pkg_dir):
+                sub = os.path.join(pkg_dir, item)
+                if os.path.isdir(os.path.join(sub, ".git")) and item != ".git":
+                    repo_dir = sub
+                    break
+
+    archive_path = None
+    if not repo_dir:
+        archive_path = find_primary_source_archive(pkg_dir, spec_details)
+        if not archive_path:
+            print(f"{RED}[Error]{RESET} No source archive or upstream Git clone found in {pkg_name}.", file=sys.stderr)
+            return False
+
+    # Gather target files
+    all_target_files = set()
+    for p_info in patch_infos:
+        if p_info["name"] in preceding_patches or p_info["name"] == target_patch:
+            p_path = os.path.join(pkg_dir, p_info["name"])
+            for tf in get_patch_target_files(p_path):
+                all_target_files.add(tf)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Populate scratch tree
+        if repo_dir:
+            # OBS SCM repository: clone locally with shared object store (-s) in milliseconds
+            subprocess.run(["git", "clone", "-s", "-q", repo_dir, tmpdir], check=True)
+            subprocess.run(["git", "-C", tmpdir, "config", "user.name", "Geckopit Rebase"], check=True)
+            subprocess.run(["git", "-C", tmpdir, "config", "user.email", "geckopit@opensuse.org"], check=True)
+        else:
+            is_lfs, oid, size = parse_lfs_pointer(archive_path)
+            if is_lfs:
+                loc = find_local_lfs_object(pkg_dir, oid)
+                if loc:
+                    archive_path = loc
+
+            with tarfile.open(archive_path, mode="r:*") as tf:
+                for member in tf.getmembers():
+                    parts = member.name.split("/", 1)
+                    rel_path = parts[1] if len(parts) > 1 else parts[0]
+                    if rel_path in all_target_files or member.name in all_target_files:
+                        dest = os.path.join(tmpdir, rel_path)
+                        os.makedirs(os.path.dirname(dest), exist_ok=True)
+                        with open(dest, "wb") as out_f:
+                            f = tf.extractfile(member)
+                            if f:
+                                out_f.write(f.read())
+
+            # Check secondary archives
+            missing_targets = [t for t in all_target_files if not os.path.exists(os.path.join(tmpdir, t))]
+            if missing_targets:
+                all_archives = glob.glob(os.path.join(pkg_dir, "*.tar.*")) + glob.glob(os.path.join(pkg_dir, "*.obscpio")) + glob.glob(os.path.join(pkg_dir, "*.zip"))
+                secondary_archives = [a for a in all_archives if os.path.abspath(a) != os.path.abspath(archive_path)]
+                for sec_arch in secondary_archives:
+                    if not missing_targets:
+                        break
+                    sec_path = sec_arch
+                    sec_lfs, s_oid, s_size = parse_lfs_pointer(sec_path)
+                    if sec_lfs:
+                        s_loc = find_local_lfs_object(pkg_dir, s_oid)
+                        if s_loc: sec_path = s_loc
+                    try:
+                        if tarfile.is_tarfile(sec_path):
+                            with tarfile.open(sec_path, mode="r:*") as stf:
+                                for member in stf.getmembers():
+                                    if not member.isfile(): continue
+                                    m_parts = member.name.split("/", 1)
+                                    m_rel = m_parts[1] if len(m_parts) > 1 else m_parts[0]
+                                    m_base = os.path.basename(member.name)
+                                    for target in list(missing_targets):
+                                        t_base = os.path.basename(target)
+                                        if m_rel == target or target.endswith(m_rel) or (m_base == t_base and len(m_base) > 3):
+                                            dest = os.path.join(tmpdir, target)
+                                            if not os.path.exists(dest):
+                                                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                                                with open(dest, "wb") as out_f:
+                                                    src_f = stf.extractfile(member)
+                                                    if src_f: out_f.write(src_f.read())
+                                                if target in missing_targets:
+                                                    missing_targets.remove(target)
+                    except Exception:
+                        pass
+
+            subprocess.run(["git", "-C", tmpdir, "init", "-q"], check=True)
+            subprocess.run(["git", "-C", tmpdir, "config", "user.name", "Geckopit Rebase"], check=True)
+            subprocess.run(["git", "-C", tmpdir, "config", "user.email", "geckopit@opensuse.org"], check=True)
+            subprocess.run(["git", "-C", tmpdir, "add", "."], check=True)
+            subprocess.run(["git", "-C", tmpdir, "commit", "-qm", "upstream", "--allow-empty"], check=True)
+
+
+        # Apply preceding patches
+        for p in preceding_patches:
+            p_path = os.path.join(pkg_dir, p)
+            r = subprocess.run(["git", "-C", tmpdir, "apply", "-p1", p_path], capture_output=True)
+            if r.returncode != 0:
+                subprocess.run(["git", "-C", tmpdir, "apply", "-p0", p_path], capture_output=True)
+            subprocess.run(["git", "-C", tmpdir, "add", "."], check=True)
+            subprocess.run(["git", "-C", tmpdir, "commit", "-qm", f"Apply {p}", "--allow-empty"], check=True)
+
+        # Check if target patch is already merged upstream (reverse apply succeeds)
+        rev_check = subprocess.run(["git", "-C", tmpdir, "apply", "-R", "--check", "-p1", target_patch_path], capture_output=True)
+        if rev_check.returncode != 0:
+            rev_check = subprocess.run(["git", "-C", tmpdir, "apply", "-R", "--check", "-p0", target_patch_path], capture_output=True)
+        if rev_check.returncode == 0:
+            print(f"\n🎉 {GREEN}Patch '{target_patch}' is ALREADY MERGED upstream!{RESET}")
+            print(f"   (Confirmed: diff matches upstream source and applies in reverse cleanly).")
+            print(f"   You can safely drop this patch from {pkg_name}.spec.\n")
+            return True
+
+        # Now apply target patch with --reject
+        res_apply = subprocess.run(["git", "-C", tmpdir, "apply", "-p1", "--reject", target_patch_path], capture_output=True, text=True)
+        if res_apply.returncode != 0 and "No such file or directory" in res_apply.stderr:
+            subprocess.run(["git", "-C", tmpdir, "apply", "-p0", "--reject", target_patch_path], capture_output=True, text=True)
+
+        rej_files = sorted(glob.glob(os.path.join(tmpdir, "**", "*.rej"), recursive=True))
+
+        print(f"{BOLD}{'='*80}{RESET}")
+        print(f"🔧 {BOLD}INTERACTIVE PATCH REBASE: {CYAN}{target_patch}{RESET}")
+        print(f"{BOLD}{'='*80}{RESET}")
+
+        target_sources = []
+        if rej_files:
+            print(f"❌ {RED}The patch failed to apply cleanly. Rejected hunks were written to:{RESET}")
+            for rf in rej_files:
+                rel_rf = os.path.relpath(rf, tmpdir)
+                source_f = rf[:-4]
+                rel_sf = os.path.relpath(source_f, tmpdir)
+                target_sources.append(source_f)
+                print(f"  • {YELLOW}{rel_sf}{RESET} (rejected hunk in {rel_rf})")
+
+                try:
+                    with open(rf, "r", encoding="utf-8", errors="replace") as rfh:
+                        lines = rfh.readlines()
+                        print(f"\n{DIM}{'─'*35} Rejected Hunk: {rel_rf} {'─'*35}{RESET}")
+                        for l in lines[:25]:
+                            if l.startswith("+"):
+                                print(f"{GREEN}{l.rstrip()}{RESET}")
+                            elif l.startswith("-"):
+                                print(f"{RED}{l.rstrip()}{RESET}")
+                            elif l.startswith("@@"):
+                                print(f"{CYAN}{l.rstrip()}{RESET}")
+                            else:
+                                print(f"{DIM}{l.rstrip()}{RESET}")
+                        if len(lines) > 25:
+                            print(f"{DIM}... [{len(lines) - 25} lines omitted] ...{RESET}")
+                        print(f"{DIM}{'─'*80}{RESET}\n")
+                except Exception:
+                    pass
+        else:
+            print(f"{YELLOW}ℹ️  The patch applied without rejected files, but may have offsets or partial fuzz.{RESET}\n")
+            target_sources = [os.path.join(tmpdir, tf) for tf in get_patch_target_files(target_patch_path) if os.path.exists(os.path.join(tmpdir, tf))]
+
+        # Launch resolution
+        if shell_mode:
+            print(f"🚀 {CYAN}Dropping into scratch subshell. Edit the source file(s) and resolve conflicts.{RESET}")
+            print(f"   When finished, type {BOLD}'exit'{RESET} to capture the refreshed patch.\n")
+            shell_env = os.environ.copy()
+            shell_env["PS1"] = fr"(geckopit-rebase:{pkg_name}) \w $ "
+            subprocess.run([shell_env.get("SHELL", "/bin/bash")], cwd=tmpdir, env=shell_env)
+        else:
+            editor = get_default_editor(pkg_dir)
+            print(f"✏️  {CYAN}Opening editor ({editor}) to resolve rejected hunks.{RESET}")
+            print(f"   Save changes and close the editor when done.\n")
+
+            edit_targets = []
+            for sf in target_sources:
+                edit_targets.append(sf)
+                rf = sf + ".rej"
+                if os.path.exists(rf):
+                    edit_targets.append(rf)
+
+            editor_parts = shlex.split(editor)
+            editor_bin = os.path.basename(editor_parts[0]) if editor_parts else ""
+
+            if "vim" in editor_bin and len(edit_targets) >= 2:
+                cmd = editor_parts + ["-O", edit_targets[0], edit_targets[1]]
+            else:
+                cmd = editor_parts + (edit_targets[:1] if edit_targets else [tmpdir])
+
+            subprocess.run(cmd, cwd=tmpdir)
+
+        # Remove any leftover .rej and .orig files before diffing
+        for f in glob.glob(os.path.join(tmpdir, "**", "*.rej"), recursive=True) + glob.glob(os.path.join(tmpdir, "**", "*.orig"), recursive=True):
+            try:
+                os.remove(f)
+            except Exception:
+                pass
+
+        # Capture diff against pre-patch HEAD
+        diff_res = subprocess.run(["git", "-C", tmpdir, "diff", "--no-ext-diff"], capture_output=True, text=True)
+        diff_out = diff_res.stdout
+
+        if not diff_out.strip():
+            print(f"\n{YELLOW}⚠️  No changes detected in scratch tree. '{target_patch}' was left unchanged.{RESET}\n")
+            return False
+
+        # Extract original patch description and metadata
+        orig_header = []
+        with open(target_patch_path, "r", encoding="utf-8", errors="replace") as pf:
+            for line in pf:
+                if line.startswith("diff --git ") or line.startswith("--- "):
+                    break
+                orig_header.append(line)
+        header_str = "".join(orig_header)
+
+        # Write updated patch in place
+        with open(target_patch_path, "w", encoding="utf-8") as pf:
+            if header_str and not header_str.endswith("\n"):
+                header_str += "\n"
+            pf.write(header_str + diff_out)
+
+        print(f"\n{GREEN}✨ Successfully refreshed and updated '{target_patch}' in place!{RESET}\n")
+
+        # Record patch rebase in .changes file
+        record_patch_rebase_changelog(pkg_dir, target_patch)
+
+        # Automatically re-verify downstream patch sequence
+        return run_check_patches_cli(pkg_dir)
+

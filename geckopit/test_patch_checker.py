@@ -6,7 +6,7 @@ import tempfile
 import tarfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'helpers'))
-from patch_checker import get_spec_patches, get_spec_details, find_primary_source_archive, check_patches_sequential, run_check_patches_cli
+from patch_checker import get_spec_patches, get_spec_details, find_primary_source_archive, check_patches_sequential, run_check_patches_cli, rebase_patch_cli, get_default_editor, record_patch_rebase_changelog
 
 class TestPatchChecker(unittest.TestCase):
 
@@ -429,6 +429,267 @@ Patch1: fix-bsc12345.patch
             self.assertFalse(res["success"], "Unconditional patch failure must halt verification as a blocking failure")
             self.assertEqual(res["failed_patch"], "fix-bsc12345.patch")
             self.assertEqual(res["sle_status"]["total"], 0, "No SLE-only patches should be registered")
+
+
+    def test_rebase_patch_cli_auto_detects_and_updates_patch(self):
+        """Tests that rebase_patch_cli auto-detects failing patch, runs editor resolution, and updates patch on disk."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            src_dir = os.path.join(tmpdir, "pkg-2.0")
+            os.makedirs(src_dir)
+            with open(os.path.join(src_dir, "app.c"), "w") as f:
+                f.write("""#include <stdio.h>
+
+void execute_task(void) {
+    int mode = 2;
+    run_action();
+}
+""")
+
+            tar_path = os.path.join(tmpdir, "pkg-2.0.tar.xz")
+            with tarfile.open(tar_path, "w:xz") as tf:
+                tf.add(src_dir, arcname="pkg-2.0")
+
+            # Patch written against old 1.0 version (different context)
+            patch_path = os.path.join(tmpdir, "disable-action.patch")
+            with open(patch_path, "w") as f:
+                f.write("""# Disable action for safety
+# bsc#999999
+--- a/app.c
++++ b/app.c
+@@ -3,3 +3,3 @@
+ void execute_task(void) {
+-    run_action();
++    // run_action();
+ }
+""")
+
+            with open(os.path.join(tmpdir, "pkg.spec"), "w") as f:
+                f.write("""Name: pkg
+Version: 2.0
+Source0: %{name}-%{version}.tar.xz
+Patch0: disable-action.patch
+
+%prep
+%autosetup -p1
+""")
+            changes_path = os.path.join(tmpdir, "pkg.changes")
+            with open(changes_path, "w") as f:
+                f.write("""-------------------------------------------------------------------
+Wed Oct 14 12:00:00 UTC 2026 - maint@example.com
+
+- Update to version 2.0.
+""")
+
+            # Initially fails
+            res_before = check_patches_sequential(tmpdir)
+            self.assertFalse(res_before["success"])
+            self.assertEqual(res_before["failed_patch"], "disable-action.patch")
+
+            # Create mock editor script that updates app.c to comment out run_action()
+            editor_script = os.path.join(tmpdir, "mock_editor.py")
+            with open(editor_script, "w") as f:
+                f.write("""import sys, os
+for path in sys.argv[1:]:
+    if path.endswith("app.c"):
+        with open(path, "r") as f:
+            c = f.read()
+        c = c.replace("    run_action();", "    // run_action();")
+        with open(path, "w") as f:
+            f.write(c)
+""")
+
+            orig_editor = os.environ.get("EDITOR")
+            try:
+                os.environ["EDITOR"] = f"python3 {editor_script}"
+                ok = rebase_patch_cli(tmpdir)
+                self.assertTrue(ok, "rebase_patch_cli should succeed after mock editor resolution")
+            finally:
+                if orig_editor:
+                    os.environ["EDITOR"] = orig_editor
+                else:
+                    os.environ.pop("EDITOR", None)
+
+            # Verification should now pass
+            res_after = check_patches_sequential(tmpdir)
+            self.assertTrue(res_after["success"], "All patches should apply cleanly after rebase")
+
+            # Ensure original header/comments were preserved
+            with open(patch_path, "r") as f:
+                new_patch = f.read()
+            self.assertIn("# Disable action for safety", new_patch)
+            self.assertIn("# bsc#999999", new_patch)
+            self.assertIn("// run_action();", new_patch)
+
+            with open(changes_path, "r") as f:
+                ch_content = f.read()
+            self.assertIn("- Rebase disable-action.patch.", ch_content)
+
+    def test_rebase_patch_cli_already_clean(self):
+        """Tests that rebase_patch_cli returns True immediately when all patches already apply cleanly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            src_dir = os.path.join(tmpdir, "pkg-1.0")
+            os.makedirs(src_dir)
+            with open(os.path.join(src_dir, "file.txt"), "w") as f:
+                f.write("line 1\nline 2\n")
+            tar_path = os.path.join(tmpdir, "pkg-1.0.tar.xz")
+            with tarfile.open(tar_path, "w:xz") as tf:
+                tf.add(src_dir, arcname="pkg-1.0")
+            with open(os.path.join(tmpdir, "clean.patch"), "w") as f:
+                f.write("""--- a/file.txt
++++ b/file.txt
+@@ -1,2 +1,3 @@
+ line 1
++inserted line
+ line 2
+""")
+            with open(os.path.join(tmpdir, "pkg.spec"), "w") as f:
+                f.write("""Name: pkg
+Version: 1.0
+Source0: %{name}-%{version}.tar.xz
+Patch0: clean.patch
+""")
+            ok = rebase_patch_cli(tmpdir)
+            self.assertTrue(ok)
+
+
+    def test_get_default_editor_precedence(self):
+        """Tests that get_default_editor strictly adheres to Git's 5-tier resolution precedence."""
+        orig = {k: os.environ.get(k) for k in ("GIT_EDITOR", "VISUAL", "EDITOR")}
+        try:
+            for k in orig:
+                os.environ.pop(k, None)
+
+            # Fallback when all env vars are unset: vi or vim
+            default_ed = get_default_editor()
+            self.assertIn(default_ed, ("vi", "vim", "nano"))
+
+            # $EDITOR sets fallback
+            os.environ["EDITOR"] = "custom-editor"
+            self.assertEqual(get_default_editor(), "custom-editor")
+
+            # $VISUAL takes precedence over $EDITOR
+            os.environ["VISUAL"] = "custom-visual"
+            self.assertEqual(get_default_editor(), "custom-visual")
+
+            # $GIT_EDITOR takes precedence over $VISUAL
+            os.environ["GIT_EDITOR"] = "custom-git-editor"
+            self.assertEqual(get_default_editor(), "custom-git-editor")
+        finally:
+            for k, v in orig.items():
+                if v is not None:
+                    os.environ[k] = v
+                else:
+                    os.environ.pop(k, None)
+
+
+    def test_record_patch_rebase_changelog_duplicate_guard(self):
+        """Tests that record_patch_rebase_changelog does not duplicate existing rebase entries."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            changes_path = os.path.join(tmpdir, "pkg.changes")
+            with open(changes_path, "w") as f:
+                f.write("""-------------------------------------------------------------------
+Wed Oct 14 12:00:00 UTC 2026 - maint@example.com
+
+- Update to version 2.0.
+- Rebase test.patch.
+""")
+            ok = record_patch_rebase_changelog(tmpdir, "test.patch")
+            self.assertTrue(ok)
+            with open(changes_path, "r") as f:
+                c = f.read()
+            self.assertEqual(c.count("- Rebase test.patch."), 1, "Must not duplicate existing rebase bullet")
+
+
+    def test_rebase_patch_cli_targets_and_rebases_sle_patch(self):
+        """Tests that rebase_patch_cli correctly targets SLE-only patches and replays openSUSE patches first."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            src_dir = os.path.join(tmpdir, "pkg-2.0")
+            os.makedirs(src_dir)
+            with open(os.path.join(src_dir, "file.txt"), "w") as f:
+                f.write("base line 1\nbase line 2\n")
+
+            tar_path = os.path.join(tmpdir, "pkg-2.0.tar.xz")
+            with tarfile.open(tar_path, "w:xz") as tf:
+                tf.add(src_dir, arcname="pkg-2.0")
+
+            # Patch0: openSUSE patch adds line
+            with open(os.path.join(tmpdir, "opensuse.patch"), "w") as f:
+                f.write("""--- a/file.txt
++++ b/file.txt
+@@ -1,2 +1,3 @@
+ base line 1
++opensuse line
+ base line 2
+""")
+
+            # Patch1000: SLE patch fails against new context
+            sle_patch_path = os.path.join(tmpdir, "sle.patch")
+            with open(sle_patch_path, "w") as f:
+                f.write("""--- a/file.txt
++++ b/file.txt
+@@ -1,2 +1,3 @@
+ wrong context
++sle line
+ base line 2
+""")
+
+            with open(os.path.join(tmpdir, "pkg.spec"), "w") as f:
+                f.write("""Name: pkg
+Version: 2.0
+Source0: %{name}-%{version}.tar.xz
+Patch0: opensuse.patch
+Patch1000: sle.patch
+
+%prep
+%autosetup -p1
+%if !0%{?is_opensuse}
+%autopatch -p1 -m 1000
+%endif
+""")
+
+            changes_path = os.path.join(tmpdir, "pkg.changes")
+            with open(changes_path, "w") as f:
+                f.write("""-------------------------------------------------------------------
+Wed Oct 14 12:00:00 UTC 2026 - maint@example.com
+
+- Update to version 2.0.
+""")
+
+            # Mock editor resolves sle.patch by appending sle line after opensuse line
+            editor_script = os.path.join(tmpdir, "mock_editor.py")
+            with open(editor_script, "w") as f:
+                f.write("""import sys
+for path in sys.argv[1:]:
+    if path.endswith("file.txt"):
+        with open(path, "r") as f:
+            c = f.read()
+        c = c.replace("opensuse line" + chr(10), "opensuse line" + chr(10) + "sle line" + chr(10))
+        with open(path, "w") as f:
+            f.write(c)
+""")
+
+            orig_editor = os.environ.get("EDITOR")
+            try:
+                os.environ["EDITOR"] = f"python3 {editor_script}"
+                # Rebase with --sle mode
+                ok = rebase_patch_cli(tmpdir, sle_mode=True)
+                self.assertTrue(ok)
+            finally:
+                if orig_editor:
+                    os.environ["EDITOR"] = orig_editor
+                else:
+                    os.environ.pop("EDITOR", None)
+
+            # Verification should now show clean SLE status
+            res_after = check_patches_sequential(tmpdir)
+            self.assertTrue(res_after["success"])
+            self.assertEqual(res_after["sle_status"]["clean"], 1)
+            self.assertEqual(res_after["sle_status"]["failed"], 0)
+
+            # Changes file should have recorded the rebase
+            with open(changes_path, "r") as f:
+                c = f.read()
+            self.assertIn("- Rebase sle.patch.", c)
 
 if __name__ == '__main__':
     unittest.main()

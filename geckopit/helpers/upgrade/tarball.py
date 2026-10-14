@@ -534,11 +534,13 @@ class TarballUpgradeHelper(BaseUpgradeHelper):
             import patch_checker
             p_res = patch_checker.check_patches_sequential(self.package_dir)
             if not p_res["success"] and p_res["failed_patch"]:
-                if p_res.get("failure_reason") == "missing_file":
+                if p_res.get("failure_reason") == "already_merged":
+                    log(f"💡 Notice: Downstream patch '{p_res['failed_patch']}' appears to be already merged upstream (can be dropped from .spec).")
+                elif p_res.get("failure_reason") == "missing_file":
                     log(f"ℹ️  Notice: Downstream patch '{p_res['failed_patch']}' targets unresolvable files in available archives (unverified).")
                 else:
                     log(f"⚠️  Notice: Downstream patch '{p_res['failed_patch']}' fails to apply to {target_version}!")
-                    log("   Run 'geckopit-cli --check-patches' to inspect and re-verify after rebasing.")
+                    log("   Run 'geckopit-cli --rebase-patch' to interactively rebase the failing patch.")
             sle_stat = p_res.get("sle_status", {})
             if sle_stat.get("total", 0) > 0:
                 if sle_stat["failed"] > 0:

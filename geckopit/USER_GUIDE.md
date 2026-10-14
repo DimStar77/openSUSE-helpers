@@ -197,7 +197,31 @@ geckopit-cli webkitgtk --check-patches
 # Display detailed SLE patch conflict traces beneath the summary
 geckopit-cli --check-patches --sle
 geckopit-cli --check-patches --verbose
+
+# Interactively rebase a failing downstream patch in-place without quilt
+geckopit-cli --rebase-patch
+
+# Target a specific patch by name
+geckopit-cli --rebase-patch g-s-d-skip-donation.patch
+
+# Rebase failing SLE patches (or auto-targets SLE if openSUSE patches are clean)
+geckopit-cli --rebase-patch --sle
+
+# Or drop into a scratch subshell instead of launching an editor
+geckopit-cli --rebase-patch --shell
 ```
+
+### 🔧 Interactive Patch Rebaser (`--rebase-patch`)
+
+When a patch fails due to upstream refactoring or shifted context, running `quilt setup` creates messy `.pc` directories, unpacks gigabytes of archives, and requires manual copying and directory deletions.
+
+`geckopit-cli --rebase-patch` replaces the entire quilt workflow with a native, zero-setup Git scratch workspace:
+* **Auto-Targeting (openSUSE & SLE)**: Automatically detects the first failing openSUSE patch. If all openSUSE patches apply cleanly, it automatically falls through to target failing SLE patches (or explicitly via `--sle`).
+* **Preceding Patch Replay**: Sets up an ephemeral Git repository in `/tmp`, replaying preceding patches in `.spec` declaration order. For SLE patches, all openSUSE patches are replayed first, followed by any preceding clean SLE patches.
+* **Reject Triage**: Applies the target patch with rejected hunks (`.rej`) and displays them in full color in the terminal.
+* **Git-Identical Editor Resolution**: Launches your editor following Git's exact 5-tier resolution order (`$GIT_EDITOR` ➔ `core.editor` ➔ `$VISUAL` ➔ `$EDITOR` ➔ `vi`/`vim`), opening `vim -O file.c file.c.rej` side-by-side when using Vim. If `--shell` is supplied, drops into an interactive scratch subshell.
+* **In-Place Update & Changelog Recording**: Automatically captures `git diff`, preserves the original patch header / description / bug references (`bsc#...`), updates the patch file on disk, records `- Rebase {patch}.` in `*.changes` (cleanly appending to an in-flight upgrade entry or invoking `osc vc`), runs `geckopit-cli --check-patches`, and cleans up all scratch files.
+* **Already-Merged Intelligence**: If the patch changes are already present upstream in reverse, it alerts you immediately that the patch has been merged and can be dropped from the `.spec` file.
 
 **Key Verification Principles**:
 * **Sequential Dependency Chaining**: Unlike isolated file checks, patches are applied sequentially (`Patch0` ➔ `Patch1` ➔ `Patch2`), allowing dependent patches to chain on top of earlier modifications.
