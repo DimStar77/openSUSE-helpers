@@ -286,9 +286,16 @@ Verify whether downstream patches apply cleanly against the current or upgraded 
 ```bash
 # Verify downstream patches in strict .spec declaration order
 geckopit-cli --check-patches
+
+# Display detailed SLE patch conflict traces beneath the summary
+geckopit-cli --check-patches --sle
+geckopit-cli --check-patches --verbose
 ```
 
-*   **Sequential Chaining & Quilt Parity**: Chains dependent patches sequentially and immediately halts at the first failing patch to report exact hunk failures without cascading errors.
+*   **Sequential Chaining & Quilt Parity**: Chains dependent patches sequentially and immediately halts at the first failing openSUSE patch to report exact hunk failures without cascading errors.
+*   **Multi-Archive & Subproject Target Extraction**: Resolves primary source archives from `.spec` declarations (`Source0` / `Source`) instead of `mtime`, and automatically extracts missing target files from secondary archives (submodules, vendor tarballs) before testing downstream patches.
+*   **Quiet SLE Summary & Failure Classification**: Differentiates hunk conflicts (`conflict`) from missing files (`missing_file`). Evaluates SLE-only patches (`Patch1000+`, distro conditionals) quietly without blocking openSUSE upgrades (`ℹ️  SLE status: X/Y apply cleanly`), with `--sle` and `--verbose` options for deep triage.
+*   **Unconditional SLE-Tagged Safety**: Ensures patches tagged `# PATCH-*-SLE` that are applied unconditionally across openSUSE in `%prep` remain classified as openSUSE patches and are verified in the primary run.
 *   **Resume After Rebase**: Re-run anytime after editing or refreshing a patch—runs in milliseconds without requiring directory teardowns or manual quilt setup resets.
 *   **Upgrade Pre-Flight**: Integrated directly into `geckopit-cli --upgrade` and Cockpit update engines.
 
@@ -313,7 +320,13 @@ geckopit-cli --include-not-in-pool
 
 # Filter for packages requiring maintainer action
 geckopit-cli --todo
+
+# Audit against a specific workspace profile and customize concurrency
+geckopit-cli --profile GNOME --jobs 8
 ```
+
+### 🛡️ 4b. Option Validation & Typo Suggester
+Command-line arguments starting with `-` are strictly validated against `KNOWN_OPTIONS`. Unrecognized flags or typos (such as `geckopit-cli --comit` or `geckopit-cli --c`) abort immediately with exit code 1 and provide prefix and fuzzy typo suggestions (`Did you mean '--commit'?`) instead of falling through to default actions.
 
 ### 📥 5. Pull Request Management & Merging
 Manage and apply Gitea pull requests directly from the terminal without manual remote tracking or SHA hunting:

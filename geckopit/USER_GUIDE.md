@@ -38,6 +38,21 @@ The Cockpit is organized into four main functional regions:
 3. **Detail Workspace**: Dual pipeline cards (`Stable` and `Unstable`), inline Meson drift repair, and code-diff viewer.
 4. **Embedded Console Drawer**: Multi-tab terminal drawer with draggable tabs, font zooming, and auto-scroll pause.
 
+### 🗂️ Workspace Profiles & Pipeline Modes
+
+Geckopit manages multiple independent packaging checkouts via Workspace Profiles (stored in `~/.config/geckopit.json`).
+
+* **Switching Profiles**: Select a profile from the HeaderBar dropdown (e.g. `GNOME`, `X11`, `Python`). Switching profiles instantly reloads package checkouts, isolates background scan threads (`scan_generation`), and protects against UI lockups or stale data bleeding.
+* **Workspace Profile Manager (`⚙️ Preferences`)**:
+  * Click the gear icon (`preferences-system-symbolic`) in the HeaderBar to configure profiles.
+  * **Adding New Profiles**: Click **`➕ Add New`** to create a profile without modifying or overwriting existing checkouts.
+  * **Zero-Click Onboarding**: When selecting a workspace directory, Geckopit inspects `.git/worktrees` on disk. If a linked worktree exists, it automatically pre-fills stable and unstable paths and branch names.
+  * **Dual-Pipeline vs Single-Pipeline Mode**:
+    * **Dual-Pipeline**: Configured with both `factory` and `next` paths. Both Stable and Unstable pipeline cards are active.
+    * **Single-Pipeline**: For Factory-only or standalone maintenance, leave the Unstable branch path empty. Geckopit automatically streamlines the interface, hiding the Unstable card and optimizing all audits.
+  * **Background Concurrency**: Adjust worker pool size (`Max Concurrent Scans`, from 5 to 50 threads).
+  * **Ignored Versions Sub-Panel**: Review, add, or remove stagnant upstream release tags ignored across your packages.
+
 ---
 
 ## 🎯 2. Finding What Needs Attention & Browsing
@@ -99,6 +114,12 @@ geckopit-cli --not-in-pool
 # Include packages not in central pool in the main downstream sync table
 geckopit-cli --include-not-in-pool
 
+# Filter downstream sync table strictly for packages requiring maintainer action
+geckopit-cli --todo
+
+# Audit against a specific workspace profile and customize worker concurrency
+geckopit-cli --profile GNOME --jobs 8
+
 # Comprehensive single-package dashboard (run inside package checkout or pass directory)
 geckopit-cli zenity
 
@@ -107,6 +128,15 @@ geckopit-cli --check-setup
 
 # Interactively configure missing developer credentials and keys
 geckopit-cli --setup
+```
+
+### 🛡️ CLI Option Validation & Typo Suggestions
+
+`geckopit-cli` strictly validates all leading `-` arguments against `KNOWN_OPTIONS`. If you mistype a flag (e.g. `geckopit-cli --c` or `geckopit-cli --comit`), Geckopit avoids accidental fallthrough to the default dashboard or sync table, halting immediately with exit code 1 and providing intelligent suggestions:
+
+```text
+[Error] Unrecognized option '--comit'. Did you mean '--commit'?
+See 'geckopit-cli --help' for available options.
 ```
 
 ---
@@ -163,11 +193,23 @@ geckopit-cli --check-patches
 
 # Or run against a specific package from anywhere
 geckopit-cli webkitgtk --check-patches
+
+# Display detailed SLE patch conflict traces beneath the summary
+geckopit-cli --check-patches --sle
+geckopit-cli --check-patches --verbose
 ```
 
 **Key Verification Principles**:
 * **Sequential Dependency Chaining**: Unlike isolated file checks, patches are applied sequentially (`Patch0` ➔ `Patch1` ➔ `Patch2`), allowing dependent patches to chain on top of earlier modifications.
-* **Halt at First Failure**: Like quilt, the engine immediately halts at the first failing patch to prevent misleading cascade failures.
+* **Halt at First Failure**: Like quilt, the engine immediately halts at the first failing openSUSE patch to prevent misleading cascade failures.
+* **Multi-Archive & Subproject Resolution**: Resolves primary source archives strictly from `.spec` declarations (`Source0` / `Source`) and macro expansions rather than filesystem timestamps. If downstream patches target files inside subprojects or vendor tarballs (e.g. `subprojects/gvc` in `gnome-shell`), matching members from declared secondary archives (`Source1`, `Source2`) are automatically unpacked into target directories before testing patches.
+* **SLE-Only Patch Intelligence & Quiet Summary**: Failure modes are differentiated into genuine code conflicts (`conflict`) vs missing auxiliary files (`missing_file`). Distro-specific SLE patches (`Patch1000+`, `%if !0%{?is_opensuse}`, `%if 0%{?sle_version}`) are evaluated quietly in a compact summary line without halting the main pre-flight check or blocking openSUSE upgrades:
+  ```text
+  🎉 All 4 openSUSE downstream patch(es) applied cleanly in sequence!
+  ℹ️  SLE status: 4/10 apply cleanly (6 conflict against new upstream).
+  ```
+  Pass `--sle` or `--verbose` to view the exact failing files and diff traces for SLE patches.
+* **Unconditional SLE-Tagged Safety**: Patches preceded by `# PATCH-*-SLE` comments that are applied unconditionally across openSUSE in `%prep` remain classified as openSUSE patches and are verified in the primary blocking check.
 * **Resume After Rebase**: When a patch fails, simply edit and fix the patch in your editor, then re-run `geckopit-cli --check-patches`. The engine verifies in ~0.1s without needing directory teardowns, `.pc` deletions, or manual quilt resets!
 * **Automated Upgrade Integration**: `geckopit-cli --upgrade` automatically triggers this pre-flight check after dropping merged patches, immediately alerting you if any remaining downstream patch needs rebasing before you commit.
 
@@ -231,7 +273,8 @@ During development cycles, maintainers test pre-releases on `next` before promot
 2. Select a package showing forwardable commits (e.g. `Ahead by 1 commits`).
 3. The integrated syntax-highlighted code-diff viewer displays the exact Git diff between `next` and `factory`.
 4. **Copying Patches**: Click the **`edit-copy-symbolic` (📋 Copy)** icon in the diff header to copy the raw Git patch directly to your clipboard, confirmed by a floating toast notification.
-5. **Creating Pull Requests**: Click **`Create Pull Request`** on the Pipeline card:
+5. **Inline Diff Search**: Press **`Ctrl` + `F`** inside the diff viewer to search text, symbols, or patch lines with live match highlighting and cycling (`Enter` / `Shift` + `Enter`).
+6. **Creating Pull Requests**: Click **`Create Pull Request`** on the Pipeline card:
    * **Smart Changelog PR Prefiller**: Geckopit automatically constructs the PR title (e.g. `Update to version 4.2.2`) and extracts the newly added `.changes` entries directly into the PR description body.
    * Click **`Submit Pull Request`** to publish the PR on Gitea.
 
@@ -277,7 +320,8 @@ geckopit-cli --merge-pr 24 --no-commit
 
 **Key PR Merge Capabilities**:
 * **Direct Origin Fetch**: Fetches `pull/<ID>/head` directly from `origin` without needing contributor fork URLs or commit SHAs.
-* **Smart Changelog Redating**: Automatically places the contributor's changelog entry at the top of `.changes`, redates it to the current time, and preserves contributor authorship.
+* **Fast-Forward & Signature Preservation**: When HEAD is an ancestor of the PR (such as promoting `next ➔ factory` or applying a clean contributor branch), merges using `git merge --ff-only`, preserving 100% of original commit hashes, attribution, and existing GPG signatures without prompting for maintainer keys. For non-fast-forward merges, creates clean merge commits with PR commits intact as Parent 2 in Git history.
+* **Locale-Independent Changelog Engine**: Parses and redates openSUSE `.changes` headers (`LC_ALL=POSIX date`) using explicit English weekday and month tables, ensuring date ordering validation and redated headers are 100% immune to regional desktop locale settings (e.g. `de_CH.UTF-8`).
 * **Spec Collision Guard**: Scans `.spec` files for duplicate `Patch<N>:` numbers (e.g. conflicting `Patch2:` additions) and safely halts before committing, leaving changes staged for maintainer review with `git commit -c FETCH_HEAD`.
 * **Forwarded PR & Group Intelligence**: `--list-prs` queries `_ObsPrj` to report whether a package PR is forwarded individually or bundled into a multi-package release group (e.g. `pr-manage combine`).
 
