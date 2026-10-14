@@ -10,6 +10,7 @@ import os
 import sys
 import concurrent.futures
 import locale
+import difflib
 
 # Gracefully handle container environments missing host regional locale files
 try:
@@ -1011,6 +1012,55 @@ def run_audit_deps_action(pkg_dir="."):
         return 0
 
 
+KNOWN_OPTIONS = {
+    "--sync", "-s", "--fetch", "--force", "-f",
+    "--forward",
+    "--version", "-v",
+    "--not-in-pool", "--no-pool", "--include-not-in-pool",
+    "--todo",
+    "--upgrade", "-u",
+    "--check-patches", "--verbose", "--sle",
+    "--commit", "-c", "--no-edit",
+    "--audit-deps", "-d", "--fix-deps",
+    "--list-prs", "--merge-pr", "--squash", "--no-commit",
+    "--check-setup", "--setup",
+    "--guide", "--docs",
+    "--bash-completion",
+    "--dry-run", "-n",
+    "--pr", "-p", "--no-pr",
+    "--branch", "-b",
+    "--jobs", "-j",
+    "--profile", "--package",
+    "--help", "-h"
+}
+
+
+def validate_cli_options(args):
+    """
+    Validates all command-line options starting with '-' against recognized flags.
+    Returns None if all options are recognized, or an error message string if an invalid option is found.
+    """
+    for arg in args:
+        if arg.startswith("-"):
+            base_opt = arg.split("=")[0]
+            if base_opt not in KNOWN_OPTIONS:
+                hint = ""
+                # Prefix matching for typos like --c -> --commit
+                prefix_candidates = [o for o in sorted(KNOWN_OPTIONS) if o.startswith(base_opt) and len(base_opt) >= 2]
+                if prefix_candidates:
+                    if len(prefix_candidates) == 1:
+                        hint = f" Did you mean '{prefix_candidates[0]}'?"
+                    else:
+                        opts_str = " or ".join(f"'{c}'" for c in prefix_candidates[:3])
+                        hint = f" Did you mean {opts_str}?"
+                else:
+                    close = difflib.get_close_matches(base_opt, list(KNOWN_OPTIONS), n=1, cutoff=0.5)
+                    if close:
+                        hint = f" Did you mean '{close[0]}'?"
+                return f"[Error] Unrecognized option '{arg}'.{hint}\nSee 'geckopit-cli --help' for available options."
+    return None
+
+
 def print_help():
     print(f"{sb.BOLD}openSUSE Workspace Downstream Checker & Packaging Tool{sb.RESET}")
     print("\nAn optimized parallel dashboard and packaging tool for openSUSE maintainers.")
@@ -1078,6 +1128,12 @@ def main():
     if "-h" in sys.argv or "--help" in sys.argv:
         print_help()
         sys.exit(0)
+
+    # Validate options to prevent unrecognized flags from silently falling through to default actions
+    err = validate_cli_options(sys.argv[1:])
+    if err:
+        print(f"{sb.RED}{err}{sb.RESET}", file=sys.stderr)
+        sys.exit(1)
 
     # Parse upgrade options first to separate version parameters from target directories
     show_upgrade = False
