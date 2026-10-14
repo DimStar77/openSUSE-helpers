@@ -6,7 +6,7 @@ import tempfile
 import tarfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'helpers'))
-from patch_checker import get_spec_patches, check_patches_sequential, run_check_patches_cli
+from patch_checker import get_spec_patches, get_spec_details, find_primary_source_archive, check_patches_sequential, run_check_patches_cli
 
 class TestPatchChecker(unittest.TestCase):
 
@@ -122,6 +122,58 @@ Patch4: patch4.patch
             self.assertEqual(len(res_fixed["applied"]), 4)
             self.assertIsNone(res_fixed["failed_patch"])
             self.assertEqual(len(res_fixed["skipped"]), 0)
+
+    def test_find_primary_source_archive_ignores_newer_secondary_mtime(self):
+        """Tests that find_primary_source_archive selects Source0 / Name-Version even if a secondary archive has a newer mtime."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # 1. Create primary tarball with older mtime
+            tar_dir = os.path.join(tmpdir, "primary_src")
+            os.makedirs(tar_dir)
+            with open(os.path.join(tar_dir, "file.txt"), "w") as f:
+                f.write("main upstream content\n")
+
+            primary_tar = os.path.join(tmpdir, "testpkg-1.0.tar.xz")
+            with tarfile.open(primary_tar, "w:xz") as tf:
+                tf.add(tar_dir, arcname="testpkg-1.0")
+            os.utime(primary_tar, (1000, 1000))
+
+            # 2. Create secondary submodule tarball with NEWER mtime
+            sub_dir = os.path.join(tmpdir, "sub_src")
+            os.makedirs(sub_dir)
+            with open(os.path.join(sub_dir, "sub.txt"), "w") as f:
+                f.write("submodule content\n")
+
+            secondary_tar = os.path.join(tmpdir, "vendor-submodule-0.gitmodule.tar.xz")
+            with tarfile.open(secondary_tar, "w:xz") as tf:
+                tf.add(sub_dir, arcname="vendor-submodule-0.gitmodule")
+            os.utime(secondary_tar, (5000, 5000))
+
+            # 3. Create patch for primary source
+            p_content = """--- a/file.txt
++++ b/file.txt
+@@ -1,1 +1,2 @@
+ main upstream content
++downstream patch
+"""
+            with open(os.path.join(tmpdir, "patch1.patch"), "w") as f:
+                f.write(p_content)
+
+            # 4. Create spec file
+            spec_path = os.path.join(tmpdir, "testpkg.spec")
+            with open(spec_path, "w") as f:
+                f.write("""Name: testpkg
+Version: 1.0
+Source0: %{name}-%{version}.tar.xz
+Source1: vendor-submodule-0.gitmodule.tar.xz
+Patch1: patch1.patch
+""")
+
+            selected_archive = find_primary_source_archive(tmpdir)
+            self.assertEqual(selected_archive, primary_tar)
+
+            res = check_patches_sequential(tmpdir)
+            self.assertTrue(res["success"])
+            self.assertEqual(res["applied"], ["patch1.patch"])
 
 if __name__ == '__main__':
     unittest.main()

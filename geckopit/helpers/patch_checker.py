@@ -30,21 +30,38 @@ try:
 except ImportError:
     from .upgrade.tarball import parse_lfs_pointer, find_local_lfs_object
 
-def get_spec_patches(package_dir: str) -> List[str]:
+def expand_macros(text: str, macros: Dict[str, str]) -> str:
+    """Recursively expands RPM macros in text using provided macro dictionary."""
+    res = text
+    for _ in range(5):
+        changed = False
+        for k, v in macros.items():
+            pattern = re.compile(r'%\{?' + re.escape(k) + r'\}?', re.IGNORECASE)
+            new_res = pattern.sub(v, res)
+            if new_res != res:
+                res = new_res
+                changed = True
+        if not changed:
+            break
+    return res
+
+def get_spec_details(package_dir: str) -> Dict[str, Any]:
     """
-    Parses all active downstream patches declared in the package's .spec file,
-    preserving declaration order and expanding standard %define / %global / Name macros.
+    Parses package .spec file to extract macros, Name, Version, Sources, and Patches.
+    Preserves declaration order and expands standard macros.
     """
     spec_files = glob.glob(os.path.join(package_dir, "*.spec"))
     if not spec_files:
-        return []
+        return {"name": "", "version": "", "macros": {}, "sources": {}, "patches": []}
 
     macros: Dict[str, str] = {}
-    patches: List[str] = []
+    sources: Dict[int, str] = {}
+    patches: List[Dict[str, Any]] = []
 
     re_macro = re.compile(r'^\s*%(?:define|global)\s+(\w+)\s+(.+)$', re.IGNORECASE)
     re_tag = re.compile(r'^\s*(Name|Version)\s*:\s*(.+)$', re.IGNORECASE)
-    re_patch = re.compile(r'^\s*Patch(?:\d+)?\s*:\s*(\S+)', re.IGNORECASE)
+    re_source = re.compile(r'^\s*Source(\d+)?\s*:\s*(\S+)', re.IGNORECASE)
+    re_patch = re.compile(r'^\s*Patch(\d+)?\s*:\s*(\S+)', re.IGNORECASE)
 
     try:
         with open(spec_files[0], 'r', encoding='utf-8', errors='ignore') as f:
@@ -55,16 +72,96 @@ def get_spec_patches(package_dir: str) -> List[str]:
                 m_tag = re_tag.match(line)
                 if m_tag:
                     macros[m_tag.group(1).lower()] = m_tag.group(2).strip()
+                m_src = re_source.match(line)
+                if m_src:
+                    num_str = m_src.group(1)
+                    s_num = int(num_str) if num_str is not None else 0
+                    sources[s_num] = m_src.group(2).strip()
                 m_p = re_patch.match(line)
                 if m_p:
-                    raw_name = m_p.group(1).strip()
-                    for k, v in macros.items():
-                        raw_name = raw_name.replace(f"%{{{k}}}", v).replace(f"%{k}", v)
-                    patches.append(os.path.basename(raw_name))
+                    num_str = m_p.group(1)
+                    p_num = int(num_str) if num_str is not None else 0
+                    raw_name = m_p.group(2).strip()
+                    expanded = expand_macros(raw_name, macros)
+                    patches.append({
+                        "name": os.path.basename(expanded),
+                        "num": p_num,
+                        "raw": raw_name
+                    })
     except Exception:
         pass
 
-    return patches
+    return {
+        "name": macros.get("name", ""),
+        "version": macros.get("version", ""),
+        "macros": macros,
+        "sources": sources,
+        "patches": patches
+    }
+
+def get_spec_patches(package_dir: str) -> List[str]:
+    """
+    Parses all active downstream patches declared in the package's .spec file,
+    preserving declaration order and expanding standard %define / %global / Name macros.
+    """
+    details = get_spec_details(package_dir)
+    return [p["name"] for p in details.get("patches", [])]
+
+def find_primary_source_archive(package_dir: str, spec_details: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """
+    Identifies the primary upstream source archive for the package.
+    Prioritizes explicit Source0 / Source declarations from .spec, then Name-Version matching,
+    preventing secondary archives (gitmodules, vendor tarballs) with newer mtimes from being misidentified.
+    """
+    if spec_details is None:
+        spec_details = get_spec_details(package_dir)
+
+    pkg_name = spec_details.get("name", "")
+    pkg_ver = spec_details.get("version", "")
+    sources = spec_details.get("sources", {})
+    macros = spec_details.get("macros", {})
+
+    archives = glob.glob(os.path.join(package_dir, "*.tar.*")) +                glob.glob(os.path.join(package_dir, "*.obscpio")) +                glob.glob(os.path.join(package_dir, "*.zip"))
+
+    if not archives:
+        return None
+
+    archive_basenames = {os.path.basename(a): a for a in archives}
+
+    # 1. Match Source0 / Source
+    src0 = sources.get(0)
+    if src0:
+        expanded_src0 = expand_macros(src0, macros)
+        base_src0 = os.path.basename(expanded_src0.split("?")[0])
+        if base_src0 in archive_basenames:
+            return archive_basenames[base_src0]
+
+        # Match stem if extension changed (e.g. .tar.gz -> .tar.xz)
+        stem = re.sub(r'\.(?:tar(?:\.[a-z0-9]+)?|obscpio|zip)$', '', base_src0, flags=re.IGNORECASE)
+        for bname, apath in archive_basenames.items():
+            if bname.startswith(stem + "."):
+                return apath
+
+    # 2. Match Name-Version prefix
+    if pkg_name and pkg_ver:
+        nv_prefix = f"{pkg_name}-{pkg_ver}."
+        for bname, apath in archive_basenames.items():
+            if bname.startswith(nv_prefix):
+                return apath
+        nv = f"{pkg_name}-{pkg_ver}"
+        for bname, apath in archive_basenames.items():
+            if nv in bname:
+                return apath
+
+    # 3. Match Name- prefix
+    if pkg_name:
+        n_prefix = f"{pkg_name}-"
+        for bname, apath in archive_basenames.items():
+            if bname.startswith(n_prefix):
+                return apath
+
+    # 4. Fallback: newest mtime
+    return sorted(archives, key=os.path.getmtime, reverse=True)[0]
 
 def check_patches_sequential(
     package_dir: str,
@@ -174,12 +271,10 @@ def check_patches_sequential(
             }
 
     # 2. Check for Tarball source archive
-    archives = sorted(glob.glob(os.path.join(pkg_dir, "*.tar.*")), key=os.path.getmtime, reverse=True)
-    if not archives:
-        # Check .obscpio / .zip
-        archives = sorted(glob.glob(os.path.join(pkg_dir, "*.obscpio")) + glob.glob(os.path.join(pkg_dir, "*.zip")), key=os.path.getmtime, reverse=True)
+    spec_details = get_spec_details(pkg_dir)
+    archive_path = find_primary_source_archive(pkg_dir, spec_details)
 
-    if not archives:
+    if not archive_path:
         return {
             "success": False,
             "total": len(patches),
@@ -189,8 +284,6 @@ def check_patches_sequential(
             "skipped": patches[1:] if len(patches) > 1 else [],
             "source_type": "none"
         }
-
-    archive_path = archives[0]
     is_lfs, oid, size = parse_lfs_pointer(archive_path)
     if is_lfs:
         loc = find_local_lfs_object(pkg_dir, oid)
