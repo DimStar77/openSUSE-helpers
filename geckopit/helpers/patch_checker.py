@@ -19,6 +19,7 @@ from typing import Optional, List, Dict, Any, Callable
 
 # Ensure terminal colors if available
 BOLD = "\033[1m"
+DIM = "\033[2m"
 CYAN = "\033[36m"
 GREEN = "\033[32m"
 YELLOW = "\033[33m"
@@ -320,22 +321,46 @@ def check_patches_sequential(
 
                 sle_clean = []
                 sle_failed = []
+                sle_details = []
                 if failed_patch is None and sle_patches:
                     for p_info in sle_patches:
                         p = p_info["name"]
                         p_path = os.path.join(pkg_dir, p)
                         if not os.path.isfile(p_path):
                             sle_failed.append(p)
+                            sle_details.append({
+                                "patch": p,
+                                "num": p_info.get("num"),
+                                "reason": "missing_file",
+                                "error": f"Patch '{p}' does not exist on disk"
+                            })
                             continue
+
+                        err_out = ""
+                        applied = False
                         r_p1 = subprocess.run(["git", "-C", repo_dir, "apply", "-p1", p_path], capture_output=True, text=True)
                         if r_p1.returncode == 0:
-                            sle_clean.append(p)
+                            applied = True
                         else:
                             r_p0 = subprocess.run(["git", "-C", repo_dir, "apply", "-p0", p_path], capture_output=True, text=True)
                             if r_p0.returncode == 0:
-                                sle_clean.append(p)
+                                applied = True
                             else:
-                                sle_failed.append(p)
+                                err_out = r_p1.stderr.strip() if ("patch failed" in r_p1.stderr or "patch does not apply" in r_p1.stderr) else (r_p0.stderr.strip() or r_p1.stderr.strip())
+
+                        if applied:
+                            sle_clean.append(p)
+                        else:
+                            p_targets = get_patch_target_files(p_path)
+                            missing_targets = [tf for tf in p_targets if not os.path.exists(os.path.join(repo_dir, tf))]
+                            reason = "missing_file" if missing_targets else "conflict"
+                            sle_failed.append(p)
+                            sle_details.append({
+                                "patch": p,
+                                "num": p_info.get("num"),
+                                "reason": reason,
+                                "error": err_out
+                            })
             finally:
                 subprocess.run(["git", "-C", repo_dir, "reset", "--hard", "HEAD"], capture_output=True)
                 subprocess.run(["git", "-C", repo_dir, "clean", "-fd"], capture_output=True)
@@ -345,7 +370,8 @@ def check_patches_sequential(
                 "total": len(sle_patches),
                 "clean": len(sle_clean),
                 "failed": len(sle_failed),
-                "failed_patches": sle_failed
+                "failed_patches": sle_failed,
+                "details": sle_details
             }
             return {
                 "success": failed_patch is None,
@@ -530,15 +556,23 @@ def check_patches_sequential(
             # Quietly evaluate SLE-only patches if openSUSE patches succeeded
             sle_clean = []
             sle_failed = []
+            sle_details = []
             if failed_patch is None and sle_patches:
                 for p_info in sle_patches:
                     p = p_info["name"]
                     p_path = os.path.join(pkg_dir, p)
                     if not os.path.isfile(p_path):
                         sle_failed.append(p)
+                        sle_details.append({
+                            "patch": p,
+                            "num": p_info.get("num"),
+                            "reason": "missing_file",
+                            "error": f"Patch '{p}' does not exist on disk"
+                        })
                         continue
 
                     applied_cleanly = False
+                    err_out = ""
                     r_p1 = subprocess.run(["git", "-C", tmpdir, "apply", "-p1", p_path], capture_output=True, text=True)
                     if r_p1.returncode == 0:
                         applied_cleanly = True
@@ -546,13 +580,28 @@ def check_patches_sequential(
                         r_p0 = subprocess.run(["git", "-C", tmpdir, "apply", "-p0", p_path], capture_output=True, text=True)
                         if r_p0.returncode == 0:
                             applied_cleanly = True
+                        else:
+                            err_out = r_p1.stderr.strip() if ("patch failed" in r_p1.stderr or "patch does not apply" in r_p1.stderr) else (r_p0.stderr.strip() or r_p1.stderr.strip())
 
                     if applied_cleanly:
                         subprocess.run(["git", "-C", tmpdir, "add", "."], check=True)
                         subprocess.run(["git", "-C", tmpdir, "commit", "-q", "-m", f"apply {p}", "--allow-empty"], check=True)
                         sle_clean.append(p)
                     else:
+                        p_targets = get_patch_target_files(p_path)
+                        missing_targets = [
+                            tf for tf in p_targets
+                            if not os.path.exists(os.path.join(tmpdir, tf)) and
+                               not os.path.exists(os.path.join(tmpdir, tf.split('/', 1)[-1]))
+                        ]
+                        reason = "missing_file" if missing_targets else "conflict"
                         sle_failed.append(p)
+                        sle_details.append({
+                            "patch": p,
+                            "num": p_info.get("num"),
+                            "reason": reason,
+                            "error": err_out
+                        })
 
     except Exception as e:
         first_patch = opensuse_patches[0]["name"] if opensuse_patches else (patch_infos[0]["name"] if patch_infos else None)
@@ -575,7 +624,8 @@ def check_patches_sequential(
         "total": len(sle_patches),
         "clean": len(sle_clean),
         "failed": len(sle_failed),
-        "failed_patches": sle_failed
+        "failed_patches": sle_failed,
+        "details": sle_details
     }
     return {
         "success": failed_patch is None,
@@ -591,7 +641,7 @@ def check_patches_sequential(
         "source_target": os.path.basename(archive_path)
     }
 
-def run_check_patches_cli(package_dir: str) -> bool:
+def run_check_patches_cli(package_dir: str, verbose: bool = False) -> bool:
     """Executes the sequential patch check for a package and renders formatted CLI output."""
     pkg_dir = os.path.abspath(package_dir)
     pkg_name = os.path.basename(pkg_dir)
@@ -622,6 +672,14 @@ def run_check_patches_cli(package_dir: str) -> bool:
         if sle_stat.get("total", 0) > 0:
             if sle_stat["failed"] > 0:
                 print(f"{CYAN}ℹ️  SLE status: {sle_stat['clean']}/{sle_stat['total']} apply cleanly ({sle_stat['failed']} conflict against new upstream).{RESET}")
+                if verbose and sle_stat.get("details"):
+                    print(f"\n{BOLD}Detailed SLE Patch Breakdown:{RESET}")
+                    for item in sle_stat["details"]:
+                        reason_str = "missing target file" if item["reason"] == "missing_file" else "conflict"
+                        print(f"  • {YELLOW}{item['patch']}{RESET} ({reason_str})")
+                        if item.get("error"):
+                            for l in item["error"].splitlines()[:2]:
+                                print(f"      {DIM}{l}{RESET}")
             else:
                 print(f"{CYAN}ℹ️  SLE status: All {sle_stat['total']} SLE-only patch(es) apply cleanly.{RESET}")
         print()

@@ -349,5 +349,45 @@ Patch1: missing.patch
             self.assertEqual(res_missing["failed_patch"], "missing.patch")
             self.assertEqual(res_missing["failure_reason"], "missing_file")
 
+    def test_run_check_patches_cli_verbose_mode(self):
+        """Tests that run_check_patches_cli with verbose=True prints detailed SLE breakdown."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tar_dir = os.path.join(tmpdir, "src")
+            os.makedirs(tar_dir)
+            with open(os.path.join(tar_dir, "file.txt"), "w") as f:
+                f.write("line 1\nline 2\n")
+
+            tar_path = os.path.join(tmpdir, "mytest-1.0.tar.xz")
+            with tarfile.open(tar_path, "w:xz") as tf:
+                tf.add(tar_dir, arcname="mytest-1.0")
+
+            with open(os.path.join(tmpdir, "opensuse.patch"), "w") as f:
+                f.write("""--- a/file.txt
++++ b/file.txt
+@@ -1,2 +1,3 @@
+ line 1
++opensuse line
+ line 2
+""")
+
+            with open(os.path.join(tmpdir, "sle.patch"), "w") as f:
+                f.write("""--- a/file.txt
++++ b/file.txt
+@@ -1,2 +1,3 @@
+ nonexistent line
++sle line
+ line 2
+""")
+
+            with open(os.path.join(tmpdir, "mytest.spec"), "w") as f:
+                f.write("""Name: mytest
+Version: 1.0
+Source0: %{name}-%{version}.tar.xz
+Patch1: opensuse.patch
+Patch1001: sle.patch
+""")
+
+            self.assertTrue(run_check_patches_cli(tmpdir, verbose=True))
+
 if __name__ == '__main__':
     unittest.main()
