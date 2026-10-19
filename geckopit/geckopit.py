@@ -52,6 +52,44 @@ import shlex
 import xml.etree.ElementTree as ET
 from typing import Optional, Tuple
 
+FLAG_ALIASES = {
+    "diverged": "diverged", "diverge": "diverged",
+    "dirty": "dirty", "modified": "dirty", "uncommitted": "dirty", "untracked": "dirty",
+    "unpushed": "unpushed", "push": "unpushed", "ahead": "unpushed",
+    "pull": "pull", "behind": "pull",
+    "conflict": "conflict", "conflicts": "conflict", "merge-conflict": "conflict",
+    "catchup": "catchup", "catch-up": "catchup", "merge": "catchup",
+    "promote": "promote", "fwd": "promote", "forward": "promote", "forwardable": "promote",
+    "pr": "pr", "prs": "pr", "pullrequest": "pr", "pull-request": "pr",
+    "nopr": "nopr", "no-pr": "nopr", "unsubmitted": "nopr", "no_pr": "nopr",
+    "nopool": "nopool", "not-in-pool": "nopool", "no-pool": "nopool",
+    "pool": "pool",
+    "update": "update", "updates": "update", "needs-update": "update",
+}
+
+def parse_filter_query(query: str):
+    """Parses a search query into name tokens and filter flag tokens.
+    Supports prefixes '@' and 'is:', e.g. '@diverged', 'is:dirty', 'gedit @push'.
+    """
+    name_tokens = []
+    filter_flags = set()
+    for part in (query or "").split():
+        p = part.strip().lower()
+        if not p:
+            continue
+        raw_flag = None
+        if p.startswith("is:"):
+            raw_flag = p[3:]
+        elif p.startswith("@"):
+            raw_flag = p[1:]
+        else:
+            name_tokens.append(p)
+
+        if raw_flag:
+            normalized = FLAG_ALIASES.get(raw_flag, raw_flag)
+            filter_flags.add(normalized)
+    return name_tokens, filter_flags
+
 # Re-export pre-compiled revision regular expressions from centralized sync_backend
 RE_HEX_40 = sb.RE_HEX_40
 RE_HEX_SHORT = sb.RE_HEX_SHORT
@@ -1688,6 +1726,10 @@ class SyncWindow(Adw.ApplicationWindow):
         self.diff_debounce_id = 0
         self.known_not_in_pool = set()
         self._filter_search_text = ""
+        self._filter_name_tokens = []
+        self._filter_query_flags = set()
+        self._filter_popover_flags = set()
+        self._filter_active_flags = set()
         self._filter_needs_action = True
         self._filter_pool_sync = False
         self._filter_stable = False
@@ -2716,9 +2758,10 @@ class SyncWindow(Adw.ApplicationWindow):
         if page_num != -1:
             self.notebook.remove_page(page_num)
 
+        closed_pkg = None
         for tab in list(self.terminal_tabs):
             if tab["scroll_widget"] == page_widget:
-                pkg_name = tab["pkg_name"]
+                closed_pkg = tab.get("pkg_name")
                 shell_pid = tab.get("shell_pid")
                 if shell_pid:
                     try:
@@ -2986,7 +3029,36 @@ class SyncWindow(Adw.ApplicationWindow):
     def snapshot_filter_states(self):
         """Snapshots active filter control states once per filter pass to avoid repeated GTK widget method lookups."""
         try:
-            self._filter_search_text = self.sidebar_search.get_text().strip().lower() if hasattr(self, "sidebar_search") else ""
+            raw_text = self.sidebar_search.get_text().strip() if hasattr(self, "sidebar_search") else ""
+            self._filter_search_text = raw_text.lower()
+            self._filter_name_tokens, self._filter_query_flags = parse_filter_query(raw_text)
+
+            self._filter_popover_flags = set()
+            pop_mapping = {
+                "chk_filter_dirty": "dirty",
+                "chk_filter_unpushed": "unpushed",
+                "chk_filter_pull": "pull",
+                "chk_filter_conflict": "conflict",
+                "chk_filter_diverged": "diverged",
+                "chk_filter_catchup": "catchup",
+                "chk_filter_promote": "promote",
+                "chk_filter_pr": "pr",
+                "chk_filter_nopr": "nopr",
+                "chk_filter_nopool": "nopool",
+            }
+            for attr, flag in pop_mapping.items():
+                chk = getattr(self, attr, None)
+                if chk and chk.get_active():
+                    self._filter_popover_flags.add(flag)
+
+            self._filter_active_flags = self._filter_query_flags | self._filter_popover_flags
+
+            if hasattr(self, "filter_popover_btn"):
+                if self._filter_popover_flags:
+                    self.filter_popover_btn.add_css_class("suggested-action")
+                else:
+                    self.filter_popover_btn.remove_css_class("suggested-action")
+
             self._filter_needs_action = self.filter_needs_action.get_active() if hasattr(self, "filter_needs_action") else True
             self._filter_pool_sync = self.filter_pool_sync.get_active() if hasattr(self, "filter_pool_sync") else False
             self._filter_stable = self.filter_stable.get_active() if hasattr(self, "filter_stable") else False
@@ -3054,6 +3126,115 @@ class SyncWindow(Adw.ApplicationWindow):
 
     # --- THE SIDEBAR & DETAILS BUILDERS ---
 
+    def build_filter_popover(self):
+        popover = Gtk.Popover()
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        main_box.set_margin_start(12)
+        main_box.set_margin_end(12)
+        main_box.set_margin_top(12)
+        main_box.set_margin_bottom(12)
+
+        # Header with Reset button
+        hdr_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        title_lbl = Gtk.Label(label="<b>Advanced Filters</b>", use_markup=True, halign=Gtk.Align.START)
+        title_lbl.set_hexpand(True)
+        hdr_box.append(title_lbl)
+
+        clear_btn = Gtk.Button(label="Reset")
+        clear_btn.add_css_class("flat")
+        clear_btn.connect("clicked", self.on_clear_advanced_filters)
+        hdr_box.append(clear_btn)
+        main_box.append(hdr_box)
+
+        sep0 = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        main_box.append(sep0)
+
+        # 1. Local Worktree Section
+        wt_lbl = Gtk.Label(label="<small><b>LOCAL WORKTREE</b></small>", use_markup=True, halign=Gtk.Align.START)
+        wt_lbl.add_css_class("dim-label")
+        main_box.append(wt_lbl)
+
+        self.chk_filter_dirty = Gtk.CheckButton.new_with_label("Dirty / Uncommitted edits")
+        self.chk_filter_dirty.set_tooltip_text("Packages with modified or untracked packaging files on disk (@dirty)")
+        self.chk_filter_dirty.connect("toggled", self.on_filter_toggled)
+        main_box.append(self.chk_filter_dirty)
+
+        self.chk_filter_unpushed = Gtk.CheckButton.new_with_label("Unpushed commits (Local Ahead)")
+        self.chk_filter_unpushed.set_tooltip_text("Packages with local commits waiting to be pushed (@push)")
+        self.chk_filter_unpushed.connect("toggled", self.on_filter_toggled)
+        main_box.append(self.chk_filter_unpushed)
+
+        self.chk_filter_pull = Gtk.CheckButton.new_with_label("Pull needed (Local Behind)")
+        self.chk_filter_pull.set_tooltip_text("Packages where remote tracking has newer commits (@pull)")
+        self.chk_filter_pull.connect("toggled", self.on_filter_toggled)
+        main_box.append(self.chk_filter_pull)
+
+        self.chk_filter_conflict = Gtk.CheckButton.new_with_label("Merge conflicts")
+        self.chk_filter_conflict.set_tooltip_text("Packages with unmerged index conflict entries (@conflict)")
+        self.chk_filter_conflict.connect("toggled", self.on_filter_toggled)
+        main_box.append(self.chk_filter_conflict)
+
+        sep1 = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        main_box.append(sep1)
+
+        # 2. Branch Forwarding Section (Next ⮂ Factory)
+        fwd_lbl = Gtk.Label(label="<small><b>BRANCH FORWARDING</b></small>", use_markup=True, halign=Gtk.Align.START)
+        fwd_lbl.add_css_class("dim-label")
+        main_box.append(fwd_lbl)
+
+        self.chk_filter_diverged = Gtk.CheckButton.new_with_label("Diverged branches (Ahead & Behind)")
+        self.chk_filter_diverged.set_tooltip_text("Packages where next and factory have diverged with distinct commits (@diverged)")
+        self.chk_filter_diverged.connect("toggled", self.on_filter_toggled)
+        main_box.append(self.chk_filter_diverged)
+
+        self.chk_filter_catchup = Gtk.CheckButton.new_with_label("Catch-up needed (Next Behind)")
+        self.chk_filter_catchup.set_tooltip_text("Packages where factory has newer commits needing a catch-up merge into next (@catchup)")
+        self.chk_filter_catchup.connect("toggled", self.on_filter_toggled)
+        main_box.append(self.chk_filter_catchup)
+
+        self.chk_filter_promote = Gtk.CheckButton.new_with_label("Ready to forward (No PR)")
+        self.chk_filter_promote.set_tooltip_text("Packages with commits ready to forward to factory with no pending pull request (@promote, @forwardable)")
+        self.chk_filter_promote.connect("toggled", self.on_filter_toggled)
+        main_box.append(self.chk_filter_promote)
+
+        self.chk_filter_pr = Gtk.CheckButton.new_with_label("Active Gitea PR")
+        self.chk_filter_pr.set_tooltip_text("Packages with an open Gitea Pull Request (@pr)")
+        self.chk_filter_pr.connect("toggled", self.on_filter_toggled)
+        main_box.append(self.chk_filter_pr)
+
+        self.chk_filter_nopr = Gtk.CheckButton.new_with_label("No PR pending")
+        self.chk_filter_nopr.set_tooltip_text("Packages without an open Gitea Pull Request (@nopr)")
+        self.chk_filter_nopr.connect("toggled", self.on_filter_toggled)
+        main_box.append(self.chk_filter_nopr)
+
+        sep2 = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        main_box.append(sep2)
+
+        # 3. Central Gitea Pool Section
+        pool_lbl = Gtk.Label(label="<small><b>CENTRAL GITEA POOL</b></small>", use_markup=True, halign=Gtk.Align.START)
+        pool_lbl.add_css_class("dim-label")
+        main_box.append(pool_lbl)
+
+        self.chk_filter_nopool = Gtk.CheckButton.new_with_label("Missing from Pool (Not in Pool)")
+        self.chk_filter_nopool.set_tooltip_text("Packages not hosted in the central Gitea pool repository (@nopool)")
+        self.chk_filter_nopool.connect("toggled", self.on_filter_toggled)
+        main_box.append(self.chk_filter_nopool)
+
+        popover.set_child(main_box)
+        return popover
+
+    def on_clear_advanced_filters(self, btn=None):
+        for attr in (
+            "chk_filter_dirty", "chk_filter_unpushed", "chk_filter_pull", "chk_filter_conflict",
+            "chk_filter_diverged", "chk_filter_catchup", "chk_filter_promote", "chk_filter_pr", "chk_filter_nopr",
+            "chk_filter_nopool"
+        ):
+            chk = getattr(self, attr, None)
+            if chk:
+                chk.set_active(False)
+        self.snapshot_filter_states()
+        self.master_list_box.invalidate_filter()
+
     def build_sidebar(self):
         sidebar_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         sidebar_box.set_size_request(460, -1)
@@ -3096,16 +3277,31 @@ class SyncWindow(Adw.ApplicationWindow):
         control_bar.set_margin_end(12)
         control_bar.set_margin_bottom(12)
 
+        search_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+
         self.sidebar_search = Gtk.SearchEntry()
-        self.sidebar_search.set_placeholder_text("Search packages... (Ctrl+P)")
-        self.sidebar_search.set_tooltip_text("Quick-open package search (Press Ctrl+P or / to focus, Enter/Down to select)")
+        self.sidebar_search.set_hexpand(True)
+        self.sidebar_search.set_placeholder_text("Search packages or @filter... (Ctrl+P)")
+        self.sidebar_search.set_tooltip_text(
+            "Quick-open package search (Press Ctrl+P or / to focus, Enter/Down to select)\n"
+            "Query tokens: @diverged, @dirty, @push, @conflict, @catchup, @promote, @pr, @nopr, @nopool"
+        )
         self.sidebar_search.connect("search-changed", self.on_search_changed)
         self.sidebar_search.connect("activate", self.on_search_activate)
 
         search_key_ctrl = Gtk.EventControllerKey.new()
         search_key_ctrl.connect("key-pressed", self.on_search_key_pressed)
         self.sidebar_search.add_controller(search_key_ctrl)
-        control_bar.append(self.sidebar_search)
+        search_row.append(self.sidebar_search)
+
+        self.filter_popover_btn = Gtk.MenuButton()
+        self.filter_popover_btn.set_icon_name("preferences-other-symbolic")
+        self.filter_popover_btn.set_tooltip_text("Advanced Filters: Worktree, Branch Sync, and Packaging (Ctrl+Shift+F)")
+        self.filter_popover = self.build_filter_popover()
+        self.filter_popover_btn.set_popover(self.filter_popover)
+        search_row.append(self.filter_popover_btn)
+
+        control_bar.append(search_row)
 
         # Track-focused filter toggle buttons (multi-select / combination logic)
         filters_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
@@ -3214,106 +3410,136 @@ class SyncWindow(Adw.ApplicationWindow):
     def sidebar_filter_func(self, row):
         package_name = row.package_name
 
-        # 1. Apply Search Text filter first (using snapshot if available to avoid widget bridge overhead)
-        raw_search = getattr(self, "_filter_search_text", None)
-        if isinstance(raw_search, str):
-            search_text = raw_search
-        elif hasattr(self, "sidebar_search"):
-            val = self.sidebar_search.get_text()
-            search_text = val.strip().lower() if isinstance(val, str) else ""
-        else:
-            search_text = ""
+        # 1. Apply Search Text name filter (matches all name tokens against package name)
+        name_tokens = getattr(self, "_filter_name_tokens", None)
+        if not isinstance(name_tokens, (list, tuple, set)):
+            raw_search = getattr(self, "_filter_search_text", "")
+            if not isinstance(raw_search, str):
+                raw_search = self.sidebar_search.get_text() if hasattr(self, "sidebar_search") else ""
+            name_tokens, _ = parse_filter_query(raw_search)
 
-        if search_text and search_text not in package_name.lower():
-            return False
+        pkg_lower = package_name.lower()
+        if name_tokens:
+            if not all(token in pkg_lower for token in name_tokens):
+                return False
 
-        # 2. Browse All mode: when "Needs Action" is toggled OFF, show all matching packages
+        active_flags = getattr(self, "_filter_active_flags", None)
+        if not isinstance(active_flags, (set, list, tuple)):
+            active_flags = set()
+
         raw_needs_action = getattr(self, "_filter_needs_action", None)
         if isinstance(raw_needs_action, bool):
             needs_action_active = raw_needs_action
         elif hasattr(self, "filter_needs_action"):
-            val = self.filter_needs_action.get_active()
-            needs_action_active = bool(val)
+            needs_action_active = bool(self.filter_needs_action.get_active())
         else:
             needs_action_active = True
 
-        if not needs_action_active:
+        # Fast-path for Browse All mode: when no specific filter tokens/checks are active
+        # and Needs Action is toggled OFF, show all packages matching name search immediately
+        if not active_flags and not needs_action_active:
             return True
 
-        pkg_data = self.package_data.get(package_name, {})
-        sync = pkg_data.get("sync") or {}
-        ver = pkg_data.get("version") or {}
+        pkg_data = self.package_data.get(package_name, {}) if isinstance(getattr(self, "package_data", None), dict) else {}
+        sync = pkg_data.get("sync") or {} if isinstance(pkg_data, dict) else {}
+        ver = pkg_data.get("version") or {} if isinstance(pkg_data, dict) else {}
+        wt = pkg_data.get("worktree") or {} if isinstance(pkg_data, dict) else {}
+        pr = pkg_data.get("pr") or {} if isinstance(pkg_data, dict) else {}
+        stable_wt = wt.get("stable") or {} if isinstance(wt, dict) else {}
+        unstable_wt = wt.get("unstable") or {} if isinstance(wt, dict) else {}
 
-        # Pre-calculate common metrics
-        # A. Pool Sync state
-        pool_behind = sync.get("pool_behind", 0)
-        pool_ahead = sync.get("pool_ahead", 0)
-        pool_status = sync.get("pool_status", "unknown")
-        pool_needs_action = (pool_behind > 0) or (pool_ahead > 0) or (pool_status in ("Not in Pool", "Fetch failed", "Error"))
+        def _safe_int(val):
+            return val if isinstance(val, int) else 0
 
-        # B. Stable Tracking state (use pre-computed flag when available)
-        if "stable_needs_update" in ver:
-            stable_needs_action = ver["stable_needs_update"]
+        next_ahead = _safe_int(sync.get("next_ahead", 0)) if isinstance(sync, dict) else 0
+        next_behind = _safe_int(sync.get("next_behind", 0)) if isinstance(sync, dict) else 0
+        pool_status = sync.get("pool_status", "unknown") if isinstance(sync, dict) else "unknown"
+        pool_behind = _safe_int(sync.get("pool_behind", 0)) if isinstance(sync, dict) else 0
+        pool_ahead = _safe_int(sync.get("pool_ahead", 0)) if isinstance(sync, dict) else 0
+
+        # Pre-calculate flags
+        is_diverged = bool(next_ahead > 0 and next_behind > 0)
+        is_catchup = bool(next_behind > 0)
+        is_pr = bool(isinstance(pr, dict) and pr.get("has_pr"))
+        is_nopr = not is_pr
+        is_promote = bool(next_ahead > 0 and next_behind == 0 and not is_pr)
+        is_dirty = bool(isinstance(stable_wt, dict) and (stable_wt.get("dirty") or stable_wt.get("untracked")) or
+                        isinstance(unstable_wt, dict) and (unstable_wt.get("dirty") or unstable_wt.get("untracked")))
+        is_unpushed = bool(isinstance(stable_wt, dict) and _safe_int(stable_wt.get("ahead", 0)) > 0 or
+                          isinstance(unstable_wt, dict) and _safe_int(unstable_wt.get("ahead", 0)) > 0)
+        is_pull = bool(isinstance(stable_wt, dict) and _safe_int(stable_wt.get("behind", 0)) > 0 or
+                       isinstance(unstable_wt, dict) and _safe_int(unstable_wt.get("behind", 0)) > 0)
+        is_conflict = bool(isinstance(stable_wt, dict) and stable_wt.get("has_conflict") or
+                           isinstance(unstable_wt, dict) and unstable_wt.get("has_conflict"))
+        is_nopool = bool(pool_status == "Not in Pool")
+        is_pool = bool(pool_behind > 0 or pool_ahead > 0 or is_nopool or pool_status in ("Fetch failed", "Error"))
+
+        # Version tracking flags
+        if isinstance(ver, dict) and "stable_needs_update" in ver:
+            stable_needs_action = bool(ver["stable_needs_update"])
         else:
-            factory_ver = ver.get("factory_ver", "N/A")
-            upstream_stable = ver.get("upstream_stable", "N/A")
-            stable_needs_action = is_version_newer(upstream_stable, factory_ver, row.package_name)
+            factory_ver = ver.get("factory_ver", "N/A") if isinstance(ver, dict) else "N/A"
+            upstream_stable = ver.get("upstream_stable", "N/A") if isinstance(ver, dict) else "N/A"
+            stable_needs_action = bool(is_version_newer(upstream_stable, factory_ver, package_name))
 
-        # C. Unstable/Next Tracking state (use pre-computed flag when available)
-        if "unstable_needs_update" in ver:
-            unstable_needs_action = ver["unstable_needs_update"]
+        if isinstance(ver, dict) and "unstable_needs_update" in ver:
+            unstable_needs_action = bool(ver["unstable_needs_update"])
         else:
-            next_ver = ver.get("next_ver", "—")
-            upstream_latest = ver.get("upstream_latest", "—")
-            ignored_ver = getattr(self, "ignored_unstable_versions", {}).get(row.package_name)
-            is_ignored_unstable = bool(ignored_ver and is_version_equal(upstream_latest, ignored_ver, row.package_name))
-            unstable_needs_action = (is_version_newer(upstream_latest, next_ver, row.package_name) and not is_ignored_unstable)
+            next_ver = ver.get("next_ver", "—") if isinstance(ver, dict) else "—"
+            upstream_latest = ver.get("upstream_latest", "—") if isinstance(ver, dict) else "—"
+            ignored_ver = getattr(self, "ignored_unstable_versions", {}).get(package_name) if isinstance(getattr(self, "ignored_unstable_versions", None), dict) else None
+            is_ignored_unstable = bool(ignored_ver and is_version_equal(upstream_latest, ignored_ver, package_name))
+            unstable_needs_action = bool(is_version_newer(upstream_latest, next_ver, package_name) and not is_ignored_unstable)
 
-        # D. Forwarding state
-        next_ahead = sync.get("next_ahead", 0)
-        forwarding_needs_action = (next_ahead > 0)
+        is_update = bool(stable_needs_action or unstable_needs_action)
 
-        # E. Local Worktree state
-        wt = pkg_data.get("worktree") or {}
-        stable_wt = wt.get("stable") or {}
-        unstable_wt = wt.get("unstable") or {}
-        stable_wt_needs_action = (stable_wt.get("behind", 0) > 0)
-        unstable_wt_needs_action = (unstable_wt.get("behind", 0) > 0)
+        # 2. Specific filter flags active (via search @tokens or popover checkboxes)
+        if active_flags:
+            flag_predicates = {
+                "diverged": is_diverged,
+                "catchup": is_catchup,
+                "promote": is_promote,
+                "dirty": is_dirty,
+                "unpushed": is_unpushed,
+                "pull": is_pull,
+                "conflict": is_conflict,
+                "pr": is_pr,
+                "nopr": is_nopr,
+                "nopool": is_nopool,
+                "pool": is_pool,
+                "update": is_update,
+            }
+            for flag in active_flags:
+                if not flag_predicates.get(flag, False):
+                    return False
+            return True
 
-        f_pool = getattr(self, "_filter_pool_sync", None)
-        if not isinstance(f_pool, bool):
-            f_pool = bool(self.filter_pool_sync.get_active()) if hasattr(self, "filter_pool_sync") else False
+        # 4. Action Queue mode (⚠️ Needs):
+        forwarding_needs_action = bool(next_ahead > 0 or next_behind > 0)
+        worktree_needs_action = bool(is_conflict or is_dirty or is_unpushed or is_pull)
 
-        f_stable = getattr(self, "_filter_stable", None)
-        if not isinstance(f_stable, bool):
-            f_stable = bool(self.filter_stable.get_active()) if hasattr(self, "filter_stable") else False
-
-        f_unstable = getattr(self, "_filter_unstable", None)
-        if not isinstance(f_unstable, bool):
-            f_unstable = bool(self.filter_unstable.get_active()) if hasattr(self, "filter_unstable") else False
-
-        f_fwd = getattr(self, "_filter_forwarding", None)
-        if not isinstance(f_fwd, bool):
-            f_fwd = bool(self.filter_forwarding.get_active()) if hasattr(self, "filter_forwarding") else False
+        f_pool = getattr(self, "_filter_pool_sync", False)
+        f_stable = getattr(self, "_filter_stable", False)
+        f_unstable = getattr(self, "_filter_unstable", False)
+        f_fwd = getattr(self, "_filter_forwarding", False)
 
         any_track_selected = f_pool or f_stable or f_unstable or f_fwd
 
         if not any_track_selected:
             return bool(
-                pool_needs_action or
+                is_pool or
                 stable_needs_action or
                 unstable_needs_action or
                 forwarding_needs_action or
-                stable_wt_needs_action or
-                unstable_wt_needs_action
+                worktree_needs_action
             )
 
         matches_track = False
-        if f_pool and pool_needs_action:
+        if f_pool and is_pool:
             matches_track = True
-        if f_stable and (stable_needs_action or stable_wt_needs_action):
+        if f_stable and (stable_needs_action or stable_wt.get("behind", 0) > 0 or stable_wt.get("ahead", 0) > 0 or stable_wt.get("dirty") or stable_wt.get("has_conflict")):
             matches_track = True
-        if f_unstable and (unstable_needs_action or unstable_wt_needs_action):
+        if f_unstable and (unstable_needs_action or unstable_wt.get("behind", 0) > 0 or unstable_wt.get("ahead", 0) > 0 or unstable_wt.get("dirty") or unstable_wt.get("has_conflict")):
             matches_track = True
         if f_fwd and forwarding_needs_action:
             matches_track = True
@@ -4348,6 +4574,12 @@ class SyncWindow(Adw.ApplicationWindow):
         if keyval == Gdk.KEY_F1:
             import docs_builder
             docs_builder.open_user_guide(self)
+            return True
+
+        # Ctrl+Shift+F: Open Advanced Filters popover
+        if ctrl_pressed and shift_pressed and keyval in (Gdk.KEY_f, Gdk.KEY_F):
+            if hasattr(self, "filter_popover"):
+                self.filter_popover.popup()
             return True
 
         # Ctrl+Shift+S: Fetch & Sync workspace via git-project-sync

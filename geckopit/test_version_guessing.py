@@ -885,6 +885,160 @@ class TestSyncWindow(unittest.TestCase):
         self.assertEqual(mock_win.package_data["gedit"]["version"]["next_ver"], "51.0")
         mock_win.update_detail_version_ui.assert_called_with("gedit")
 
+    def test_parse_filter_query_tokens_and_aliases(self):
+        from geckopit import parse_filter_query
+
+        names, flags = parse_filter_query("gedit @diverged @dirty is:push is:conflict")
+        self.assertEqual(names, ["gedit"])
+        self.assertEqual(flags, {"diverged", "dirty", "unpushed", "conflict"})
+
+        names2, flags2 = parse_filter_query("@catch-up @fwd @pr @nopr @not-in-pool")
+        self.assertEqual(names2, [])
+        self.assertEqual(flags2, {"catchup", "promote", "pr", "nopr", "nopool"})
+
+    def test_sidebar_filter_advanced_search_tokens(self):
+        from geckopit import SyncWindow
+
+        mock_win = mock.Mock()
+        mock_win._filter_name_tokens = []
+        mock_win._filter_active_flags = {"diverged"}
+
+        row_div = mock.Mock()
+        row_div.package_name = "pkg-div"
+        row_clean = mock.Mock()
+        row_clean.package_name = "pkg-clean"
+        row_dirty = mock.Mock()
+        row_dirty.package_name = "pkg-dirty"
+        row_push = mock.Mock()
+        row_push.package_name = "pkg-push"
+        row_conflict = mock.Mock()
+        row_conflict.package_name = "pkg-conflict"
+
+        mock_win.package_data = {
+            "pkg-div": {
+                "sync": {"next_ahead": 2, "next_behind": 1, "pool_status": "In Sync"},
+                "worktree": {}, "version": {}, "pr": {}
+            },
+            "pkg-dirty": {
+                "sync": {"next_ahead": 0, "next_behind": 0, "pool_status": "In Sync"},
+                "worktree": {"unstable": {"dirty": True}}, "version": {}, "pr": {}
+            },
+            "pkg-push": {
+                "sync": {"next_ahead": 0, "next_behind": 0, "pool_status": "In Sync"},
+                "worktree": {"stable": {"ahead": 3}}, "version": {}, "pr": {}
+            },
+            "pkg-conflict": {
+                "sync": {"next_ahead": 0, "next_behind": 0, "pool_status": "In Sync"},
+                "worktree": {"stable": {"has_conflict": True}}, "version": {}, "pr": {}
+            },
+            "pkg-clean": {
+                "sync": {"next_ahead": 0, "next_behind": 0, "pool_status": "In Sync"},
+                "worktree": {"stable": {"ahead": 0, "behind": 0, "dirty": False}},
+                "version": {}, "pr": {}
+            }
+        }
+
+        # 1. @diverged matches only pkg-div
+        mock_win._filter_active_flags = {"diverged"}
+        self.assertTrue(SyncWindow.sidebar_filter_func(mock_win, row_div))
+        self.assertFalse(SyncWindow.sidebar_filter_func(mock_win, row_clean))
+        self.assertFalse(SyncWindow.sidebar_filter_func(mock_win, row_dirty))
+
+        # 2. @dirty matches only pkg-dirty
+        mock_win._filter_active_flags = {"dirty"}
+        self.assertTrue(SyncWindow.sidebar_filter_func(mock_win, row_dirty))
+        self.assertFalse(SyncWindow.sidebar_filter_func(mock_win, row_clean))
+
+        # 3. @push / @unpushed matches only pkg-push
+        mock_win._filter_active_flags = {"unpushed"}
+        self.assertTrue(SyncWindow.sidebar_filter_func(mock_win, row_push))
+        self.assertFalse(SyncWindow.sidebar_filter_func(mock_win, row_clean))
+
+        # 4. @conflict matches only pkg-conflict
+        mock_win._filter_active_flags = {"conflict"}
+        self.assertTrue(SyncWindow.sidebar_filter_func(mock_win, row_conflict))
+        self.assertFalse(SyncWindow.sidebar_filter_func(mock_win, row_clean))
+
+        # 5. @promote / @forwardable matches forwardable packages without a pending PR
+        row_promote = mock.Mock(package_name="pkg-promote")
+        row_has_pr = mock.Mock(package_name="pkg-has-pr")
+        mock_win.package_data["pkg-promote"] = {"sync": {"next_ahead": 2, "next_behind": 0}, "pr": {"has_pr": False}}
+        mock_win.package_data["pkg-has-pr"] = {"sync": {"next_ahead": 2, "next_behind": 0}, "pr": {"has_pr": True}}
+
+        mock_win._filter_active_flags = {"promote"}
+        self.assertTrue(SyncWindow.sidebar_filter_func(mock_win, row_promote))
+        self.assertFalse(SyncWindow.sidebar_filter_func(mock_win, row_has_pr))
+
+        # 6. @nopr matches packages without a pending PR
+        mock_win._filter_active_flags = {"nopr"}
+        self.assertTrue(SyncWindow.sidebar_filter_func(mock_win, row_promote))
+        self.assertFalse(SyncWindow.sidebar_filter_func(mock_win, row_has_pr))
+
+        # 7. @pr matches packages with an open PR
+        mock_win._filter_active_flags = {"pr"}
+        self.assertTrue(SyncWindow.sidebar_filter_func(mock_win, row_has_pr))
+        self.assertFalse(SyncWindow.sidebar_filter_func(mock_win, row_promote))
+
+    def test_sidebar_filter_action_queue_generalization(self):
+        from geckopit import SyncWindow
+
+        mock_win = mock.Mock()
+        mock_win._filter_name_tokens = []
+        mock_win._filter_active_flags = set()
+        mock_win._filter_needs_action = True
+        mock_win._filter_pool_sync = False
+        mock_win._filter_stable = False
+        mock_win._filter_unstable = False
+        mock_win._filter_forwarding = False
+
+        row_div = mock.Mock(package_name="pkg-div")
+        row_dirty = mock.Mock(package_name="pkg-dirty")
+        row_push = mock.Mock(package_name="pkg-push")
+        row_clean = mock.Mock(package_name="pkg-clean")
+
+        mock_win.package_data = {
+            "pkg-div": {"sync": {"next_ahead": 1, "next_behind": 1}},
+            "pkg-dirty": {"worktree": {"unstable": {"untracked": True}}},
+            "pkg-push": {"worktree": {"unstable": {"ahead": 1}}},
+            "pkg-clean": {"sync": {}, "worktree": {}, "version": {}}
+        }
+
+        # Action Queue (⚠️ Needs) now surfaces diverged, untracked, and unpushed
+        self.assertTrue(SyncWindow.sidebar_filter_func(mock_win, row_div))
+        self.assertTrue(SyncWindow.sidebar_filter_func(mock_win, row_dirty))
+        self.assertTrue(SyncWindow.sidebar_filter_func(mock_win, row_push))
+        self.assertFalse(SyncWindow.sidebar_filter_func(mock_win, row_clean))
+
+    def test_sidebar_filter_forwarding_track_generalization(self):
+        from geckopit import SyncWindow
+
+        mock_win = mock.Mock()
+        mock_win._filter_name_tokens = []
+        mock_win._filter_active_flags = set()
+        mock_win._filter_needs_action = True
+        mock_win._filter_pool_sync = False
+        mock_win._filter_stable = False
+        mock_win._filter_unstable = False
+        mock_win._filter_forwarding = True # 🔀 Fwd active
+
+        row_fwd = mock.Mock(package_name="pkg-fwd")
+        row_catchup = mock.Mock(package_name="pkg-catchup")
+        row_div = mock.Mock(package_name="pkg-div")
+        row_other = mock.Mock(package_name="pkg-other")
+
+        mock_win.package_data = {
+            "pkg-fwd": {"sync": {"next_ahead": 2, "next_behind": 0}},
+            "pkg-catchup": {"sync": {"next_ahead": 0, "next_behind": 3}},
+            "pkg-div": {"sync": {"next_ahead": 1, "next_behind": 1}},
+            "pkg-other": {"sync": {"next_ahead": 0, "next_behind": 0}, "version": {"stable_needs_update": True}}
+        }
+
+        # 🔀 Fwd now captures the entire forwarding lifecycle: promote, catchup, diverged!
+        self.assertTrue(SyncWindow.sidebar_filter_func(mock_win, row_fwd))
+        self.assertTrue(SyncWindow.sidebar_filter_func(mock_win, row_catchup))
+        self.assertTrue(SyncWindow.sidebar_filter_func(mock_win, row_div))
+        self.assertFalse(SyncWindow.sidebar_filter_func(mock_win, row_other))
+
     def test_sync_diff_dialog_copy_action(self):
         from geckopit import SyncDiffDialog
 
