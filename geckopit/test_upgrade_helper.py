@@ -237,6 +237,46 @@ class TestUpgradeHelperArchitecture(unittest.TestCase):
         self.assertEqual(lines[6], "    + Fix not speaking a newly-shown terminal line after scrolling.")
         self.assertEqual(lines[7], "  * Updated translations.")
 
+    def test_format_changelog_entry_news_in_header(self):
+        sample_diff = """
++++ b/NEWS
++News in 299.8.0, 2026-10-15
++---------------------------
++* Translation updates.
++
++News in 299.8.alpha, 2026-08-22
++-------------------------------
++* GtkSourceFileLoader: code refactorings.
+"""
+        result = format_changelog_entry(sample_diff, "299.8.0")
+        expected = """- Update to version 299.8.0:
+  * Updated translations."""
+        self.assertEqual(result.strip(), expected.strip())
+        self.assertNotIn("News in 299.8.0", result)
+
+    def test_format_changelog_entry_various_release_headers(self):
+        # 1. New in <version>
+        diff1 = """
++++ b/NEWS
++New in 51.1 - 6 October 2026
++----------------------------
++* Fixed race condition in worker
+"""
+        res1 = format_changelog_entry(diff1, "51.1")
+        self.assertNotIn("New in 51.1", res1)
+        self.assertIn("* Fixed race condition in worker", res1)
+
+        # 2. PackageName <version>
+        diff2 = """
++++ b/NEWS
++Evolution 3.62.1 2026-10-09
++---------------------------
++* Address book sync improvements
+"""
+        res2 = format_changelog_entry(diff2, "3.62.1")
+        self.assertNotIn("Evolution 3.62.1", res2)
+        self.assertIn("* Address book sync improvements", res2)
+
     def test_remove_patch_from_spec(self):
         spec_content = '''Name: gnome-shell
 Version: 50.0
