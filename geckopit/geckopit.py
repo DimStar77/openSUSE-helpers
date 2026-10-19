@@ -52,11 +52,14 @@ import shlex
 import xml.etree.ElementTree as ET
 from typing import Optional, Tuple
 
-# Pre-compiled regular expressions for high-performance matching and pattern analysis
-RE_HEX_40 = re.compile(r'^[0-9a-fA-F]{40}$')
-RE_HEX_SHORT = re.compile(r'^[0-9a-fA-F]{7,12}$')
-RE_VERSION_3 = re.compile(r'(\d+)([\._])(\d+)\2(\d+)')
-RE_VERSION_2 = re.compile(r'(\d+)([\._])(\d+)')
+# Re-export pre-compiled revision regular expressions from centralized sync_backend
+RE_HEX_40 = sb.RE_HEX_40
+RE_HEX_SHORT = sb.RE_HEX_SHORT
+RE_CALVER_8 = sb.RE_CALVER_8
+RE_VERSION_3 = sb.RE_VERSION_3
+RE_VERSION_2 = sb.RE_VERSION_2
+RE_VERSION_PRERELEASE = sb.RE_VERSION_PRERELEASE
+RE_VERSION_1 = sb.RE_VERSION_1
 
 def clean_version(version_str, repo_name=None):
     """Normalize version string for comparison using sync_backend."""
@@ -113,49 +116,10 @@ def get_service_revision(pkg_dir: str) -> Optional[str]:
     return None
 
 def guess_update_revision(current_revision: Optional[str], target_version: str) -> Tuple[Optional[str], Optional[str]]:
-    """Analyze the pattern of the current revision in _service (e.g. 'v9.1.2')
+    """Analyze the pattern of the current revision in _service (e.g. 'v9.1.2', '299.8.alpha')
     and match it to target_version to produce a guessed revision, or return a confidence message.
     """
-    if not current_revision:
-        return target_version, None
-
-    current_revision = current_revision.strip()
-    target_version = target_version.strip()
-
-    # 1. Check if the current revision is a full Git commit SHA (40 hex chars)
-    if RE_HEX_40.match(current_revision):
-        return None, f"tracks a specific Git commit SHA ({current_revision[:8]})"
-
-    # 2. Check if the current revision is a short Git commit SHA (7-12 hex chars)
-    if RE_HEX_SHORT.match(current_revision):
-        return None, f"tracks a short Git commit SHA ({current_revision})"
-
-    # 3. Check if the current revision is a static development branch name
-    if current_revision in ['master', 'main', 'stable', 'factory', 'next', 'develop', 'development', 'trunk']:
-        return None, f"tracks a static development branch ('{current_revision}')"
-
-    # 4. Try to match version patterns with dot or underscore separators
-    # Check 3-part versions first (e.g. X.Y.Z or X_Y_Z)
-    match = RE_VERSION_3.search(current_revision)
-    if not match:
-        # Check 2-part versions (e.g. X.Y or X_Y)
-        match = RE_VERSION_2.search(current_revision)
-
-    if match:
-        separator = match.group(2) # '.' or '_'
-
-        start_idx = match.start()
-        end_idx = match.end()
-        prefix = current_revision[:start_idx]
-        suffix = current_revision[end_idx:]
-
-        # Format the target version with the same separator (normalizing any existing dots/underscores)
-        new_ver_str = re.sub(r'[._]', separator, target_version)
-        guessed_revision = f"{prefix}{new_ver_str}{suffix}"
-        return guessed_revision, None
-
-    # If no version-like digits and separators were found, we are not confident
-    return None, f"contains an unrecognized pattern ('{current_revision}')"
+    return sb.guess_update_revision(current_revision, target_version)
 
 
 class DaemonThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):

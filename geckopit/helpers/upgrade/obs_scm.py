@@ -725,6 +725,15 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
             )
 
         rev = target_revision.strip() if target_revision else "@PARENT_TAG@"
+        if target_revision and target_revision.strip() != "@PARENT_TAG@":
+            try:
+                import sync_backend as sb
+                cur_rev = self.get_current_revision(self.package_dir)
+                guessed, err = sb.guess_update_revision(cur_rev, rev)
+                if guessed and not err:
+                    rev = guessed
+            except Exception:
+                pass
         pkg_name = self.get_package_name()
         old_ver, old_rev = self.get_obsinfo_metadata(pkg_name)
 

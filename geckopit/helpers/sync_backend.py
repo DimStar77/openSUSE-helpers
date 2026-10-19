@@ -18,6 +18,7 @@ import configparser
 import requests
 import requests.adapters
 import urllib3.util.retry
+from typing import Optional, Tuple
 
 _ssh_mux_dir = None
 _ssh_mux_lock = threading.Lock()
@@ -649,6 +650,78 @@ def is_version_equal(v1, v2, repo_name=None) -> bool:
     if not v1 or not v2 or v1 in ("—", "N/A") or v2 in ("—", "N/A"):
         return False
     return compare_versions(v1, v2, repo_name) == 0
+
+
+# Pre-compiled regular expressions for high-performance revision pattern matching
+RE_HEX_40 = re.compile(r"^[0-9a-fA-F]{40}$")
+RE_HEX_SHORT = re.compile(r"^[0-9a-fA-F]{7,12}$")
+RE_CALVER_8 = re.compile(r"^(19|20)\d{6}$")
+RE_VERSION_3 = re.compile(r"(\d+)([\._])(\d+)\2(\d+)")
+RE_VERSION_2 = re.compile(r"(\d+)([\._])(\d+)")
+RE_VERSION_PRERELEASE = re.compile(r"(\d+)([\._])([a-zA-Z]+)(\d*)")
+RE_VERSION_1 = re.compile(r"^(?:refs/tags/|release[-_]|v|V)?(\d+)$")
+
+def guess_update_revision(current_revision: Optional[str], target_version: str) -> Tuple[Optional[str], Optional[str]]:
+    """Analyze the pattern of the current revision in _service (e.g. v9.1.2, 299.8.alpha)
+    and match it to target_version to produce a guessed revision, or return a confidence message.
+    """
+    if not current_revision:
+        return target_version, None
+
+    current_revision = current_revision.strip()
+    target_version = target_version.strip()
+
+    # 1. Check if the current revision is a full Git commit SHA (40 hex chars)
+    if RE_HEX_40.match(current_revision):
+        return None, f"tracks a specific Git commit SHA ({current_revision[:8]})"
+
+    # 2. Check if the current revision is a CalVer date (YYYYMMDD like 20240407)
+    if RE_CALVER_8.match(current_revision):
+        return target_version, None
+
+    # 3. Check if the current revision is a short Git commit SHA (7-12 hex chars)
+    if RE_HEX_SHORT.match(current_revision):
+        return None, f"tracks a short Git commit SHA ({current_revision})"
+
+    # 4. Check if the current revision is a static development branch name
+    if current_revision in ["master", "main", "stable", "factory", "next", "develop", "development", "trunk"]:
+        return None, f"tracks a static development branch ('{current_revision}')"
+
+    if current_revision in ["@PARENT_TAG@"]:
+        return None, f"tracks macro revision ('{current_revision}')"
+
+    # 5. Try to match version patterns with dot or underscore separators
+    # Check 3-part versions first (e.g. X.Y.Z or X_Y_Z)
+    match = RE_VERSION_3.search(current_revision)
+    if not match:
+        # Check 2-part versions (e.g. X.Y, X_Y, or 299.8.alpha)
+        match = RE_VERSION_2.search(current_revision)
+    if not match:
+        # Check 1-part versions with pre-release tags (e.g. 51.alpha, 51.alpha1, 51_beta)
+        match = RE_VERSION_PRERELEASE.search(current_revision)
+
+    if match:
+        separator = match.group(2)  # '.' or '_'
+        start_idx = match.start()
+        prefix = current_revision[:start_idx]
+
+        # Strip any redundant leading 'v'/'V' from target_version so we don't end up with 'vv1.2.3'
+        cleaned_target = re.sub(r"^[vV](?=\d)", "", target_version)
+        # Format the target version with the same separator (normalizing any existing dots/underscores)
+        new_ver_str = re.sub(r"[._]", separator, cleaned_target)
+        guessed_revision = f"{prefix}{new_ver_str}"
+        return guessed_revision, None
+
+    # Check pure single-number versions (e.g. 128, v128)
+    match1 = RE_VERSION_1.match(current_revision)
+    if match1:
+        num_start = match1.start(1)
+        prefix = current_revision[:num_start]
+        cleaned_target = re.sub(r"^[vV](?=\d)", "", target_version)
+        return f"{prefix}{cleaned_target}", None
+
+    # If no version-like digits and separators were found, we are not confident
+    return None, f"contains an unrecognized pattern ('{current_revision}')"
 
 def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable_branch="next", workspace_path=".", ignored_unstable_versions=None, skip_fetch=False):
     repo_path = os.path.join(workspace_path, repo_name)

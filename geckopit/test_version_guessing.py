@@ -58,6 +58,76 @@ class TestVersionGuessing(unittest.TestCase):
         self.assertEqual(guessed, "release_1_0_5")
         self.assertIsNone(err)
 
+    def test_libgedit_gtksourceview_prerelease_to_stable(self):
+        # 10. Upgrading from alpha to stable release must not append old '.alpha' suffix
+        guessed, err = guess_update_revision("299.8.alpha", "299.8.0")
+        self.assertEqual(guessed, "299.8.0")
+        self.assertIsNone(err)
+
+        # Also when upgrading between pre-releases
+        guessed, err = guess_update_revision("299.8.alpha", "299.8.beta")
+        self.assertEqual(guessed, "299.8.beta")
+        self.assertIsNone(err)
+
+    def test_single_part_prerelease(self):
+        # 11. Single-number with pre-release qualifier (gedit & gnome-extensions-app style)
+        guessed, err = guess_update_revision("51.alpha", "51.0")
+        self.assertEqual(guessed, "51.0")
+        self.assertIsNone(err)
+
+        guessed, err = guess_update_revision("51.alpha1", "51.0")
+        self.assertEqual(guessed, "51.0")
+        self.assertIsNone(err)
+
+        guessed, err = guess_update_revision("v51.alpha", "51.0")
+        self.assertEqual(guessed, "v51.0")
+        self.assertIsNone(err)
+
+    def test_four_part_version_no_spurious_suffix(self):
+        # 12. 4-part versions must not append trailing 4th sub-minor component to new target
+        guessed, err = guess_update_revision("0.21.8.2", "0.22.0")
+        self.assertEqual(guessed, "0.22.0")
+        self.assertIsNone(err)
+
+        guessed, err = guess_update_revision("refs/tags/0.9.7.2", "0.9.8")
+        self.assertEqual(guessed, "refs/tags/0.9.8")
+        self.assertIsNone(err)
+
+    def test_refs_tags_prefix(self):
+        # 13. refs/tags/ prefix with and without leading 'v'
+        guessed, err = guess_update_revision("refs/tags/v3.7.0", "3.7.1")
+        self.assertEqual(guessed, "refs/tags/v3.7.1")
+        self.assertIsNone(err)
+
+        guessed, err = guess_update_revision("refs/tags/3.3.0", "3.3.1")
+        self.assertEqual(guessed, "refs/tags/3.3.1")
+        self.assertIsNone(err)
+
+    def test_target_version_prefix_deduplication(self):
+        # 14. Target version already starting with 'v' must not produce 'vv1.2.4'
+        guessed, err = guess_update_revision("v1.2.3", "v1.2.4")
+        self.assertEqual(guessed, "v1.2.4")
+        self.assertIsNone(err)
+
+        # When local revision had no 'v', target 'v' is stripped to match local style
+        guessed, err = guess_update_revision("1.2.3", "v1.2.4")
+        self.assertEqual(guessed, "1.2.4")
+        self.assertIsNone(err)
+
+    def test_single_number_and_calver(self):
+        # 15. Pure integer versions (gnome-radio style) and CalVer dates (mobile-broadband-provider-info style)
+        guessed, err = guess_update_revision("128", "129")
+        self.assertEqual(guessed, "129")
+        self.assertIsNone(err)
+
+        guessed, err = guess_update_revision("v128", "129")
+        self.assertEqual(guessed, "v129")
+        self.assertIsNone(err)
+
+        guessed, err = guess_update_revision("20240407", "20241019")
+        self.assertEqual(guessed, "20241019")
+        self.assertIsNone(err)
+
 
 class TestSemanticVersionComparison(unittest.TestCase):
     def test_underscore_and_dot_equality(self):

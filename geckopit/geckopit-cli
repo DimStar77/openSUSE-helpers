@@ -165,6 +165,13 @@ def render_single_package_dashboard(data):
     if is_osc:
         if ver.get('needs_update'):
             target_v = u_stable
+            p_dir = data.get('pkg_dir', '.')
+            h_cand = get_upgrade_helper(p_dir)
+            if h_cand and h_cand.name == "obs_scm":
+                cur_rev = h_cand.get_current_revision(p_dir)
+                guessed, err = sb.guess_update_revision(cur_rev, target_v)
+                if guessed and not err:
+                    target_v = guessed
             actions.append(f"⚙️  Run package upgrade: {sb.BOLD}geckopit-cli --upgrade {target_v}{sb.RESET}")
         actions.append(f"📦 Check OSC status: {sb.BOLD}osc status{sb.RESET}")
         actions.append(f"💾 Submit changes: {sb.BOLD}osc ci{sb.RESET}")
@@ -188,6 +195,13 @@ def render_single_package_dashboard(data):
             actions.append(f"📤 Create Gitea Pull Request from {branch} to {st_branch}")
         if ver.get('needs_update'):
             target_v = u_latest if branch == 'next' and u_latest != '—' else u_stable
+            p_dir = data.get('pkg_dir', '.')
+            h_cand = get_upgrade_helper(p_dir)
+            if h_cand and h_cand.name == "obs_scm":
+                cur_rev = h_cand.get_current_revision(p_dir)
+                guessed, err = sb.guess_update_revision(cur_rev, target_v)
+                if guessed and not err:
+                    target_v = guessed
             actions.append(f"⚙️  Run package upgrade: {sb.BOLD}geckopit-cli --upgrade {target_v}{sb.RESET}")
         try:
             p_dir = data.get('pkg_dir', '.')
