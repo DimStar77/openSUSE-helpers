@@ -2737,21 +2737,15 @@ class SyncWindow(Adw.ApplicationWindow):
 
                     tab["terminal"] = None
                     tab["scroll_widget"].set_child(None)
-                    tab["scroll_widget"].unparent()
                 except Exception:
                     pass
 
                 if tab in self.terminal_tabs:
                     self.terminal_tabs.remove(tab)
-
-                if pkg_name and pkg_name != "Workspace Sync":
-                    self.refresh_single_package_priority(pkg_name)
-                    if getattr(self, "current_selected_package", None) == pkg_name:
-                        self.update_detail_worktree_ui(pkg_name)
-                        self.update_detail_drift_ui(pkg_name, force_reload=True)
-                        self.refresh_active_diff()
                 break
 
+        # 1. Unconditionally collapse the terminal drawer and restore the diff review panel
+        # as soon as the last notebook tab is closed
         if self.notebook.get_n_pages() == 0:
             self.hide_terminal()
         else:
@@ -2763,8 +2757,19 @@ class SyncWindow(Adw.ApplicationWindow):
                         GLib.idle_add(self.idle_grab_focus, tab["terminal"])
                         break
 
+        # 2. Asynchronously refresh package state with defensive error isolation
+        if closed_pkg and closed_pkg != "Workspace Sync":
+            try:
+                self.refresh_single_package_priority(closed_pkg)
+                if getattr(self, "current_selected_package", None) == closed_pkg:
+                    self.load_package_detail(closed_pkg)
+            except Exception:
+                pass
+
     def hide_terminal(self):
         self.terminal_drawer.set_visible(False)
+        if hasattr(self, "diff_revealer") and self.diff_revealer:
+            self.diff_revealer.set_reveal_child(True)
 
     def populate_sidebar_rows(self):
         # Clear existing rows first
@@ -2917,6 +2922,16 @@ class SyncWindow(Adw.ApplicationWindow):
         if name not in self.package_data:
             return
         if data.get("status") == "success":
+            # Preserve local on-disk spec versions if a checkout exists
+            unstable_repo_p = self.get_mapped_worktree_path(name, "next") if self.unstable_b else None
+            local_unstable_ver = sb.get_local_package_version(unstable_repo_p) if unstable_repo_p else None
+            if local_unstable_ver:
+                data["next_ver"] = local_unstable_ver
+            stable_repo_p = self.get_mapped_worktree_path(name, "factory")
+            local_stable_ver = sb.get_local_package_version(stable_repo_p) if stable_repo_p else None
+            if local_stable_ver:
+                data["factory_ver"] = local_stable_ver
+
             self.package_data[name]["version"] = data
             self.refreshed_version_packages.add(name)
             self.update_row_ui(name)
@@ -4478,6 +4493,7 @@ class SyncWindow(Adw.ApplicationWindow):
             self.open_term_next_btn.set_label(f"🖥️ Terminal ({self.unstable_b})")
 
         self.update_row_ui(package_name)
+        self.update_detail_version_ui(package_name)
 
     def update_detail_version_ui(self, package_name):
         if getattr(self, "current_selected_package", None) != package_name:
@@ -4625,7 +4641,11 @@ class SyncWindow(Adw.ApplicationWindow):
             self.meson_drift_cache.pop(package_name, None)
 
         if package_name in self.meson_drift_cache:
-            s_drifts, u_drifts = self.meson_drift_cache[package_name]
+            cache_val = self.meson_drift_cache[package_name]
+            if isinstance(cache_val, (tuple, list)) and len(cache_val) == 2:
+                s_drifts, u_drifts = cache_val
+            else:
+                s_drifts, u_drifts = (cache_val, []) if isinstance(cache_val, list) else ([], [])
             self.update_drift_banners(package_name, s_drifts, u_drifts)
         else:
             self.stable_drift_revealer.set_reveal_child(False)
@@ -5042,6 +5062,16 @@ class SyncWindow(Adw.ApplicationWindow):
         self.ver_completed_count += 1
 
         if data.get("status") == "success":
+            # Preserve local on-disk spec versions if a checkout exists
+            unstable_repo_p = self.get_mapped_worktree_path(name, "next") if self.unstable_b else None
+            local_unstable_ver = sb.get_local_package_version(unstable_repo_p) if unstable_repo_p else None
+            if local_unstable_ver:
+                data["next_ver"] = local_unstable_ver
+            stable_repo_p = self.get_mapped_worktree_path(name, "factory")
+            local_stable_ver = sb.get_local_package_version(stable_repo_p) if stable_repo_p else None
+            if local_stable_ver:
+                data["factory_ver"] = local_stable_ver
+
             self.package_data[name]["version"] = data
             self.refreshed_version_packages.add(name)
             self.update_row_ui(name)

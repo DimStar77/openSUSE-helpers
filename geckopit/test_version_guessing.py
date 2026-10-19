@@ -836,6 +836,55 @@ class TestSyncWindow(unittest.TestCase):
         self.assertFalse(SyncWindow.idle_grab_focus(mock_win, terminal1))
         terminal1.grab_focus.assert_called_once()
 
+    def test_close_terminal_tab_refreshes_selected_package_detail(self):
+        from geckopit import SyncWindow
+
+        mock_win = mock.Mock()
+        mock_win.notebook = mock.Mock()
+        mock_win.notebook.page_num.return_value = 0
+        mock_win.notebook.get_n_pages.return_value = 0
+        mock_win.current_selected_package = "gedit"
+        mock_win.unstable_b = "next"
+        mock_win.stable_b = "factory"
+
+        scroll = mock.Mock()
+        terminal = mock.Mock()
+        tab = {"scroll_widget": scroll, "terminal": terminal, "pkg_name": "gedit", "shell_pid": None}
+        mock_win.terminal_tabs = [tab]
+
+        SyncWindow.close_terminal_tab(mock_win, scroll)
+
+        mock_win.refresh_single_package_priority.assert_called_with("gedit")
+        mock_win.load_package_detail.assert_called_with("gedit")
+
+    @mock.patch("sync_backend.get_local_package_version")
+    def test_update_version_row_single_preserves_local_ondisk_version(self, mock_get_local):
+        from geckopit import SyncWindow
+
+        mock_win = mock.Mock()
+        mock_win.scan_generation = 1
+        mock_win.unstable_b = "next"
+        mock_win.stable_b = "factory"
+        mock_win.get_mapped_worktree_path.side_effect = lambda pkg, br: f"/workspace/{br}/{pkg}"
+        mock_get_local.side_effect = lambda path: "51.0" if "next" in path else "50.0"
+
+        mock_win.package_data = {"gedit": {"version": {"factory_ver": "50.0", "next_ver": "51.alpha1"}}}
+        mock_win.refreshed_version_packages = set()
+        mock_win.current_selected_package = "gedit"
+
+        stale_bg_data = {
+            "status": "success",
+            "factory_ver": "50.0",
+            "next_ver": "51.alpha1",
+            "upstream_latest": "51.0",
+            "upstream_stable": "50.0"
+        }
+
+        SyncWindow.update_version_row_single(mock_win, "gedit", stale_bg_data, gen=1)
+
+        self.assertEqual(mock_win.package_data["gedit"]["version"]["next_ver"], "51.0")
+        mock_win.update_detail_version_ui.assert_called_with("gedit")
+
     def test_sync_diff_dialog_copy_action(self):
         from geckopit import SyncDiffDialog
 
