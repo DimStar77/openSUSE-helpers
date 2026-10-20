@@ -436,17 +436,29 @@ def check_repo_sync(repo_name, stable_branch="factory", unstable_branch="next", 
                 pool_status = "Error"
         except subprocess.CalledProcessError as e:
             stderr_lower = (e.stderr or "").lower()
+            # Explicit network, transport, connection reset, or SSH/HTTP throttling failures must report Fetch failed
+            if (
+                "connection reset" in stderr_lower
+                or "connection refused" in stderr_lower
+                or "kex_exchange_identification" in stderr_lower
+                or "could not resolve host" in stderr_lower
+                or "failed to connect" in stderr_lower
+                or "unable to fork" in stderr_lower
+                or "429" in stderr_lower
+                or "too many requests" in stderr_lower
+                or "timed out" in stderr_lower
+                or "timeout" in stderr_lower
+            ):
+                pool_status = "Fetch failed"
             # When unauthenticated git fetch hits a non-existent repo on Gitea (src.opensuse.org/pool),
             # Gitea issues HTTP 401 Basic Auth (to prevent repository enumeration), causing Git with
             # disabled terminal prompts to fail with "could not read Username" or "Authentication failed".
             # Public pool repositories never require authentication, so any authentication or not-found
             # response confirms the package is not hosted in the central Gitea pool.
-            if (
+            elif (
                 "cannot find repository" in stderr_lower
-                or "could not read from remote repository" in stderr_lower
                 or "repository not found" in stderr_lower
                 or "404" in stderr_lower
-                or "not found" in stderr_lower
                 or "could not read username" in stderr_lower
                 or "terminal prompts disabled" in stderr_lower
                 or "authentication failed" in stderr_lower

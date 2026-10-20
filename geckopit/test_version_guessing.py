@@ -1166,6 +1166,26 @@ class TestSyncWindow(unittest.TestCase):
             _, data = sb.check_repo_sync('mypkg')
             self.assertEqual(data['pool_status'], 'No factory in Pool')
 
+            # 4. SSH / transport connection reset or rate-limiting -> Fetch failed (NOT Not in Pool)
+            def fake_run_conn_reset(cmd, *args, **kwargs):
+                if 'fetch' in cmd and 'origin' in cmd:
+                    return mock.Mock(stdout="", returncode=0)
+                elif 'rev-parse' in cmd:
+                    return mock.Mock(stdout="hash", returncode=0)
+                elif 'fetch' in cmd and 'src.opensuse.org/pool' in cmd[5]:
+                    raise subprocess.CalledProcessError(
+                        128, cmd,
+                        stderr="kex_exchange_identification: read: Connection reset by peer\nfatal: Could not read from remote repository.\n"
+                    )
+                elif 'rev-list' in cmd:
+                    return mock.Mock(stdout="0 0\n", returncode=0)
+                return mock.Mock(stdout="", returncode=0)
+
+            mock_run.side_effect = fake_run_conn_reset
+            _, data = sb.check_repo_sync('mypkg')
+            self.assertEqual(data['pool_status'], 'Fetch failed')
+            self.assertTrue(data['needs_action'])
+
     def test_workspace_sync_completed_toast_capping(self):
         from geckopit import SyncWindow
         import gi
@@ -1336,14 +1356,15 @@ class TestSyncWindow(unittest.TestCase):
 
         SyncWindow.init_executors(mock_win)
         try:
-            self.assertEqual(mock_win.sync_executor._max_workers, 50)
-            self.assertEqual(mock_win.ver_executor._max_workers, 30)
+            # Workers capped at 20 to protect OpenSSH MaxSessions and prevent peer connection resets
+            self.assertEqual(mock_win.sync_executor._max_workers, 20)
+            self.assertEqual(mock_win.ver_executor._max_workers, 20)
             self.assertIs(mock_win.executor, mock_win.sync_executor)
         finally:
             mock_win.sync_executor.shutdown(wait=False)
             mock_win.ver_executor.shutdown(wait=False)
 
-        # When concurrency is configured below 30, both pools use the lower limit
+        # When concurrency is configured below 20, both pools use the lower limit
         mock_win.config.max_workers = 12
         SyncWindow.init_executors(mock_win)
         try:
@@ -1544,6 +1565,48 @@ class TestSyncWindow(unittest.TestCase):
             with mock.patch("os.path.expanduser", return_value=conf_file):
                 token = sb.get_gitea_token()
                 self.assertEqual(token, "my_secret_token_12345")
+
+    def test_refresh_all_clears_known_not_in_pool(self):
+        from geckopit import SyncWindow
+        mock_win = mock.Mock()
+        mock_win.package_rows = ["row1"]
+        mock_win.known_not_in_pool = {"pkg_a", "pkg_b"}
+        mock_win.refreshed_sync_packages = {"pkg_a"}
+        mock_win.refreshed_version_packages = {"pkg_a"}
+        mock_win.refreshed_packages = {"pkg_a"}
+        mock_win.scan_generation = 2
+        mock_win.stable_p = "/tmp"
+        mock_win.repos = ["pkg_a"]
+
+        with mock.patch("threading.Thread") as mock_thread:
+            SyncWindow.refresh_all(mock_win)
+            self.assertEqual(mock_win.known_not_in_pool, set())
+            self.assertEqual(mock_win.refreshed_sync_packages, set())
+            self.assertEqual(mock_win.refreshed_version_packages, set())
+            self.assertEqual(mock_win.refreshed_packages, set())
+            self.assertEqual(mock_win.scan_generation, 3)
+            mock_thread.assert_called_once()
+
+    def test_update_sync_row_single_evicts_known_not_in_pool(self):
+        from geckopit import SyncWindow
+        mock_win = mock.Mock()
+        mock_win.scan_generation = 1
+        mock_win.package_data = {
+            "pkg1": {"sync": {}, "worktree": {}, "pr": {}, "version": {}}
+        }
+        mock_win.refreshed_sync_packages = set()
+        mock_win.known_not_in_pool = {"pkg1", "pkg2"}
+
+        # Refresh with "In Sync" should discard pkg1 from known_not_in_pool
+        data_in_sync = {"status": "success", "pool_status": "In Sync"}
+        SyncWindow.update_sync_row_single(mock_win, "pkg1", data_in_sync, gen=1)
+        self.assertNotIn("pkg1", mock_win.known_not_in_pool)
+        self.assertIn("pkg2", mock_win.known_not_in_pool)
+
+        # Refresh with "Not in Pool" should add it back
+        data_not_in_pool = {"status": "success", "pool_status": "Not in Pool"}
+        SyncWindow.update_sync_row_single(mock_win, "pkg1", data_not_in_pool, gen=1)
+        self.assertIn("pkg1", mock_win.known_not_in_pool)
 
     @mock.patch("sync_backend.has_git_ref", return_value=True)
     @mock.patch("sync_backend.run_tracked")

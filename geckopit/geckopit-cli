@@ -482,9 +482,9 @@ def run_package_commit(pkg_dir=".", interactive=True):
 
 def run_not_in_pool_check(repos):
     total = len(repos)
-    print(f"Checking {total} packages for Gitea pool presence (50 threads)...", file=sys.stderr)
+    print(f"Checking {total} packages for Gitea pool presence (16 threads)...", file=sys.stderr)
     results = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
         futures = {executor.submit(sb.check_repo_sync, repo): repo for repo in repos}
         completed = 0
         for future in concurrent.futures.as_completed(futures):
@@ -542,10 +542,10 @@ def run_not_in_pool_check(repos):
 
 def run_sync_check(repos, include_not_in_pool=False):
     total = len(repos)
-    print(f"Checking {total} packages in parallel (50 threads)...", file=sys.stderr)
+    print(f"Checking {total} packages in parallel (16 threads)...", file=sys.stderr)
 
     results = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
         futures = {executor.submit(sb.check_repo_sync, repo): repo for repo in repos}
         completed = 0
         for future in concurrent.futures.as_completed(futures):
@@ -757,10 +757,10 @@ def run_version_check(repos, branch=None):
 
 def run_forward_check(repos, show_pr=False, only_no_pr=False):
     total = len(repos)
-    print(f"Checking {total} packages for forwardable next branches (50 threads)...", file=sys.stderr)
+    print(f"Checking {total} packages for forwardable next branches (16 threads)...", file=sys.stderr)
 
     results = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
         futures = {executor.submit(sb.check_repo_sync, repo): repo for repo in repos}
         completed = 0
         for future in concurrent.futures.as_completed(futures):

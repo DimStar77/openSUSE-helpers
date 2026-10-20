@@ -789,7 +789,7 @@ class SyncDiffDialog(Gtk.Window):
 class WorkspaceConfig:
     def __init__(self):
         self.active_workspace = "Default"
-        self.max_workers = 50
+        self.max_workers = 16
         self.sidebar_width = 500
         self.workspaces = {
             "Default": {
@@ -808,7 +808,7 @@ class WorkspaceConfig:
                 with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     self.active_workspace = data.get("active_workspace", "Default")
-                    self.max_workers = data.get("max_workers", 50)
+                    self.max_workers = data.get("max_workers", 16)
                     self.sidebar_width = data.get("sidebar_width", 500)
                     self.workspaces = data.get("workspaces", self.workspaces)
             except Exception:
@@ -1315,7 +1315,7 @@ class WorkspaceManagerDialog(Gtk.Window):
         self.grid.attach(self.unstable_br_entry, 1, 4, 2, 1)
 
         lbl_concurrency = Gtk.Label(label="Background Concurrency:", halign=Gtk.Align.START)
-        adj = Gtk.Adjustment.new(self.config.max_workers, 5, 50, 5, 10, 0)
+        adj = Gtk.Adjustment.new(self.config.max_workers, 4, 20, 2, 4, 0)
         self.concurrency_spin = Gtk.SpinButton(adjustment=adj, numeric=True)
         self.grid.attach(lbl_concurrency, 0, 5, 1, 1)
         self.grid.attach(self.concurrency_spin, 1, 5, 2, 1)
@@ -2052,10 +2052,11 @@ class SyncWindow(Adw.ApplicationWindow):
                 except Exception:
                     pass
 
-        scm_workers = getattr(self.config, "max_workers", 50) if hasattr(self, "config") else 50
-        scm_workers = max(5, int(scm_workers or 50))
-        # Release-monitoring pool capped at 30 workers to prevent rate-limiting against public Anitya API
-        ver_workers = min(scm_workers, 30)
+        scm_workers = getattr(self.config, "max_workers", 16) if hasattr(self, "config") else 16
+        # Cap SCM workers at 20 to avoid exceeding OpenSSH MaxSessions / resetting remote connections
+        scm_workers = max(4, min(int(scm_workers or 16), 20))
+        # Release-monitoring pool capped at 20 workers to prevent rate-limiting against public Anitya API
+        ver_workers = min(scm_workers, 20)
 
         self.sync_executor = DaemonThreadPoolExecutor(max_workers=scm_workers)
         self.ver_executor = DaemonThreadPoolExecutor(max_workers=ver_workers)
@@ -2841,6 +2842,16 @@ class SyncWindow(Adw.ApplicationWindow):
         if not getattr(self, "package_rows", None):
             self.populate_sidebar_rows()
 
+        # Clear confirmed Not-in-Pool cache so a user-requested full rescan genuinely re-verifies all packages
+        if hasattr(self, "known_not_in_pool") and isinstance(self.known_not_in_pool, set):
+            self.known_not_in_pool.clear()
+
+        # Reset refreshed tracking and advance scan generation
+        self.refreshed_sync_packages = set()
+        self.refreshed_version_packages = set()
+        self.refreshed_packages = set()
+        self.scan_generation = getattr(self, "scan_generation", 0) + 1
+
         # Run initial key probe in a background thread to prevent UI freezing
         # while forcing the SSH key unlock dialog to be single-threaded.
         threading.Thread(target=self.run_initial_key_probe_then_scan, daemon=True).start()
@@ -2870,17 +2881,18 @@ class SyncWindow(Adw.ApplicationWindow):
         self.ver_completed_count = 0
         self.fwd_completed_count = 0
         self.update_progress_ui()
+        current_gen = getattr(self, "scan_generation", 0)
 
         # Dispatch across dedicated worker pools:
         # 1. SCM pool for local Git checks, worktrees, and conditional PR detection
         # 2. Version pool for external release-monitoring.org REST API queries
         for repo in self.repos:
             try:
-                self.sync_executor.submit(self.run_bg_sync, repo)
+                self.sync_executor.submit(self.run_bg_sync, repo, current_gen)
             except RuntimeError:
                 pass
             try:
-                self.ver_executor.submit(self.run_bg_version, repo)
+                self.ver_executor.submit(self.run_bg_version, repo, current_gen)
             except RuntimeError:
                 pass
 
@@ -2938,6 +2950,10 @@ class SyncWindow(Adw.ApplicationWindow):
             if pr_data is not None:
                 self.package_data[name]["pr"] = pr_data
             self.refreshed_sync_packages.add(name)
+            if data.get("pool_status") == "Not in Pool" and isinstance(getattr(self, "known_not_in_pool", None), set):
+                self.known_not_in_pool.add(name)
+            elif data.get("pool_status") != "Not in Pool" and isinstance(getattr(self, "known_not_in_pool", None), set):
+                self.known_not_in_pool.discard(name)
             self.update_row_ui(name)
             self.check_and_mark_package_refreshed(name)
             if getattr(self, "current_selected_package", None) == name:
@@ -5212,6 +5228,8 @@ class SyncWindow(Adw.ApplicationWindow):
             return
         if data.get("pool_status") == "Not in Pool" and isinstance(getattr(self, "known_not_in_pool", None), set):
             self.known_not_in_pool.add(name)
+        elif data.get("pool_status") != "Not in Pool" and isinstance(getattr(self, "known_not_in_pool", None), set):
+            self.known_not_in_pool.discard(name)
         wt_data = self.check_worktrees_for_repo(repo)
         pr_data = {"has_pr": False}
         if self.unstable_b and data.get("status") == "success" and data.get("next_status") != "No next branch":
