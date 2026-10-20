@@ -1516,9 +1516,13 @@ class TestSyncWindow(unittest.TestCase):
             }
         }
         mock_win.pr_card_revealer = mock.Mock()
+        mock_win.pr_card_inner_revealer = mock.Mock()
+        mock_win.pr_card_chevron = mock.Mock()
         mock_win.pr_card_title_lbl = mock.Mock()
         mock_win.pr_card_items_box = mock.Mock()
         mock_win.pr_card_items_box.get_first_child.return_value = None
+        mock_win.pr_card_folded = False
+        mock_win.sync_pr_card_folded_state = lambda: SyncWindow.sync_pr_card_folded_state(mock_win)
 
         SyncWindow.update_detail_pr_ui(mock_win, "mypkg")
 
@@ -1538,7 +1542,24 @@ class TestSyncWindow(unittest.TestCase):
         self.assertIn("geckopit-cli --merge-pr 77", clean_text)
         self.assertIn("Fix <stdio.h> & <stdlib.h> on <arch>", clean_text)
 
-        # When no PRs exist, card is hidden
+        # Default unfolded state
+        mock_win.pr_card_inner_revealer.set_reveal_child.assert_called_with(True)
+        mock_win.pr_card_chevron.set_from_icon_name.assert_called_with("pan-down-symbolic")
+
+        # Toggle header folds the card and updates chevron
+        SyncWindow.on_pr_card_header_clicked(mock_win, None, 1, 0, 0)
+        self.assertTrue(mock_win.pr_card_folded)
+        mock_win.pr_card_inner_revealer.set_reveal_child.assert_called_with(False)
+        mock_win.pr_card_chevron.set_from_icon_name.assert_called_with("pan-end-symbolic")
+
+        # Switching to another package preserves the folded session state
+        mock_win.current_selected_package = "mypkg2"
+        mock_win.package_data["mypkg2"] = mock_win.package_data["mypkg"]
+        SyncWindow.update_detail_pr_ui(mock_win, "mypkg2")
+        mock_win.pr_card_inner_revealer.set_reveal_child.assert_called_with(False)
+
+        # When no PRs exist, outer card is hidden
+        mock_win.current_selected_package = "mypkg"
         mock_win.package_data["mypkg"]["pr"] = {"has_pr": False}
         SyncWindow.update_detail_pr_ui(mock_win, "mypkg")
         mock_win.pr_card_revealer.set_reveal_child.assert_called_with(False)

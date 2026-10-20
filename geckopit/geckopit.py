@@ -1756,6 +1756,7 @@ class SyncWindow(Adw.ApplicationWindow):
         self.refreshed_sync_packages = set()
         self.refreshed_version_packages = set()
         self.meson_drift_cache = {}
+        self.pr_card_folded = False
 
         # Global key event controller for application-wide shortcuts (Ctrl+F / Slash)
         window_key_controller = Gtk.EventControllerKey.new()
@@ -3926,22 +3927,43 @@ class SyncWindow(Adw.ApplicationWindow):
         frame.set_margin_top(4)
         frame.set_margin_bottom(4)
 
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         box.set_margin_start(10)
         box.set_margin_end(10)
-        box.set_margin_top(8)
-        box.set_margin_bottom(8)
+        box.set_margin_top(6)
+        box.set_margin_bottom(6)
 
-        # Header Title
+        # Header Title row (interactive, folds/unfolds)
         title_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        title_box.set_cursor_from_name("pointer")
+        title_box.set_tooltip_text("Click to fold / unfold pull requests")
+
         self.pr_card_title_lbl = Gtk.Label(halign=Gtk.Align.START)
         self.pr_card_title_lbl.set_markup("<span weight='bold' size='medium' foreground='#3584e4'>📥 ACTIVE PULL REQUESTS</span>")
+        self.pr_card_title_lbl.set_hexpand(True)
         title_box.append(self.pr_card_title_lbl)
+
+        self.pr_card_chevron = Gtk.Image.new_from_icon_name("pan-down-symbolic")
+        self.pr_card_chevron.add_css_class("dim-label")
+        title_box.append(self.pr_card_chevron)
+
+        header_gesture = Gtk.GestureClick.new()
+        header_gesture.set_button(1)
+        header_gesture.connect("released", self.on_pr_card_header_clicked)
+        title_box.add_controller(header_gesture)
+
         box.append(title_box)
+
+        # Inner Revealer for collapsible items list
+        self.pr_card_inner_revealer = Gtk.Revealer()
+        self.pr_card_inner_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.pr_card_inner_revealer.set_reveal_child(not getattr(self, "pr_card_folded", False))
 
         # Container for PR items
         self.pr_card_items_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        box.append(self.pr_card_items_box)
+        self.pr_card_items_box.set_margin_top(4)
+        self.pr_card_inner_revealer.set_child(self.pr_card_items_box)
+        box.append(self.pr_card_inner_revealer)
 
         frame.set_child(box)
         self.pr_card_revealer.set_child(frame)
@@ -4939,6 +4961,18 @@ class SyncWindow(Adw.ApplicationWindow):
         self.update_detail_pr_ui(package_name)
 
 
+    def on_pr_card_header_clicked(self, gesture, n_press, x, y):
+        self.pr_card_folded = not getattr(self, "pr_card_folded", False)
+        self.sync_pr_card_folded_state()
+
+    def sync_pr_card_folded_state(self):
+        folded = getattr(self, "pr_card_folded", False)
+        if hasattr(self, "pr_card_inner_revealer"):
+            self.pr_card_inner_revealer.set_reveal_child(not folded)
+        if hasattr(self, "pr_card_chevron"):
+            icon_name = "pan-end-symbolic" if folded else "pan-down-symbolic"
+            self.pr_card_chevron.set_from_icon_name(icon_name)
+
     def on_pr_card_clicked(self, gesture, n_press, x, y, url, pr_num=None):
         if n_press == 2:
             webbrowser.open(url)
@@ -4964,6 +4998,8 @@ class SyncWindow(Adw.ApplicationWindow):
         hdr_text = f"<span weight='bold' size='medium' foreground='#3584e4'>📥 ACTIVE PULL REQUESTS ({count})</span>"
         if hasattr(self, "pr_card_title_lbl"):
             self.pr_card_title_lbl.set_markup(hdr_text)
+
+        self.sync_pr_card_folded_state()
 
         if hasattr(self, "pr_card_items_box"):
             while True:
