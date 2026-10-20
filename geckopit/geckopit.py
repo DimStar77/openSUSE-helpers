@@ -308,16 +308,27 @@ class PackageRow(Gtk.ListBoxRow):
 
         # 3. Active Pull Requests
         if pr_data and pr_data.get("has_pr", False):
+            pr_list = pr_data.get("prs") or []
+            pr_count = pr_data.get("count") or len(pr_list) or 1
             pr_num = pr_data.get("number", "PR")
-            pr_title = html.escape(str(pr_data.get("title") or "Pull Request"))
-            pr_url = pr_data.get("url") or "https://src.opensuse.org"
-            subtitle_parts.append(f"PR #{pr_num}")
-            tt = (
-                f"<b>Active Gitea Pull Request</b>\n"
-                f"• PR #{pr_num}: <b>{pr_title}</b>\n"
-                f"• URL: {pr_url}"
-            )
-            self.badges_box.append(self.create_badge(f"PR #{pr_num}", "green", tooltip=tt))
+            badge_label = f"PR #{pr_num}" if pr_count == 1 else f"{pr_count} PRs"
+            subtitle_parts.append(badge_label)
+
+            tt_lines = [f"<b>Active Gitea Pull Request{'s' if pr_count > 1 else ''} ({pr_count})</b>"]
+            for pr_item in pr_list[:5]:
+                p_num = pr_item.get("number")
+                p_author = html.escape(str(pr_item.get("author") or "unknown"))
+                p_title = html.escape(str(pr_item.get("title") or ""))
+                p_target = html.escape(str(pr_item.get("base") or ""))
+                tt_lines.append(f"• <b>#{p_num}</b> by @{p_author} ➔ <i>{p_target}</i>: {p_title}")
+            if len(pr_list) > 5:
+                tt_lines.append(f"• <i>... and {len(pr_list) - 5} more</i>")
+            if not pr_list and pr_num:
+                p_title = html.escape(str(pr_data.get("title") or "Pull Request"))
+                tt_lines.append(f"• <b>#{pr_num}</b>: {p_title}")
+            tt_lines.append("<i>Click package to view PR details and merge commands</i>")
+
+            self.badges_box.append(self.create_badge(badge_label, "green", tooltip="\n".join(tt_lines)))
 
         # 4. Local worktree status (compact subtitle only to strictly preserve left-pane space)
         if worktree_data:
@@ -2926,11 +2937,8 @@ class SyncWindow(Adw.ApplicationWindow):
             return
         name, data = sb.check_repo_sync(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
         wt_data = self.check_worktrees_for_repo(repo)
-        pr_data = {"has_pr": False}
-        if self.unstable_b and data.get("status") == "success" and data.get("next_status") != "No next branch":
-            next_ahead = data.get("next_ahead", 0)
-            if next_ahead > 0:
-                _, pr_data = sb.check_repo_pr(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
+        # Always check PRs on priority single-package refresh
+        _, pr_data = sb.check_repo_pr(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
         if gen is not None and gen != getattr(self, "scan_generation", 0):
             return
         if gen is not None:
@@ -2960,6 +2968,7 @@ class SyncWindow(Adw.ApplicationWindow):
                 self.update_detail_sync_ui(name)
                 self.update_detail_worktree_ui(name)
                 self.update_detail_title(name)
+                self.update_detail_pr_ui(name)
         else:
             self.package_data[name]["sync"] = data
             self.update_row_ui(name)
@@ -3628,6 +3637,8 @@ class SyncWindow(Adw.ApplicationWindow):
         self.open_term_fac_btn.connect("clicked", lambda btn: self.allocate_terminal(self.current_selected_package, "factory"))
         actions_box.append(self.open_term_fac_btn)
 
+
+
         # Meson Dependency Drift Warning Expander for Stable Card (compact caption styling)
         self.stable_drift_revealer = Gtk.Revealer()
         self.stable_drift_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
@@ -3803,6 +3814,8 @@ class SyncWindow(Adw.ApplicationWindow):
         self.create_pr_btn.connect("clicked", self.on_detail_create_pr_clicked)
         actions_box.append(self.create_pr_btn)
 
+
+
         # Meson Dependency Drift Warning Expander for Unstable Card (compact caption styling)
         self.unstable_drift_revealer = Gtk.Revealer()
         self.unstable_drift_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
@@ -3901,6 +3914,38 @@ class SyncWindow(Adw.ApplicationWindow):
         box.append(actions_box)
         frame.set_child(box)
         return frame
+
+    def build_detail_pr_card(self):
+        self.pr_card_revealer = Gtk.Revealer()
+        self.pr_card_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.pr_card_revealer.set_reveal_child(False)
+
+        frame = Gtk.Frame()
+        frame.set_margin_start(18)
+        frame.set_margin_end(18)
+        frame.set_margin_top(4)
+        frame.set_margin_bottom(4)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.set_margin_start(10)
+        box.set_margin_end(10)
+        box.set_margin_top(8)
+        box.set_margin_bottom(8)
+
+        # Header Title
+        title_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.pr_card_title_lbl = Gtk.Label(halign=Gtk.Align.START)
+        self.pr_card_title_lbl.set_markup("<span weight='bold' size='medium' foreground='#3584e4'>📥 ACTIVE PULL REQUESTS</span>")
+        title_box.append(self.pr_card_title_lbl)
+        box.append(title_box)
+
+        # Container for PR items
+        self.pr_card_items_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box.append(self.pr_card_items_box)
+
+        frame.set_child(box)
+        self.pr_card_revealer.set_child(frame)
+        return self.pr_card_revealer
 
     def build_detail_diff_panel(self):
         self.diff_revealer = Gtk.Revealer()
@@ -4207,6 +4252,10 @@ class SyncWindow(Adw.ApplicationWindow):
         # Append Unstable Pipeline Card
         self.unstable_card = self.build_detail_unstable_card()
         detail_box.append(self.unstable_card)
+
+        # Append Dedicated Active Pull Requests Group Card
+        self.pr_card = self.build_detail_pr_card()
+        detail_box.append(self.pr_card)
 
         # Append Diff Review Panel
         self.diff_panel = self.build_detail_diff_panel()
@@ -4751,6 +4800,12 @@ class SyncWindow(Adw.ApplicationWindow):
         factory_ver = ver.get("factory_ver", "N/A")
         upstream_stable = ver.get("upstream_stable", "N/A")
 
+        pr_data = self.package_data.get(package_name, {}).get("pr") or {}
+        pr_hint = ""
+        if pr_data.get("has_pr"):
+            p_num = pr_data.get("number")
+            pr_hint = f" <span size='small' foreground='#3584e4'>[PR #{p_num} pending]</span>"
+
         if not ver:
             self.stable_ver_lbl.set_text("Loading...")
             self.update_factory_btn.set_sensitive(False)
@@ -4759,7 +4814,7 @@ class SyncWindow(Adw.ApplicationWindow):
         else:
             self.detail_web_btn.set_sensitive(True)
             if is_version_newer(upstream_stable, factory_ver, package_name):
-                self.stable_ver_lbl.set_markup(f"<span weight='bold' foreground='red'>{factory_ver}</span> ➔ <span weight='bold' foreground='green'>{upstream_stable} (Update Available)</span>")
+                self.stable_ver_lbl.set_markup(f"<span weight='bold' foreground='red'>{factory_ver}</span> ➔ <span weight='bold' foreground='green'>{upstream_stable} (Update Available)</span>{pr_hint}")
                 self.update_factory_btn.set_sensitive(True)
                 self.update_factory_btn.set_label(f"Update Factory to {upstream_stable}")
             else:
@@ -4784,7 +4839,7 @@ class SyncWindow(Adw.ApplicationWindow):
                     self.update_next_btn.set_sensitive(False)
                     self.update_next_btn.set_label("Ignored Unstable Update")
                 else:
-                    self.unstable_ver_lbl.set_markup(f"<span weight='bold' foreground='red'>{next_ver}</span> ➔ <span weight='bold' foreground='green'>{upstream_latest} (Update Available)</span>")
+                    self.unstable_ver_lbl.set_markup(f"<span weight='bold' foreground='red'>{next_ver}</span> ➔ <span weight='bold' foreground='green'>{upstream_latest} (Update Available)</span>{pr_hint}")
                     self.update_next_btn.set_sensitive(True)
                     self.update_next_btn.set_label(f"Update Next to {upstream_latest}")
             else:
@@ -4795,6 +4850,8 @@ class SyncWindow(Adw.ApplicationWindow):
             if next_ver == "—":
                 self.update_next_btn.set_sensitive(False)
                 self.update_next_btn.set_label("No Next branch")
+
+        self.update_detail_pr_ui(package_name)
 
     def update_detail_sync_ui(self, package_name):
         if getattr(self, "current_selected_package", None) != package_name:
@@ -4853,13 +4910,15 @@ class SyncWindow(Adw.ApplicationWindow):
                 self.catchup_merge_btn.set_label("🔀 Catch-up Merge")
 
             if next_ahead_val > 0:
-                if has_pr:
-                    branch_text = f"<span foreground='green' weight='bold'>PR #{pr_number} Active</span> | Next is ahead of Factory by {next_ahead_val} commits."
-                    self.create_pr_btn.set_label(f"View PR #{pr_number}")
+                if pr.get("has_forward_pr", False):
+                    forward_num = pr.get("number")
+                    branch_text = f"<span foreground='green' weight='bold'>Forward PR #{forward_num} Active</span> | Next is ahead of Factory by {next_ahead_val} commits."
+                    self.create_pr_btn.set_label("Forward PR Active")
+                    self.create_pr_btn.set_sensitive(False)
                 else:
                     branch_text = f"<span foreground='orange' weight='bold'>Forwarding Needed</span> | Next is ahead of Factory by {next_ahead_val} commits."
                     self.create_pr_btn.set_label("Create Pull Request")
-                self.create_pr_btn.set_sensitive(True)
+                    self.create_pr_btn.set_sensitive(True)
             else:
                 self.create_pr_btn.set_sensitive(False)
                 self.create_pr_btn.set_label("Create PR")
@@ -4877,6 +4936,122 @@ class SyncWindow(Adw.ApplicationWindow):
                 self.create_pr_btn.set_sensitive(False)
 
             self.unstable_branch_lbl.set_markup(branch_text)
+        self.update_detail_pr_ui(package_name)
+
+
+    def on_pr_card_clicked(self, gesture, n_press, x, y, url, pr_num=None):
+        if n_press == 2:
+            webbrowser.open(url)
+            pr_label = f"PR #{pr_num}" if pr_num else "PR"
+            toast = Adw.Toast.new(f"Opened {pr_label} in default browser")
+            self.toast_overlay.add_toast(toast)
+
+    def update_detail_pr_ui(self, package_name):
+        if getattr(self, "current_selected_package", None) != package_name:
+            return
+
+        pkg_data = self.package_data.get(package_name) or {}
+        pr_data = pkg_data.get("pr") or {}
+        has_pr = pr_data.get("has_pr", False)
+        prs = pr_data.get("prs", [])
+
+        if not has_pr:
+            if hasattr(self, "pr_card_revealer"):
+                self.pr_card_revealer.set_reveal_child(False)
+            return
+
+        count = pr_data.get("count", len(prs)) or len(prs) or 1
+        hdr_text = f"<span weight='bold' size='medium' foreground='#3584e4'>📥 ACTIVE PULL REQUESTS ({count})</span>"
+        if hasattr(self, "pr_card_title_lbl"):
+            self.pr_card_title_lbl.set_markup(hdr_text)
+
+        if hasattr(self, "pr_card_items_box"):
+            while True:
+                child = self.pr_card_items_box.get_first_child()
+                if not child:
+                    break
+                self.pr_card_items_box.remove(child)
+
+            display_prs = prs if prs else [{
+                "number": pr_data.get("number"),
+                "title": pr_data.get("title") or "Pull Request",
+                "url": pr_data.get("url"),
+                "author": "contributor",
+                "base": self.stable_b,
+                "head": "",
+                "is_forward": pr_data.get("has_forward_pr", False)
+            }]
+
+            for pr in display_prs:
+                pr_num = pr.get("number")
+                pr_title = html.escape(str(pr.get("title") or "Pull Request"))
+                pr_author = html.escape(str(pr.get("author") or "unknown"))
+                pr_base = html.escape(str(pr.get("base") or self.stable_b))
+                pr_head = html.escape(str(pr.get("head") or ""))
+                pr_url = pr.get("url") or "https://src.opensuse.org"
+                is_forward = pr.get("is_forward", False)
+
+                card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                card.add_css_class("card")
+                card.set_margin_top(1)
+                card.set_margin_bottom(1)
+                card.set_cursor_from_name("pointer")
+
+                text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                text_box.set_margin_start(10)
+                text_box.set_margin_top(6)
+                text_box.set_margin_bottom(6)
+                text_box.set_hexpand(True)
+
+                # Line 1: PR Number, Title, and optional [Branch Forward] badge
+                title_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                c_title = Gtk.Label(halign=Gtk.Align.START)
+                c_title.set_markup(f"<b>#{pr_num}:</b> {pr_title}")
+                c_title.set_wrap(True)
+                c_title.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                c_title.set_hexpand(True)
+                title_box.append(c_title)
+
+                if is_forward:
+                    fwd_pill = Gtk.Label()
+                    fwd_pill.set_markup("<span size='smaller' weight='bold' foreground='#2ec27e'>[Branch Forward]</span>")
+                    title_box.append(fwd_pill)
+
+                text_box.append(title_box)
+
+                # Line 2: Author and Target branch
+                source_desc = f" (from <i>{pr_head}</i>)" if pr_head else ""
+                meta_lbl = Gtk.Label(halign=Gtk.Align.START)
+                meta_lbl.set_markup(f"<span size='small' foreground='gray'>👤 @{pr_author}  |  🎯 Target: <b>{pr_base}</b>{source_desc}</span>")
+                text_box.append(meta_lbl)
+
+                card.append(text_box)
+
+                # Trailing web browser icon as subtle visual cue
+                web_icon = Gtk.Image.new_from_icon_name("web-browser-symbolic")
+                web_icon.add_css_class("dim-label")
+                web_icon.set_margin_end(12)
+                card.append(web_icon)
+
+                # Tooltip with merge command and double-click instruction
+                escaped_url = html.escape(str(pr_url))
+                card.set_tooltip_markup(
+                    f"<b>Pull Request #{pr_num}</b>: {pr_title}\n"
+                    f"• Author: @{pr_author}\n"
+                    f"• Target: {pr_base}{source_desc}\n"
+                    f"• URL: {escaped_url}\n\n"
+                    f"<i>Double-click to open in browser</i>\n"
+                    f"<i>CLI merge command:</i> <tt>geckopit-cli --merge-pr {pr_num}</tt>"
+                )
+
+                gesture = Gtk.GestureClick.new()
+                gesture.set_button(1)
+                gesture.connect("released", self.on_pr_card_clicked, pr_url, pr_num)
+                card.add_controller(gesture)
+
+                self.pr_card_items_box.append(card)
+
+            self.pr_card_revealer.set_reveal_child(True)
 
     def update_detail_drift_ui(self, package_name, force_reload=False):
         if getattr(self, "current_selected_package", None) != package_name:
@@ -4912,6 +5087,7 @@ class SyncWindow(Adw.ApplicationWindow):
         self.update_detail_worktree_ui(package_name)
         self.update_detail_version_ui(package_name)
         self.update_detail_sync_ui(package_name)
+        self.update_detail_pr_ui(package_name)
         self.update_detail_drift_ui(package_name, force_reload=False)
 
         # -------------------------------------------------------------
@@ -5148,14 +5324,8 @@ class SyncWindow(Adw.ApplicationWindow):
 
     def on_detail_create_pr_clicked(self, btn):
         if getattr(self, "current_selected_package", None):
-            pkg_data = self.package_data.get(self.current_selected_package, {})
-            pr = pkg_data.get("pr") or {}
-            pr_url = pr.get("url")
-            if pr.get("has_pr") and pr_url:
-                webbrowser.open(pr_url)
-            else:
-                dialog = SyncCreatePRDialog(self, self.current_selected_package)
-                dialog.present()
+            dialog = SyncCreatePRDialog(self, self.current_selected_package)
+            dialog.present()
 
     def on_detail_pool_diff_clicked(self, btn):
         if getattr(self, "current_selected_package", None):

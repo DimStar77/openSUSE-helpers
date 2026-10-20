@@ -1423,6 +1423,126 @@ class TestSyncWindow(unittest.TestCase):
             {"has_pr": False}
         )
 
+    @mock.patch("sync_backend.get_http_session")
+    @mock.patch("sync_backend.get_gitea_owner_and_repo", return_value=("GNOME", "baobab"))
+    @mock.patch("sync_backend.get_gitea_token", return_value=None)
+    def test_check_repo_pr_multi_pr_support(self, mock_tok, mock_owner, mock_session):
+        import sync_backend as sb
+        mock_resp = mock.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = [
+            {
+                "number": 12,
+                "title": "Update to version 51.0",
+                "html_url": "https://src.opensuse.org/GNOME/baobab/pulls/12",
+                "user": {"login": "contributor"},
+                "base": {"ref": "factory"},
+                "head": {"ref": "update-51", "repo": {"full_name": "contributor/baobab"}},
+                "created_at": "2026-10-20T10:00:00Z"
+            },
+            {
+                "number": 15,
+                "title": "Forward next to factory: baobab",
+                "html_url": "https://src.opensuse.org/GNOME/baobab/pulls/15",
+                "user": {"login": "dimstar"},
+                "base": {"ref": "factory"},
+                "head": {"ref": "next"},
+                "created_at": "2026-10-20T12:00:00Z"
+            }
+        ]
+        mock_session.return_value.get.return_value = mock_resp
+
+        repo, pr_info = sb.check_repo_pr("baobab", stable_branch="factory", unstable_branch="next")
+        self.assertEqual(repo, "baobab")
+        self.assertTrue(pr_info["has_pr"])
+        self.assertTrue(pr_info["has_forward_pr"])
+        self.assertEqual(pr_info["count"], 2)
+        self.assertEqual(pr_info["number"], 15)
+        self.assertEqual(pr_info["url"], "https://src.opensuse.org/GNOME/baobab/pulls/15")
+        self.assertEqual(len(pr_info["prs"]), 2)
+        self.assertEqual(pr_info["prs"][0]["number"], 12)
+        self.assertEqual(pr_info["prs"][0]["author"], "contributor")
+        self.assertFalse(pr_info["prs"][0]["is_forward"])
+        self.assertEqual(pr_info["prs"][1]["number"], 15)
+        self.assertTrue(pr_info["prs"][1]["is_forward"])
+
+        # Case 2: Only contributor PR exists (no forward PR)
+        mock_resp.json.return_value = [
+            {
+                "number": 42,
+                "title": "Fix build on riscv64",
+                "html_url": "https://src.opensuse.org/GNOME/baobab/pulls/42",
+                "user": {"login": "schwab"},
+                "base": {"ref": "factory"},
+                "head": {"ref": "riscv-fix"},
+                "created_at": "2026-10-20T14:00:00Z"
+            }
+        ]
+        _, pr_info2 = sb.check_repo_pr("baobab", stable_branch="factory", unstable_branch="next")
+        self.assertTrue(pr_info2["has_pr"])
+        self.assertFalse(pr_info2["has_forward_pr"])
+        self.assertEqual(pr_info2["count"], 1)
+        self.assertEqual(pr_info2["number"], 42)
+        self.assertEqual(pr_info2["prs"][0]["author"], "schwab")
+
+    def test_update_detail_pr_ui_group_card(self):
+        from geckopit import SyncWindow
+        mock_win = mock.Mock()
+        mock_win.current_selected_package = "mypkg"
+        mock_win.stable_b = "factory"
+        mock_win.unstable_b = "next"
+        mock_win.package_data = {
+            "mypkg": {
+                "version": {
+                    "factory_ver": "50.0",
+                    "upstream_stable": "51.0",
+                    "next_ver": "50.0",
+                    "upstream_latest": "51.0"
+                },
+                "pr": {
+                    "has_pr": True,
+                    "count": 1,
+                    "prs": [
+                        {
+                            "number": 77,
+                            "title": "Fix <stdio.h> & <stdlib.h> on <arch>",
+                            "author": "contributor",
+                            "base": "factory",
+                            "head": "patch-1",
+                            "url": "https://src.opensuse.org/GNOME/mypkg/pulls/77"
+                        }
+                    ]
+                }
+            }
+        }
+        mock_win.pr_card_revealer = mock.Mock()
+        mock_win.pr_card_title_lbl = mock.Mock()
+        mock_win.pr_card_items_box = mock.Mock()
+        mock_win.pr_card_items_box.get_first_child.return_value = None
+
+        SyncWindow.update_detail_pr_ui(mock_win, "mypkg")
+
+        mock_win.pr_card_revealer.set_reveal_child.assert_called_with(True)
+        self.assertIn("ACTIVE PULL REQUESTS (1)", mock_win.pr_card_title_lbl.set_markup.call_args[0][0])
+        mock_win.pr_card_items_box.append.assert_called()
+
+        # Verify card tooltip markup is valid Pango markup (no invalid tags like <code>)
+        appended_card = mock_win.pr_card_items_box.append.call_args[0][0]
+        tt_markup = appended_card.get_tooltip_markup()
+        self.assertIsNotNone(tt_markup)
+        import gi
+        gi.require_version("Pango", "1.0")
+        from gi.repository import Pango
+        ok, _, clean_text, _ = Pango.parse_markup(tt_markup, -1, "\0")
+        self.assertTrue(ok)
+        self.assertIn("geckopit-cli --merge-pr 77", clean_text)
+        self.assertIn("Fix <stdio.h> & <stdlib.h> on <arch>", clean_text)
+
+        # When no PRs exist, card is hidden
+        mock_win.package_data["mypkg"]["pr"] = {"has_pr": False}
+        SyncWindow.update_detail_pr_ui(mock_win, "mypkg")
+        mock_win.pr_card_revealer.set_reveal_child.assert_called_with(False)
+
     def test_update_sync_row_single_pr_propagation(self):
         from geckopit import SyncWindow
         mock_win = mock.Mock()
@@ -1450,6 +1570,7 @@ class TestSyncWindow(unittest.TestCase):
         mock_win.update_detail_sync_ui.assert_called_with("pkg_test")
         mock_win.update_detail_worktree_ui.assert_called_with("pkg_test")
         mock_win.update_detail_title.assert_called_with("pkg_test")
+        mock_win.update_detail_pr_ui.assert_called_with("pkg_test")
 
     def test_get_http_session_singleton_and_pooling(self):
         import sync_backend as sb

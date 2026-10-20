@@ -133,10 +133,20 @@ def render_single_package_dashboard(data):
         print(f"  Branch Sync:   {fwd_str}")
 
         if pr.get('has_pr', False):
-            pr_str = f"{sb.GREEN}🟢 PR #{pr.get('number')}: {pr.get('url')}{sb.RESET}"
+            prs = pr.get("prs", [])
+            count = pr.get("count", len(prs)) or 1
+            if count > 1:
+                pr_str = f"{sb.GREEN}🟢 {count} Active PRs (primary: PR #{pr.get('number')}) - {pr.get('url')}{sb.RESET}"
+            else:
+                pr_str = f"{sb.GREEN}🟢 PR #{pr.get('number')}: {pr.get('url')}{sb.RESET}"
+            print(f"  Active PR:     {pr_str}")
+            if prs:
+                for p in prs:
+                    fwd_tag = f" {sb.GREEN}[Forward]{sb.RESET}" if p.get("is_forward") else ""
+                    p_title = p.get("title", "")
+                    print(f"                 • PR #{p['number']} by @{p['author']}: \"{p_title}\" (➔ {p['base']}){fwd_tag}")
         else:
-            pr_str = "None (no active PR)"
-        print(f"  Active PR:     {pr_str}")
+            print(f"  Active PR:     None (no active PR)")
         print()
 
     # Section 3: Upstream Release Versions
@@ -202,6 +212,13 @@ def render_single_package_dashboard(data):
                 guessed, err = sb.guess_update_revision(cur_rev, target_v)
                 if guessed and not err:
                     target_v = guessed
+            # Highlight existing PRs from contributors for this upgrade
+            if pr.get('has_pr'):
+                matching_prs = [p for p in pr.get('prs', []) if not p.get('is_forward')]
+                if matching_prs:
+                    for p in matching_prs:
+                        p_title = p.get("title", "")
+                        actions.append(f"📥 Merge contributor PR #{p['number']} by @{p['author']}: {sb.BOLD}geckopit-cli --merge-pr {p['number']}{sb.RESET} (\"{p_title}\")")
             actions.append(f"⚙️  Run package upgrade: {sb.BOLD}geckopit-cli --upgrade {target_v}{sb.RESET}")
         try:
             p_dir = data.get('pkg_dir', '.')
@@ -298,10 +315,20 @@ def run_single_package_forward(pkg_dir=".", show_pr=False, only_no_pr=False):
     print(f"  Forward Status:             {fwd}")
 
     if pr.get("has_pr"):
-        pr_str = f"{sb.GREEN}Yes (PR #{pr.get('number')}) - {pr.get('url')}{sb.RESET}"
+        prs = pr.get("prs", [])
+        count = pr.get("count", len(prs)) or 1
+        if count > 1:
+            pr_str = f"{sb.GREEN}Yes ({count} Active PRs, primary: PR #{pr.get('number')}) - {pr.get('url')}{sb.RESET}"
+        else:
+            pr_str = f"{sb.GREEN}Yes (PR #{pr.get('number')}) - {pr.get('url')}{sb.RESET}"
+        print(f"  PR Pending:                 {pr_str}")
+        if prs:
+            for p in prs:
+                fwd_tag = f" {sb.GREEN}[Forward]{sb.RESET}" if p.get("is_forward") else ""
+                p_title = p.get("title", "")
+                print(f"                              • PR #{p['number']} by @{p['author']}: \"{p_title}\" (➔ {p['base']}){fwd_tag}")
     else:
-        pr_str = f"{sb.RED}No{sb.RESET}"
-    print(f"  PR Pending:                 {pr_str}")
+        print(f"  PR Pending:                 {sb.RED}No{sb.RESET}")
     print(f"{sb.BOLD}{'='*60}{sb.RESET}")
 
 

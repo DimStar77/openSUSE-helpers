@@ -340,8 +340,15 @@ def get_gitea_token():
 
 def check_repo_pr(repo_name, stable_branch="factory", unstable_branch="next", workspace_path="."):
     """
-    Queries Gitea API to check if there is an open pull request from head to base branch.
-    Returns (repo_name, pr_info) where pr_info indicates whether a matching PR is active.
+    Queries Gitea API to retrieve open pull requests for the repository.
+    Returns (repo_name, pr_info) where pr_info contains:
+      - has_pr (bool): True if ANY open pull request exists.
+      - has_forward_pr (bool): True if an open PR forwards unstable -> stable.
+      - count (int): Total number of open pull requests.
+      - url (str): HTML URL of the forward PR (or primary PR).
+      - number (int): Number of the forward PR (or primary PR).
+      - title (str): Title of the forward PR (or primary PR).
+      - prs (list[dict]): Structured metadata for all open pull requests.
     """
     repo_path = os.path.join(workspace_path, repo_name)
     owner, gitea_name = get_gitea_owner_and_repo(repo_path, repo_name)
@@ -351,26 +358,51 @@ def check_repo_pr(repo_name, stable_branch="factory", unstable_branch="next", wo
     token = get_gitea_token()
     if token:
         headers['Authorization'] = f'token {token}'
+
+    prs = []
+    forward_pr = None
     try:
         response = get_http_session().get(url, headers=headers, timeout=10)
         if response.status_code == 200:
             data = response.json()
             if isinstance(data, list):
                 for pr in data:
-                    base_ref = pr.get("base", {}).get("ref")
-                    head_ref = pr.get("head", {}).get("ref")
-                    if base_ref == stable_branch and head_ref == unstable_branch:
-                        return repo_name, {
-                            "has_pr": True,
-                            "url": pr.get("html_url"),
-                            "number": pr.get("number")
-                        }
+                    num = pr.get("number")
+                    title = pr.get("title") or ""
+                    html_url = pr.get("html_url") or ""
+                    author = pr.get("user", {}).get("username") or pr.get("user", {}).get("login") or "unknown"
+                    base_ref = pr.get("base", {}).get("ref") or ""
+                    head_ref = pr.get("head", {}).get("ref") or pr.get("head", {}).get("label") or ""
+                    head_repo = pr.get("head", {}).get("repo", {}).get("full_name") or ""
+                    created_at = pr.get("created_at") or ""
+                    is_forward = (base_ref == stable_branch and head_ref == unstable_branch)
+
+                    pr_item = {
+                        "number": num,
+                        "title": title,
+                        "url": html_url,
+                        "author": author,
+                        "base": base_ref,
+                        "head": head_ref,
+                        "head_repo": head_repo,
+                        "is_forward": is_forward,
+                        "created_at": created_at,
+                    }
+                    prs.append(pr_item)
+                    if is_forward and not forward_pr:
+                        forward_pr = pr_item
     except Exception:
         pass
+
+    primary = forward_pr or (prs[0] if prs else None)
     return repo_name, {
-        "has_pr": False,
-        "url": None,
-        "number": None
+        "has_pr": len(prs) > 0,
+        "has_forward_pr": forward_pr is not None,
+        "count": len(prs),
+        "url": primary.get("url") if primary else None,
+        "number": primary.get("number") if primary else None,
+        "title": primary.get("title") if primary else None,
+        "prs": prs
     }
 
 def check_repo_sync(repo_name, stable_branch="factory", unstable_branch="next", workspace_path=".", known_not_in_pool=None):
