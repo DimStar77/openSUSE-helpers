@@ -1540,7 +1540,7 @@ class TestSyncWindow(unittest.TestCase):
         ok, _, clean_text, _ = Pango.parse_markup(tt_markup, -1, "\0")
         self.assertTrue(ok)
         self.assertIn("geckopit-cli --merge-pr 77", clean_text)
-        self.assertIn("Fix <stdio.h> & <stdlib.h> on <arch>", clean_text)
+        self.assertIn("Double-click to open on Gitea", clean_text)
 
         # Default unfolded state
         mock_win.pr_card_inner_revealer.set_reveal_child.assert_called_with(True)

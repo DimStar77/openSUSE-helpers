@@ -5069,15 +5069,10 @@ class SyncWindow(Adw.ApplicationWindow):
                 web_icon.set_margin_end(12)
                 card.append(web_icon)
 
-                # Tooltip with merge command and double-click instruction
-                escaped_url = html.escape(str(pr_url))
+                # Action-focused micro-tooltip (non-obtrusive, no duplicate metadata)
                 card.set_tooltip_markup(
-                    f"<b>Pull Request #{pr_num}</b>: {pr_title}\n"
-                    f"• Author: @{pr_author}\n"
-                    f"• Target: {pr_base}{source_desc}\n"
-                    f"• URL: {escaped_url}\n\n"
-                    f"<i>Double-click to open in browser</i>\n"
-                    f"<i>CLI merge command:</i> <tt>geckopit-cli --merge-pr {pr_num}</tt>"
+                    f"<i>Double-click to open on Gitea</i>\n"
+                    f"<i>Merge:</i> <tt>geckopit-cli --merge-pr {pr_num}</tt>"
                 )
 
                 gesture = Gtk.GestureClick.new()
