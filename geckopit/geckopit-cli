@@ -140,7 +140,7 @@ def render_single_package_dashboard(data):
         elif ahead > 0:
             fwd_str = f"{sb.GREEN}✅ In Sync on remote{sb.RESET} {sb.CYAN}(local branch carries {ahead} unpushed commit{'s' if ahead > 1 else ''}){sb.RESET}"
         elif next_status in ('In Sync', 'Ahead (ok)'):
-            fwd_str = f"{sb.GREEN}✅ In Sync (no unforwarded commits){sb.RESET}"
+            fwd_str = f"{sb.GREEN}✅ In Sync{sb.RESET}"
         else:
             fwd_str = f"{sb.YELLOW}❓ {next_status}{sb.RESET}"
         print(f"  Branch Sync:   {fwd_str}")
@@ -175,8 +175,6 @@ def render_single_package_dashboard(data):
                     print(f"                 • PR #{p['number']} by @{p['author']}: \"{p_title}\" (➔ {p['base']}){fwd_tag}")
                     if p_url:
                         print(f"                   {p_url}")
-        else:
-            print(f"  Active PR:     None (no active PR)")
         print()
 
     # Section 3: Upstream Release Versions
@@ -228,6 +226,8 @@ def render_single_package_dashboard(data):
             actions.append(f"🔄 Fast-forward from remote: {sb.BOLD}geckopit-cli --sync{sb.RESET}")
         if pool_behind > 0:
             actions.append(f"📥 Pull upstream changes from Pool: {sb.BOLD}git fetch https://src.opensuse.org/pool/{repo}.git factory && git merge FETCH_HEAD{sb.RESET}")
+        if pool_ahead > 0:
+            actions.append(f"📤 Submit changes to central pool (openSUSE:Factory)")
         if next_behind > 0:
             actions.append(f"🔀 Catch-up merge from {st_branch}: {sb.BOLD}git merge origin/{st_branch}{sb.RESET}")
         # Only recommend PR if commits are actually on remote (ahead == 0) and not in active PR

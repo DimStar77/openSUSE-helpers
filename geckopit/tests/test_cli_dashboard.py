@@ -156,7 +156,41 @@ class TestSinglePackageDashboardFormatting(unittest.TestCase):
         out = buf.getvalue()
 
         self.assertIn("Ahead of factory by 3 commits (Ready for PR)", out)
-        self.assertIn("Active PR:     None (no active PR)", out)
+        self.assertNotIn("Active PR:", out)
+
+
+
+    def test_dashboard_in_sync_and_pool_ahead_action(self):
+        import io
+        from unittest.mock import patch
+
+        data = {
+            'repo_name': 'gnome-shell-extension-desktop-icons',
+            'pkg_dir': '/path/to/pkg',
+            'active_branch': 'next',
+            'stable_branch': 'factory',
+            'unstable_branch': 'next',
+            'worktree': {'ahead': 0, 'behind': 0, 'dirty': False, 'untracked': False},
+            'sync': {'pool_ahead': 3, 'pool_behind': 0, 'pool_status': 'In Sync', 'next_ahead': 0, 'next_behind': 0, 'next_status': 'In Sync'},
+            'version': {'factory_ver': '51.0.9', 'upstream_stable': '51.0.9', 'next_ver': '51.0.9', 'upstream_latest': '51.0.9', 'needs_update': False},
+            'pr': {'has_pr': False, 'has_forward_pr': False, 'count': 0, 'prs': []}
+        }
+
+        buf = io.StringIO()
+        with patch('sys.stdout', buf):
+            self.cli.render_single_package_dashboard(data)
+        out = buf.getvalue()
+
+        # 1. Branch Sync is clean 'In Sync' without '(no unforwarded commits)'
+        self.assertIn("Branch Sync:   \x1b[32m✅ In Sync\x1b[0m", out)
+        self.assertNotIn("(no unforwarded commits)", out)
+
+        # 2. Active PR is completely omitted when 0 PRs exist
+        self.assertNotIn("Active PR:", out)
+
+        # 3. pool_ahead > 0 generates pool submission action
+        self.assertIn("📤 Submit changes to central pool (openSUSE:Factory)", out)
+        self.assertNotIn("No action needed!", out)
 
 
 if __name__ == '__main__':
