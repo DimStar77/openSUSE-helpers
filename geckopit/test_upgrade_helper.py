@@ -454,7 +454,13 @@ Release:        0
 
     def test_format_changelog_entry_empty_diff(self):
         res = format_changelog_entry("", "2.1.8")
-        self.assertEqual(res.strip(), "- Update to version 2.1.8.")
+        self.assertEqual(res.strip(), "- Update to version 2.1.8: No changelog found.")
+
+    def test_format_changelog_entry_empty_diff_with_dropped_patches(self):
+        res = format_changelog_entry("", "2.1.8", dropped_patches=["fix.patch"])
+        expected = """- Update to version 2.1.8: No changelog found.
+- Drop fix.patch: fixed upstream."""
+        self.assertEqual(res.strip(), expected)
 
     def test_extract_appstream_notes(self):
         with tempfile.TemporaryDirectory() as tmpdir:

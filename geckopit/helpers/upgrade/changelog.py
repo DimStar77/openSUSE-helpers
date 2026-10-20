@@ -109,9 +109,11 @@ def build_changelog_from_items(
     """
     entries = []
     # Level 0 Header
-    has_details = bool(items) or has_translations or bool(dropped_patches) or meson_deps_updated
-    colon = ":" if has_details else "."
-    entries.append(wrap_bullet(f"Update to version {target_version}{colon}", level=0, width=width))
+    has_changelog = bool(items) or has_translations
+    if has_changelog:
+        entries.append(wrap_bullet(f"Update to version {target_version}:", level=0, width=width))
+    else:
+        entries.append(wrap_bullet(f"Update to version {target_version}: No changelog found.", level=0, width=width))
 
     for level, text in items:
         if text.strip():
