@@ -2,12 +2,16 @@
 import os
 import sys
 import unittest
-import importlib.machinery
+import importlib.util
+from importlib.machinery import SourceFileLoader
 
 # Load resolve-changes
 rc_path = os.path.join(os.path.dirname(__file__), '..', 'GNOME-maintainer-scripts', 'resolve-changes')
-loader = importlib.machinery.SourceFileLoader("resolve_changes", rc_path)
-rc = loader.load_module()
+loader = SourceFileLoader("resolve_changes", rc_path)
+spec = importlib.util.spec_from_file_location("resolve_changes", rc_path, loader=loader)
+rc = importlib.util.module_from_spec(spec)
+sys.modules["resolve_changes"] = rc
+loader.exec_module(rc)
 
 class TestResolveChanges(unittest.TestCase):
 

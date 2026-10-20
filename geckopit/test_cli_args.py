@@ -8,10 +8,15 @@ preventing unintended fallback to default synchronization/dashboard actions.
 import os
 import sys
 import unittest
+import importlib.util
 from importlib.machinery import SourceFileLoader
 
 cli_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "geckopit-cli")
-geckopit_cli = SourceFileLoader("geckopit_cli", cli_path).load_module()
+loader = SourceFileLoader("geckopit_cli", cli_path)
+spec = importlib.util.spec_from_file_location("geckopit_cli", cli_path, loader=loader)
+geckopit_cli = importlib.util.module_from_spec(spec)
+sys.modules["geckopit_cli"] = geckopit_cli
+loader.exec_module(geckopit_cli)
 
 
 class TestCliArgs(unittest.TestCase):
