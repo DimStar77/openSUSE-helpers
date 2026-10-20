@@ -94,11 +94,15 @@ def render_single_package_dashboard(data):
         pool_ahead = sync.get('pool_ahead', 0)
         pool_status = sync.get('pool_status', 'unknown')
         if pool_behind > 0 and pool_ahead > 0:
-            pool_str = f"{sb.RED}❌ Diverged (Behind {pool_behind}, Ahead {pool_ahead}){sb.RESET}"
+            b_s = 's' if pool_behind != 1 else ''
+            a_s = 's' if pool_ahead != 1 else ''
+            pool_str = f"{sb.RED}❌ Diverged (Behind {pool_behind} commit{b_s}, Ahead {pool_ahead} commit{a_s}){sb.RESET}"
         elif pool_behind > 0:
-            pool_str = f"{sb.YELLOW}📥 Behind central pool by {pool_behind} commits (Pull needed){sb.RESET}"
+            b_s = 's' if pool_behind != 1 else ''
+            pool_str = f"{sb.YELLOW}📥 Behind central pool by {pool_behind} commit{b_s} (Pull needed){sb.RESET}"
         elif pool_ahead > 0:
-            pool_str = f"{sb.CYAN}📤 Ahead of central pool by {pool_ahead} commits (Submit needed){sb.RESET}"
+            a_s = 's' if pool_ahead != 1 else ''
+            pool_str = f"{sb.CYAN}📤 Ahead of central pool by {pool_ahead} commit{a_s} (Submit needed){sb.RESET}"
         elif pool_status == 'Not in Pool':
             pool_str = f"{sb.YELLOW}❓ Not in Pool{sb.RESET}"
         elif pool_status in ('Fetch failed', 'Error', 'unknown'):
@@ -119,11 +123,20 @@ def render_single_package_dashboard(data):
         elif next_status in ('Comparison failed', 'Error', 'unknown'):
             fwd_str = f"{sb.RED}⚠️ Branch comparison failed ({next_status}){sb.RESET}"
         elif next_behind > 0 and next_ahead > 0:
-            fwd_str = f"{sb.RED}❌ Diverged (Behind {next_behind}, Ahead {next_ahead}){sb.RESET}"
+            b_s = 's' if next_behind != 1 else ''
+            a_s = 's' if next_ahead != 1 else ''
+            fwd_str = f"{sb.RED}❌ Diverged (Behind {next_behind} commit{b_s}, Ahead {next_ahead} commit{a_s}){sb.RESET}"
         elif next_behind > 0:
-            fwd_str = f"{sb.YELLOW}⚠️ Behind {st_branch} by {next_behind} commits (Catch-up merge needed){sb.RESET}"
+            b_s = 's' if next_behind != 1 else ''
+            fwd_str = f"{sb.YELLOW}⚠️ Behind {st_branch} by {next_behind} commit{b_s} (Catch-up merge needed){sb.RESET}"
         elif next_ahead > 0:
-            fwd_str = f"{sb.GREEN}🔀 Ahead of {st_branch} by {next_ahead} commits (Ready for PR){sb.RESET}"
+            a_s = 's' if next_ahead != 1 else ''
+            if pr.get('has_forward_pr'):
+                fwd_num = pr.get('number')
+                pr_ref = f"PR #{fwd_num} pending" if fwd_num else "PR pending"
+                fwd_str = f"{sb.GREEN}🔀 Ahead of {st_branch} by {next_ahead} commit{a_s} ({pr_ref}){sb.RESET}"
+            else:
+                fwd_str = f"{sb.GREEN}🔀 Ahead of {st_branch} by {next_ahead} commit{a_s} (Ready for PR){sb.RESET}"
         elif ahead > 0:
             fwd_str = f"{sb.GREEN}✅ In Sync on remote{sb.RESET} {sb.CYAN}(local branch carries {ahead} unpushed commit{'s' if ahead > 1 else ''}){sb.RESET}"
         elif next_status in ('In Sync', 'Ahead (ok)'):
@@ -133,18 +146,35 @@ def render_single_package_dashboard(data):
         print(f"  Branch Sync:   {fwd_str}")
 
         if pr.get('has_pr', False):
-            prs = pr.get("prs", [])
-            count = pr.get("count", len(prs)) or 1
-            if count > 1:
-                pr_str = f"{sb.GREEN}🟢 {count} Active PRs (primary: PR #{pr.get('number')}) - {pr.get('url')}{sb.RESET}"
+            prs = pr.get('prs', [])
+            count = pr.get('count', len(prs)) or len(prs) or 1
+            if count == 1:
+                p = prs[0] if prs else {
+                    'number': pr.get('number'),
+                    'title': pr.get('title') or 'Pull Request',
+                    'url': pr.get('url'),
+                    'author': 'contributor',
+                    'base': st_branch,
+                    'is_forward': pr.get('has_forward_pr', False)
+                }
+                fwd_tag = f" {sb.GREEN}[Forward]{sb.RESET}" if p.get('is_forward') else ""
+                p_title = p.get('title', '')
+                p_author = p.get('author', 'unknown')
+                p_base = p.get('base', st_branch)
+                p_num = p.get('number') or pr.get('number')
+                p_url = p.get('url') or pr.get('url')
+                print(f"  Active PR:     {sb.GREEN}🟢 PR #{p_num}{sb.RESET} by @{p_author}: \"{p_title}\" (➔ {p_base}){fwd_tag}")
+                if p_url:
+                    print(f"                    {p_url}")
             else:
-                pr_str = f"{sb.GREEN}🟢 PR #{pr.get('number')}: {pr.get('url')}{sb.RESET}"
-            print(f"  Active PR:     {pr_str}")
-            if prs:
+                print(f"  Active PR:     {sb.GREEN}🟢 {count} Active PRs:{sb.RESET}")
                 for p in prs:
-                    fwd_tag = f" {sb.GREEN}[Forward]{sb.RESET}" if p.get("is_forward") else ""
-                    p_title = p.get("title", "")
+                    fwd_tag = f" {sb.GREEN}[Forward]{sb.RESET}" if p.get('is_forward') else ""
+                    p_title = p.get('title', '')
+                    p_url = p.get('url', '')
                     print(f"                 • PR #{p['number']} by @{p['author']}: \"{p_title}\" (➔ {p['base']}){fwd_tag}")
+                    if p_url:
+                        print(f"                   {p_url}")
         else:
             print(f"  Active PR:     None (no active PR)")
         print()
@@ -201,7 +231,7 @@ def render_single_package_dashboard(data):
         if next_behind > 0:
             actions.append(f"🔀 Catch-up merge from {st_branch}: {sb.BOLD}git merge origin/{st_branch}{sb.RESET}")
         # Only recommend PR if commits are actually on remote (ahead == 0) and not in active PR
-        if ahead == 0 and next_ahead > 0 and not pr.get('has_pr'):
+        if ahead == 0 and next_ahead > 0 and not pr.get('has_forward_pr'):
             actions.append(f"📤 Create Gitea Pull Request from {branch} to {st_branch}")
         if ver.get('needs_update'):
             target_v = u_latest if branch == 'next' and u_latest != '—' else u_stable
@@ -307,26 +337,50 @@ def run_single_package_forward(pkg_dir=".", show_pr=False, only_no_pr=False):
     print(f"  Commits Behind (factory):   {sb.RED if next_behind > 0 else sb.GREEN}{next_behind}{sb.RESET}")
 
     if next_behind > 0:
-        fwd = f"{sb.YELLOW}⚠️ Needs Catch-up Merge first{sb.RESET}"
+        b_s = 's' if next_behind != 1 else ''
+        fwd = f"{sb.YELLOW}⚠️ Needs Catch-up Merge first ({next_behind} commit{b_s} behind){sb.RESET}"
     elif next_ahead > 0:
-        fwd = f"{sb.GREEN}✅ Ready to Forward (Clean){sb.RESET}"
+        a_s = 's' if next_ahead != 1 else ''
+        if pr.get('has_forward_pr'):
+            fwd_num = pr.get('number')
+            pr_ref = f"PR #{fwd_num} pending" if fwd_num else "PR pending"
+            fwd = f"{sb.GREEN}🔀 Ahead of {st_branch} by {next_ahead} commit{a_s} ({pr_ref}){sb.RESET}"
+        else:
+            fwd = f"{sb.GREEN}✅ Ready to Forward (Clean, {next_ahead} commit{a_s} ahead){sb.RESET}"
     else:
         fwd = f"{sb.GREEN}✅ In Sync{sb.RESET}"
     print(f"  Forward Status:             {fwd}")
 
-    if pr.get("has_pr"):
-        prs = pr.get("prs", [])
-        count = pr.get("count", len(prs)) or 1
-        if count > 1:
-            pr_str = f"{sb.GREEN}Yes ({count} Active PRs, primary: PR #{pr.get('number')}) - {pr.get('url')}{sb.RESET}"
+    if pr.get('has_pr'):
+        prs = pr.get('prs', [])
+        count = pr.get('count', len(prs)) or len(prs) or 1
+        if count == 1:
+            p = prs[0] if prs else {
+                'number': pr.get('number'),
+                'title': pr.get('title') or 'Pull Request',
+                'url': pr.get('url'),
+                'author': 'contributor',
+                'base': 'factory',
+                'is_forward': pr.get('has_forward_pr', False)
+            }
+            fwd_tag = f" {sb.GREEN}[Forward]{sb.RESET}" if p.get('is_forward') else ""
+            p_title = p.get('title', '')
+            p_author = p.get('author', 'unknown')
+            p_base = p.get('base', 'factory')
+            p_num = p.get('number') or pr.get('number')
+            p_url = p.get('url') or pr.get('url') or ''
+            print(f"  PR Pending:                 {sb.GREEN}Yes: PR #{p_num}{sb.RESET} by @{p_author}: \"{p_title}\" (➔ {p_base}){fwd_tag}")
+            if p_url:
+                print(f"                                   {p_url}")
         else:
-            pr_str = f"{sb.GREEN}Yes (PR #{pr.get('number')}) - {pr.get('url')}{sb.RESET}"
-        print(f"  PR Pending:                 {pr_str}")
-        if prs:
+            print(f"  PR Pending:                 {sb.GREEN}Yes ({count} Active PRs){sb.RESET}")
             for p in prs:
-                fwd_tag = f" {sb.GREEN}[Forward]{sb.RESET}" if p.get("is_forward") else ""
-                p_title = p.get("title", "")
+                fwd_tag = f" {sb.GREEN}[Forward]{sb.RESET}" if p.get('is_forward') else ""
+                p_title = p.get('title', '')
+                p_url = p.get('url', '')
                 print(f"                              • PR #{p['number']} by @{p['author']}: \"{p_title}\" (➔ {p['base']}){fwd_tag}")
+                if p_url:
+                    print(f"                                {p_url}")
     else:
         print(f"  PR Pending:                 {sb.RED}No{sb.RESET}")
     print(f"{sb.BOLD}{'='*60}{sb.RESET}")

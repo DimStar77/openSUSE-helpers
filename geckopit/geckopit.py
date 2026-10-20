@@ -4932,13 +4932,14 @@ class SyncWindow(Adw.ApplicationWindow):
                 self.catchup_merge_btn.set_label("🔀 Catch-up Merge")
 
             if next_ahead_val > 0:
+                c_s = 's' if next_ahead_val != 1 else ''
                 if pr.get("has_forward_pr", False):
                     forward_num = pr.get("number")
-                    branch_text = f"<span foreground='green' weight='bold'>Forward PR #{forward_num} Active</span> | Next is ahead of Factory by {next_ahead_val} commits."
+                    branch_text = f"<span foreground='green' weight='bold'>Forward PR #{forward_num} Active</span> | Next is ahead of Factory by {next_ahead_val} commit{c_s}."
                     self.create_pr_btn.set_label("Forward PR Active")
                     self.create_pr_btn.set_sensitive(False)
                 else:
-                    branch_text = f"<span foreground='orange' weight='bold'>Forwarding Needed</span> | Next is ahead of Factory by {next_ahead_val} commits."
+                    branch_text = f"<span foreground='orange' weight='bold'>Forwarding Needed</span> | Next is ahead of Factory by {next_ahead_val} commit{c_s}."
                     self.create_pr_btn.set_label("Create Pull Request")
                     self.create_pr_btn.set_sensitive(True)
             else:
@@ -4954,7 +4955,9 @@ class SyncWindow(Adw.ApplicationWindow):
                     branch_text = f"<span foreground='yellow'>{next_status}</span>"
 
             if next_behind > 0 and next_ahead_val > 0:
-                branch_text = f"<span weight='bold' foreground='red'>Diverged</span> (Behind: {next_behind} / Ahead: {next_ahead_val} commits)"
+                b_s = 's' if next_behind != 1 else ''
+                a_s = 's' if next_ahead_val != 1 else ''
+                branch_text = f"<span weight='bold' foreground='red'>Diverged</span> (Behind: {next_behind} commit{b_s} / Ahead: {next_ahead_val} commit{a_s})"
                 self.create_pr_btn.set_sensitive(False)
 
             self.unstable_branch_lbl.set_markup(branch_text)
