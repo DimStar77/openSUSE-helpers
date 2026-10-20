@@ -735,7 +735,8 @@ class SyncDiffDialog(Gtk.Window):
 
         try:
             if pool_behind > 0:
-                comparison_desc = f"Pool (Upstream) vs local Factory  [Behind by {pool_behind} commits]"
+                c_s = 's' if pool_behind != 1 else ''
+                comparison_desc = f"Pool (Upstream) vs local Factory  [Behind by {pool_behind} commit{c_s}]"
                 gitea_name = sb.get_gitea_repo_name(repo_path, self.package_name)
                 pool_url = f"https://src.opensuse.org/pool/{gitea_name}.git"
                 sb.run_tracked(
@@ -750,7 +751,8 @@ class SyncDiffDialog(Gtk.Window):
                 if not diff_text.strip():
                     diff_text = "No differences in spec files or sources detected."
             elif pool_ahead > 0:
-                comparison_desc = f"local Factory vs Pool (Upstream)  [Ahead by {pool_ahead} commits]"
+                c_s = 's' if pool_ahead != 1 else ''
+                comparison_desc = f"local Factory vs Pool (Upstream)  [Ahead by {pool_ahead} commit{c_s}]"
                 gitea_name = sb.get_gitea_repo_name(repo_path, self.package_name)
                 pool_url = f"https://src.opensuse.org/pool/{gitea_name}.git"
                 sb.run_tracked(
@@ -765,7 +767,8 @@ class SyncDiffDialog(Gtk.Window):
                 if not diff_text.strip():
                     diff_text = "No differences in spec files or sources detected."
             elif next_behind > 0:
-                comparison_desc = f"local Next vs local Factory  [Next behind by {next_behind} commits]"
+                c_s = 's' if next_behind != 1 else ''
+                comparison_desc = f"local Next vs local Factory  [Next behind by {next_behind} commit{c_s}]"
                 res = sb.run_tracked(
                     ['git', '-C', repo_path, 'diff', 'origin/next...origin/factory'],
                     check=True, capture_output=True, text=True
@@ -4890,14 +4893,16 @@ class SyncWindow(Adw.ApplicationWindow):
             self.stable_pool_lbl.set_text("Loading...")
             self.pull_pool_btn.set_sensitive(False)
         else:
+            b_s = 's' if pool_behind != 1 else ''
+            a_s = 's' if pool_ahead != 1 else ''
             if pool_behind > 0 and pool_ahead > 0:
-                p1_text = f"<span weight='bold' foreground='red'>Diverged</span> (Behind Pool: {pool_behind} / Ahead Pool: {pool_ahead} commits)"
+                p1_text = f"<span weight='bold' foreground='red'>Diverged</span> (Behind Pool: {pool_behind} commit{b_s} / Ahead Pool: {pool_ahead} commit{a_s})"
                 self.pull_pool_btn.set_sensitive(True)
             elif pool_behind > 0:
-                p1_text = f"<span weight='bold' foreground='orange'>Behind Gitea Pool by {pool_behind} commits</span> (Pull needed)"
+                p1_text = f"<span weight='bold' foreground='orange'>Behind Gitea Pool by {pool_behind} commit{b_s}</span> (Pull needed)"
                 self.pull_pool_btn.set_sensitive(True)
             elif pool_ahead > 0:
-                p1_text = f"<span weight='bold' foreground='cyan'>Ahead of Gitea Pool by {pool_ahead} commits</span> (Push/PR needed)"
+                p1_text = f"<span weight='bold' foreground='cyan'>Ahead of Gitea Pool by {pool_ahead} commit{a_s}</span> (Push/PR needed)"
                 self.pull_pool_btn.set_sensitive(False)
             elif pool_status == "Not in Pool":
                 p1_text = "<span foreground='yellow' weight='bold'>Not in Gitea Pool</span>"

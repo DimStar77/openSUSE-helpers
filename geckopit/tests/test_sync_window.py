@@ -1324,5 +1324,45 @@ class TestSyncWindow(unittest.TestCase):
         mock_win.diff_buffer.set_text.assert_called_with("active diff text")
 
 
+
+    def test_update_detail_sync_ui_pool_pluralization(self):
+        mock_win = mock.Mock()
+        mock_win.current_selected_package = "testpkg"
+        mock_win.stable_pool_lbl = mock.Mock()
+        mock_win.pull_pool_btn = mock.Mock()
+        mock_win.unstable_branch_lbl = mock.Mock()
+        mock_win.catchup_merge_btn = mock.Mock()
+        mock_win.create_pr_btn = mock.Mock()
+
+        # 1. Pool ahead by exactly 1 commit
+        mock_win.package_data = {
+            "testpkg": {
+                "sync": {"pool_ahead": 1, "pool_behind": 0, "pool_status": "In Sync", "next_status": "In Sync", "next_ahead": 0, "next_behind": 0},
+                "pr": {"has_pr": False, "has_forward_pr": False}
+            }
+        }
+        SyncWindow.update_detail_sync_ui(mock_win, "testpkg")
+        markup = mock_win.stable_pool_lbl.set_markup.call_args[0][0]
+        self.assertIn("Ahead of Gitea Pool by 1 commit</span>", markup)
+        self.assertNotIn("1 commits", markup)
+
+        # 2. Pool behind by exactly 1 commit
+        mock_win.package_data["testpkg"]["sync"] = {
+            "pool_ahead": 0, "pool_behind": 1, "pool_status": "In Sync", "next_status": "In Sync", "next_ahead": 0, "next_behind": 0
+        }
+        SyncWindow.update_detail_sync_ui(mock_win, "testpkg")
+        markup = mock_win.stable_pool_lbl.set_markup.call_args[0][0]
+        self.assertIn("Behind Gitea Pool by 1 commit</span>", markup)
+        self.assertNotIn("1 commits", markup)
+
+        # 3. Diverged with 2 commits behind and 1 commit ahead
+        mock_win.package_data["testpkg"]["sync"] = {
+            "pool_ahead": 1, "pool_behind": 2, "pool_status": "In Sync", "next_status": "In Sync", "next_ahead": 0, "next_behind": 0
+        }
+        SyncWindow.update_detail_sync_ui(mock_win, "testpkg")
+        markup = mock_win.stable_pool_lbl.set_markup.call_args[0][0]
+        self.assertIn("Behind Pool: 2 commits / Ahead Pool: 1 commit", markup)
+
+
 if __name__ == '__main__':
     unittest.main()

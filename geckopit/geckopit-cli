@@ -603,7 +603,8 @@ def run_not_in_pool_check(repos):
         elif d.get("next_behind", 0) > 0:
             next_disp = f"{sb.RED}📥 Behind by {d['next_behind']} (needs merge){sb.RESET}"
         elif d.get("next_ahead", 0) > 0:
-            next_disp = f"{sb.GREEN}✅ In Sync (+{d['next_ahead']} next commits){sb.RESET}"
+            c_s = 's' if d.get('next_ahead', 0) != 1 else ''
+            next_disp = f"{sb.GREEN}✅ In Sync (+{d['next_ahead']} next commit{c_s}){sb.RESET}"
         else:
             next_disp = next_st
 
@@ -671,7 +672,8 @@ def run_sync_check(repos, include_not_in_pool=False):
             elif data["next_behind"] > 0:
                 stage2_str = f"{sb.RED}📥 **Behind by {data['next_behind']}** (needs merge){sb.RESET}"
             elif data["next_ahead"] > 0:
-                stage2_str = f"{sb.GREEN}✅ In Sync (+{data['next_ahead']} next commits){sb.RESET}"
+                c_s = 's' if data.get('next_ahead', 0) != 1 else ''
+                stage2_str = f"{sb.GREEN}✅ In Sync (+{data['next_ahead']} next commit{c_s}){sb.RESET}"
             elif data["next_status"] in ("In Sync", "Ahead (ok)"):
                 stage2_str = f"{sb.GREEN}✅ In Sync{sb.RESET}"
             else:

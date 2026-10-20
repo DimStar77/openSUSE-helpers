@@ -895,15 +895,18 @@ class StagingGuiWindow(Adw.ApplicationWindow):
         host_str = f"Host: ★ {self.selected_group.host_package}" if self.selected_group.host_package else ""
         st = obs.get("status", "none")
         if st == "failed":
-            obs_txt = f"OBS: 🔴 Failed ({len(obs.get('failed_pkgs', []))} pkgs)"
+            failed_cnt = len(obs.get('failed_pkgs', []))
+            obs_txt = f"OBS: 🔴 Failed ({failed_cnt} pkg{'s' if failed_cnt != 1 else ''})"
         elif st == "building":
             obs_txt = f"OBS: 🟡 Building ({obs.get('succeeded', 0)}/{obs.get('total', 0)})"
         elif st == "succeeded":
-            obs_txt = f"OBS: 🟢 Built ({obs.get('total', 0)} pkgs)"
+            total_cnt = obs.get('total', 0)
+            obs_txt = f"OBS: 🟢 Built ({total_cnt} pkg{'s' if total_cnt != 1 else ''})"
         else:
             obs_txt = "OBS: ⚪ Standby"
 
-        self.row_title.set_subtitle(f"{host_str}  •  {obs_txt}  •  {self.selected_group.member_count} pkgs")
+        m_cnt = self.selected_group.member_count
+        self.row_title.set_subtitle(f"{host_str}  •  {obs_txt}  •  {m_cnt} pkg{'s' if m_cnt != 1 else ''}")
 
     def populate_members_list(self):
         while True:
@@ -1038,10 +1041,11 @@ class StagingGuiWindow(Adw.ApplicationWindow):
 
     def prompt_select_package_log(self, group: ss.StagingGroup, packages: List[str], obs: Dict):
         """Presents a selection dialog when a group contains multiple packages with build logs."""
+        pkg_cnt = len(packages)
         dialog = Adw.MessageDialog(
             transient_for=self,
             heading=f"Select Build Log (PR #{group.pr_id})",
-            body=f"Group tracks {len(packages)} packages. Choose which build log to view:"
+            body=f"Group tracks {pkg_cnt} package{'s' if pkg_cnt != 1 else ''}. Choose which build log to view:"
         )
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         content_box.set_margin_top(8)

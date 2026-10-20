@@ -1132,7 +1132,8 @@ class StagingTUI:
         while True:
             win.erase()
             win.box()
-            header_str = f" Combine {len(marked_prs)} PRs: Select Target Group "
+            pr_cnt = len(marked_prs)
+            header_str = f" Combine {pr_cnt} PR{'s' if pr_cnt != 1 else ''}: Select Target Group "
             win.addstr(0, 2, header_str[:modal_w - 4], curses.color_pair(3) | curses.A_BOLD)
 
             prompt_str = f"Select the Target Group to absorb the other {len(marked_prs) - 1} PR(s):"
@@ -1252,7 +1253,8 @@ class StagingTUI:
                 self.status_color = 1
                 return
 
-            self.status_msg = f"Submitting 'merge ok' for {len(marked_groups)} PRs..."
+            grp_cnt = len(marked_groups)
+            self.status_msg = f"Submitting 'merge ok' for {grp_cnt} PR{'s' if grp_cnt != 1 else ''}..."
             self.status_color = 4
             self.draw(stdscr)
 
@@ -1658,13 +1660,14 @@ class StagingTUI:
         obs_state = obs_status.get("status", "none")
         if obs_state == "failed":
             failed_cnt = len(obs_status.get("failed_pkgs", []))
-            obs_txt = f"OBS: 🔴 Failed ({failed_cnt} pkgs)"
+            obs_txt = f"OBS: 🔴 Failed ({failed_cnt} pkg{'s' if failed_cnt != 1 else ''})"
             obs_attr = curses.color_pair(5) | curses.A_BOLD
         elif obs_state == "building":
             obs_txt = f"OBS: 🟡 Building ({obs_status.get('succeeded', 0)}/{obs_status.get('total', 0)})"
             obs_attr = curses.color_pair(4) | curses.A_BOLD
         elif obs_state == "succeeded":
-            obs_txt = f"OBS: 🟢 Built ({obs_status.get('total', 0)} pkgs)"
+            total_cnt = obs_status.get('total', 0)
+            obs_txt = f"OBS: 🟢 Built ({total_cnt} pkg{'s' if total_cnt != 1 else ''})"
             obs_attr = curses.color_pair(2) | curses.A_BOLD
         elif obs_state == "loading":
             obs_txt = "OBS: ⚡ Checking..."

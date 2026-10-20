@@ -557,7 +557,8 @@ def merge_pull_request(
                 text=True
             )
             if commit_res.returncode == 0:
-                print(f"{GREEN}🚀 Successfully merged and squashed {commit_count} commits from PR #{pr_id} on top of HEAD!{RESET}")
+                c_s = 's' if commit_count != 1 else ''
+                print(f"{GREEN}🚀 Successfully merged and squashed {commit_count} commit{c_s} from PR #{pr_id} on top of HEAD!{RESET}")
                 log_out = subprocess.check_output(
                     ["git", "-C", pkg_dir, "--no-pager", "log", "-1", "--oneline"],
                     text=True

@@ -549,9 +549,10 @@ class StagingService:
         with ThreadPoolExecutor(max_workers=5) as executor:
             list(executor.map(close_source, sources_to_close))
 
+        pkg_cnt = len(all_new_tokens)
         return OperationResult(
             True,
-            f"Successfully combined {len(sources_to_close)} PR(s) ({len(all_new_tokens)} pkgs) into #{target_pr_id}."
+            f"Successfully combined {len(sources_to_close)} PR(s) ({pkg_cnt} pkg{'s' if pkg_cnt != 1 else ''}) into #{target_pr_id}."
         )
 
     def disintegrate_group(self, target_pr_id: int) -> OperationResult:

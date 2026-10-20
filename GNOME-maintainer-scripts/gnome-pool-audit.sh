@@ -53,7 +53,8 @@ RAW_OUTPUT=$(git submodule foreach --quiet '
         if [ "$AHEAD_COUNT" -gt 0 ] && [ "$BEHIND_COUNT" -gt 0 ]; then
              printf "%-35s | \033[0;35mDIVERGED\033[0m   | +%s / -%s\n" "$sm_path" "$AHEAD_COUNT" "$BEHIND_COUNT"
         elif [ "$AHEAD_COUNT" -gt 0 ]; then
-             printf "%-35s | \033[0;33mAHEAD\033[0m      | %s commits ahead of Pool\n" "$sm_path" "$AHEAD_COUNT"
+             [ "$AHEAD_COUNT" -eq 1 ] && c_s="" || c_s="s"
+             printf "%-35s | \033[0;33mAHEAD\033[0m      | %s commit%s ahead of Pool\n" "$sm_path" "$AHEAD_COUNT" "$c_s"
         elif [ "$BEHIND_COUNT" -gt 0 ]; then
              printf "%-35s | \033[0;32mSTALE\033[0m      | %s behind Pool (Needs sync from Pool)\n" "$sm_path" "$BEHIND_COUNT"
         fi
