@@ -11,7 +11,18 @@ import unittest
 import importlib.util
 from importlib.machinery import SourceFileLoader
 
-cli_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "geckopit-cli")
+import os
+import sys
+
+TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+GECKOPIT_DIR = os.path.dirname(TESTS_DIR)
+HELPERS_DIR = os.path.join(GECKOPIT_DIR, "helpers")
+
+for p in [GECKOPIT_DIR, HELPERS_DIR]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
+cli_path = os.path.join(GECKOPIT_DIR, "geckopit-cli")
 loader = SourceFileLoader("geckopit_cli", cli_path)
 spec = importlib.util.spec_from_file_location("geckopit_cli", cli_path, loader=loader)
 geckopit_cli = importlib.util.module_from_spec(spec)

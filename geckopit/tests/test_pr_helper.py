@@ -6,7 +6,17 @@ import tempfile
 import subprocess
 from unittest.mock import patch
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'helpers'))
+import os
+import sys
+
+TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+GECKOPIT_DIR = os.path.dirname(TESTS_DIR)
+HELPERS_DIR = os.path.join(GECKOPIT_DIR, "helpers")
+
+for p in [GECKOPIT_DIR, HELPERS_DIR]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
 from pr_helper import check_spec_collisions, get_pr_commits, merge_pull_request, is_changes_chronologically_sorted, fix_changes_chronological_order, parse_changelog_date, redate_entry_header
 
 class TestPrHelper(unittest.TestCase):

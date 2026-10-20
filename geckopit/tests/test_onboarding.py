@@ -11,7 +11,17 @@ import tempfile
 import stat
 from unittest.mock import patch, MagicMock
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "helpers"))
+import os
+import sys
+
+TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+GECKOPIT_DIR = os.path.dirname(TESTS_DIR)
+HELPERS_DIR = os.path.join(GECKOPIT_DIR, "helpers")
+
+for p in [GECKOPIT_DIR, HELPERS_DIR]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
 import onboarding
 
 

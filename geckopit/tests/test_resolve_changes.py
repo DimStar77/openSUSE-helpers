@@ -6,7 +6,18 @@ import importlib.util
 from importlib.machinery import SourceFileLoader
 
 # Load resolve-changes
-rc_path = os.path.join(os.path.dirname(__file__), '..', 'GNOME-maintainer-scripts', 'resolve-changes')
+import os
+import sys
+
+TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+GECKOPIT_DIR = os.path.dirname(TESTS_DIR)
+HELPERS_DIR = os.path.join(GECKOPIT_DIR, "helpers")
+
+for p in [GECKOPIT_DIR, HELPERS_DIR]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
+rc_path = os.path.join(GECKOPIT_DIR, '..', 'GNOME-maintainer-scripts', 'resolve-changes')
 loader = SourceFileLoader("resolve_changes", rc_path)
 spec = importlib.util.spec_from_file_location("resolve_changes", rc_path, loader=loader)
 rc = importlib.util.module_from_spec(spec)

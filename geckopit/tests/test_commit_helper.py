@@ -6,8 +6,17 @@ import unittest
 import unittest.mock as mock
 import subprocess
 
-# Ensure helpers are importable
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'helpers'))
+import os
+import sys
+
+TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+GECKOPIT_DIR = os.path.dirname(TESTS_DIR)
+HELPERS_DIR = os.path.join(GECKOPIT_DIR, "helpers")
+
+for p in [GECKOPIT_DIR, HELPERS_DIR]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
 import commit_helper as ch
 
 class TestCommitHelper(unittest.TestCase):

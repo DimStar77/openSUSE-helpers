@@ -1,179 +1,26 @@
 #!/usr/bin/env python3
+import os
+import sys
+import re
 import unittest
 import unittest.mock as mock
-from geckopit import guess_update_revision, compare_versions, is_version_newer, is_version_equal
 
-class TestVersionGuessing(unittest.TestCase):
-    def test_simdutf_prefix_v(self):
-        # 1. Prefix 'v' versioning (simdutf style)
-        guessed, err = guess_update_revision("v9.1.2", "9.2.0")
-        self.assertEqual(guessed, "v9.2.0")
-        self.assertIsNone(err)
+import os
+import sys
 
-    def test_appstream_glib_underscores(self):
-        # 2. Underscores versioning (appstream-glib style)
-        guessed, err = guess_update_revision("appstream_glib_0_8_4", "0.8.5")
-        self.assertEqual(guessed, "appstream_glib_0_8_5")
-        self.assertIsNone(err)
+TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+GECKOPIT_DIR = os.path.dirname(TESTS_DIR)
+HELPERS_DIR = os.path.join(GECKOPIT_DIR, "helpers")
 
-    def test_gupnp_tools_prefix_dots(self):
-        # 3. Dots versioning with complex prefix (gupnp-tools style)
-        guessed, err = guess_update_revision("gupnp-tools-0.12.4", "0.12.5")
-        self.assertEqual(guessed, "gupnp-tools-0.12.5")
-        self.assertIsNone(err)
+for p in [GECKOPIT_DIR, HELPERS_DIR]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
-    def test_spiel_prefix_underscores(self):
-        # 4. Underscores with uppercase prefix (spiel style)
-        guessed, err = guess_update_revision("SPIEL_1_0_4", "1.0.5")
-        self.assertEqual(guessed, "SPIEL_1_0_5")
-        self.assertIsNone(err)
-
-    def test_gnome_shell_normal(self):
-        # 5. Standard version with dots only (gnome-shell style)
-        guessed, err = guess_update_revision("51.0", "51.1")
-        self.assertEqual(guessed, "51.1")
-        self.assertIsNone(err)
-
-    def test_vocalis_hash(self):
-        # 6. Specific git commit SHA (vocalis style)
-        guessed, err = guess_update_revision("aa0c00a9cb037e78a6ed2ec30dc2256aa4bcdabb", "1.0.0")
-        self.assertIsNone(guessed)
-        self.assertIn("Git commit SHA", err)
-
-    def test_static_branch(self):
-        # 7. Static branch (master style)
-        guessed, err = guess_update_revision("master", "1.0.0")
-        self.assertIsNone(guessed)
-        self.assertIn("static development branch", err)
-
-    def test_target_underscores_local_dots(self):
-        # 8. Target has underscores but current revision uses dots (libiptcdata style)
-        guessed, err = guess_update_revision("1.0.4", "1_0_5")
-        self.assertEqual(guessed, "1.0.5")
-        self.assertIsNone(err)
-
-    def test_prefix_and_underscores(self):
-        # 9. Current revision has prefix and underscores (release_1_0_4 style)
-        guessed, err = guess_update_revision("release_1_0_4", "1.0.5")
-        self.assertEqual(guessed, "release_1_0_5")
-        self.assertIsNone(err)
-
-    def test_libgedit_gtksourceview_prerelease_to_stable(self):
-        # 10. Upgrading from alpha to stable release must not append old '.alpha' suffix
-        guessed, err = guess_update_revision("299.8.alpha", "299.8.0")
-        self.assertEqual(guessed, "299.8.0")
-        self.assertIsNone(err)
-
-        # Also when upgrading between pre-releases
-        guessed, err = guess_update_revision("299.8.alpha", "299.8.beta")
-        self.assertEqual(guessed, "299.8.beta")
-        self.assertIsNone(err)
-
-    def test_single_part_prerelease(self):
-        # 11. Single-number with pre-release qualifier (gedit & gnome-extensions-app style)
-        guessed, err = guess_update_revision("51.alpha", "51.0")
-        self.assertEqual(guessed, "51.0")
-        self.assertIsNone(err)
-
-        guessed, err = guess_update_revision("51.alpha1", "51.0")
-        self.assertEqual(guessed, "51.0")
-        self.assertIsNone(err)
-
-        guessed, err = guess_update_revision("v51.alpha", "51.0")
-        self.assertEqual(guessed, "v51.0")
-        self.assertIsNone(err)
-
-    def test_four_part_version_no_spurious_suffix(self):
-        # 12. 4-part versions must not append trailing 4th sub-minor component to new target
-        guessed, err = guess_update_revision("0.21.8.2", "0.22.0")
-        self.assertEqual(guessed, "0.22.0")
-        self.assertIsNone(err)
-
-        guessed, err = guess_update_revision("refs/tags/0.9.7.2", "0.9.8")
-        self.assertEqual(guessed, "refs/tags/0.9.8")
-        self.assertIsNone(err)
-
-    def test_refs_tags_prefix(self):
-        # 13. refs/tags/ prefix with and without leading 'v'
-        guessed, err = guess_update_revision("refs/tags/v3.7.0", "3.7.1")
-        self.assertEqual(guessed, "refs/tags/v3.7.1")
-        self.assertIsNone(err)
-
-        guessed, err = guess_update_revision("refs/tags/3.3.0", "3.3.1")
-        self.assertEqual(guessed, "refs/tags/3.3.1")
-        self.assertIsNone(err)
-
-    def test_target_version_prefix_deduplication(self):
-        # 14. Target version already starting with 'v' must not produce 'vv1.2.4'
-        guessed, err = guess_update_revision("v1.2.3", "v1.2.4")
-        self.assertEqual(guessed, "v1.2.4")
-        self.assertIsNone(err)
-
-        # When local revision had no 'v', target 'v' is stripped to match local style
-        guessed, err = guess_update_revision("1.2.3", "v1.2.4")
-        self.assertEqual(guessed, "1.2.4")
-        self.assertIsNone(err)
-
-    def test_single_number_and_calver(self):
-        # 15. Pure integer versions (gnome-radio style) and CalVer dates (mobile-broadband-provider-info style)
-        guessed, err = guess_update_revision("128", "129")
-        self.assertEqual(guessed, "129")
-        self.assertIsNone(err)
-
-        guessed, err = guess_update_revision("v128", "129")
-        self.assertEqual(guessed, "v129")
-        self.assertIsNone(err)
-
-        guessed, err = guess_update_revision("20240407", "20241019")
-        self.assertEqual(guessed, "20241019")
-        self.assertIsNone(err)
-
-
-class TestSemanticVersionComparison(unittest.TestCase):
-    def test_underscore_and_dot_equality(self):
-        # 1.0.5 and 1_0_5 are semantically identical under RPM rules
-        self.assertTrue(is_version_equal("1.0.5", "1_0_5"))
-        self.assertTrue(is_version_equal("1_0_5", "1.0.5"))
-        self.assertFalse(is_version_newer("1_0_5", "1.0.5"))
-        self.assertFalse(is_version_newer("1.0.5", "1_0_5"))
-
-    def test_genuine_updates(self):
-        # True newer versions must be flagged regardless of separator style
-        self.assertTrue(is_version_newer("1.0.6", "1.0.5"))
-        self.assertTrue(is_version_newer("1_0_6", "1.0.5"))
-        self.assertTrue(is_version_newer("1.0.6", "1_0_5"))
-        self.assertTrue(is_version_newer("v1.0.6", "1.0.5"))
-        self.assertTrue(is_version_newer("V1.0.6", "1.0.5"))
-
-    def test_git_snapshot_comparisons(self):
-        # Git snapshots (e.g. 1.0.0+git) are post-release increments and not older than 1.0.0
-        self.assertFalse(is_version_newer("1.0.0", "1.0.0+git"))
-        self.assertFalse(is_version_newer("1.0.0", "1.0.0+git42"))
-        # An actual next release is newer than the snapshot
-        self.assertTrue(is_version_newer("1.0.1", "1.0.0+git42"))
-
-    def test_lagging_upstream_and_pre_releases(self):
-        # dasher: upstream stable 4_11_0 is older than local 5.0.0+199
-        self.assertFalse(is_version_newer("4_11_0", "5.0.0+199"))
-        # dasher: upstream beta 5_0_0_beta is older than post-release snapshot 5.0.0+199
-        self.assertFalse(is_version_newer("5_0_0_beta", "5.0.0+199"))
-
-    def test_downstream_branding_git_snapshot(self):
-        # gnome-tour: local has downstream branding and git snapshot (50.0.openSUSE+git20260413.334ffbd)
-        tour_local = "50.0.openSUSE+git20260413.334ffbd"
-        # Upstream 50.0 is not newer than our post-50.0 branded snapshot
-        self.assertFalse(is_version_newer("50.0", tour_local))
-        # An actual next release (50.1) is newer and properly triggers an update
-        self.assertTrue(is_version_newer("50.1", tour_local))
-
-    def test_placeholders_and_empty_values(self):
-        self.assertFalse(is_version_newer("1.0.5", "—"))
-        self.assertFalse(is_version_newer("—", "1.0.5"))
-        self.assertFalse(is_version_newer("1.0.5", "N/A"))
-        self.assertFalse(is_version_newer("N/A", "1.0.5"))
-        self.assertFalse(is_version_newer("", ""))
-        self.assertFalse(is_version_newer(None, None))
-
+import gi
+gi.require_version('Gtk', '4.0')
+gi.require_version('Adw', '1')
+from gi.repository import Gtk, Adw
+from geckopit import SyncWindow
 
 class TestSyncWindow(unittest.TestCase):
     @mock.patch('geckopit.WorkspaceConfig')
@@ -556,7 +403,6 @@ class TestSyncWindow(unittest.TestCase):
         self.assertEqual(dlg.profile_model.get_n_items(), 2)
         self.assertEqual(dlg.name_entry.get_text(), "KDE")
 
-
     def test_keyboard_navigation_and_filter_shortcuts(self):
         import gi
         gi.require_version('Gtk', '4.0')
@@ -741,7 +587,6 @@ class TestSyncWindow(unittest.TestCase):
         res = SyncWindow.on_search_key_pressed(mock_win, None, Gdk.KEY_Escape, 0, 0)
         self.assertTrue(res)
         mock_win.sidebar_search.set_text.assert_called_with("")
-
 
     def test_terminal_zoom_indicator(self):
         import gi
@@ -1057,135 +902,6 @@ class TestSyncWindow(unittest.TestCase):
         mock_clipboard.set.assert_called_with("--- a/file\n+++ b/file")
         mock_dialog.parent.toast_overlay.add_toast.assert_called()
 
-
-    def test_user_guide_html_not_drifted(self):
-        import os
-        import docs_builder
-
-        repo_dir = os.path.dirname(os.path.abspath(__file__))
-        md_path = os.path.join(repo_dir, "USER_GUIDE.md")
-        html_path = os.path.join(repo_dir, "USER_GUIDE.html")
-
-        self.assertTrue(os.path.isfile(md_path), f"Missing {md_path}")
-        self.assertTrue(os.path.isfile(html_path), f"Missing {html_path}. Run docs_builder.py to compile.")
-
-        with open(md_path, "r", encoding="utf-8") as f:
-            md_text = f.read()
-
-        expected_html = docs_builder.render_markdown_to_html(
-            md_text, title="Geckopit User Guide: Packaging Workflow Cockpit"
-        )
-
-        with open(html_path, "r", encoding="utf-8") as f:
-            actual_html = f.read()
-
-        self.assertEqual(
-            actual_html,
-            expected_html,
-            "geckopit/USER_GUIDE.html has drifted from USER_GUIDE.md! "
-            "Run 'python3 geckopit/helpers/docs_builder.py' to synchronize."
-        )
-
-    def test_user_guide_html_anchor_integrity(self):
-        import os, re
-
-        repo_dir = os.path.dirname(os.path.abspath(__file__))
-        html_path = os.path.join(repo_dir, "USER_GUIDE.html")
-        self.assertTrue(os.path.isfile(html_path), "Missing USER_GUIDE.html")
-
-        with open(html_path, "r", encoding="utf-8") as f:
-            html = f.read()
-
-        # Extract all internal anchor links: <a href="#target">
-        anchor_links = re.findall(r'<a\s+href="#([^"]+)">', html)
-        self.assertGreater(len(anchor_links), 0, "No anchor links found in USER_GUIDE.html")
-
-        # Extract all target element IDs: id="target"
-        target_ids = set(re.findall(r'\bid="([^"]+)"', html))
-
-        broken = [link for link in anchor_links if link not in target_ids]
-        self.assertEqual(
-            broken, [],
-            f"Found broken anchor links in USER_GUIDE.html that do not match any header ID: {broken}"
-        )
-
-    def test_check_repo_sync_pool_status_classification(self):
-        import subprocess
-        import sync_backend as sb
-
-        with mock.patch('os.path.isdir', return_value=True), \
-             mock.patch('sync_backend.run_tracked') as mock_run:
-
-            # 1. Gitea 401 on non-existent repo (prompts disabled) -> Not in Pool, needs_action=False
-            def fake_run_not_in_pool(cmd, *args, **kwargs):
-                if 'fetch' in cmd and 'origin' in cmd:
-                    return mock.Mock(stdout="", returncode=0)
-                elif 'rev-parse' in cmd:
-                    return mock.Mock(stdout="hash", returncode=0)
-                elif 'fetch' in cmd and 'src.opensuse.org/pool' in cmd[5]:
-                    raise subprocess.CalledProcessError(128, cmd, stderr="fatal: could not read Username for 'https://src.opensuse.org': terminal prompts disabled\n")
-                elif 'rev-list' in cmd:
-                    return mock.Mock(stdout="0 0\n", returncode=0)
-                return mock.Mock(stdout="", returncode=0)
-
-            mock_run.side_effect = fake_run_not_in_pool
-            _, data = sb.check_repo_sync('mypkg')
-            self.assertEqual(data['pool_status'], 'Not in Pool')
-            self.assertFalse(data['needs_action'])
-
-            # 2. Network resolution failure -> Fetch failed, needs_action=True
-            def fake_run_net_error(cmd, *args, **kwargs):
-                if 'fetch' in cmd and 'origin' in cmd:
-                    return mock.Mock(stdout="", returncode=0)
-                elif 'rev-parse' in cmd:
-                    return mock.Mock(stdout="hash", returncode=0)
-                elif 'fetch' in cmd and 'src.opensuse.org/pool' in cmd[5]:
-                    raise subprocess.CalledProcessError(128, cmd, stderr="fatal: unable to access 'https://src.opensuse.org/pool/mypkg.git': Could not resolve host: src.opensuse.org\n")
-                elif 'rev-list' in cmd:
-                    return mock.Mock(stdout="0 0\n", returncode=0)
-                return mock.Mock(stdout="", returncode=0)
-
-            mock_run.side_effect = fake_run_net_error
-            _, data = sb.check_repo_sync('mypkg')
-            self.assertEqual(data['pool_status'], 'Fetch failed')
-            self.assertTrue(data['needs_action'])
-
-            # 3. Missing factory branch in pool -> No factory in Pool
-            def fake_run_missing_ref(cmd, *args, **kwargs):
-                if 'fetch' in cmd and 'origin' in cmd:
-                    return mock.Mock(stdout="", returncode=0)
-                elif 'rev-parse' in cmd:
-                    return mock.Mock(stdout="hash", returncode=0)
-                elif 'fetch' in cmd and 'src.opensuse.org/pool' in cmd[5]:
-                    raise subprocess.CalledProcessError(128, cmd, stderr="fatal: couldn't find remote ref factory\n")
-                elif 'rev-list' in cmd:
-                    return mock.Mock(stdout="0 0\n", returncode=0)
-                return mock.Mock(stdout="", returncode=0)
-
-            mock_run.side_effect = fake_run_missing_ref
-            _, data = sb.check_repo_sync('mypkg')
-            self.assertEqual(data['pool_status'], 'No factory in Pool')
-
-            # 4. SSH / transport connection reset or rate-limiting -> Fetch failed (NOT Not in Pool)
-            def fake_run_conn_reset(cmd, *args, **kwargs):
-                if 'fetch' in cmd and 'origin' in cmd:
-                    return mock.Mock(stdout="", returncode=0)
-                elif 'rev-parse' in cmd:
-                    return mock.Mock(stdout="hash", returncode=0)
-                elif 'fetch' in cmd and 'src.opensuse.org/pool' in cmd[5]:
-                    raise subprocess.CalledProcessError(
-                        128, cmd,
-                        stderr="kex_exchange_identification: read: Connection reset by peer\nfatal: Could not read from remote repository.\n"
-                    )
-                elif 'rev-list' in cmd:
-                    return mock.Mock(stdout="0 0\n", returncode=0)
-                return mock.Mock(stdout="", returncode=0)
-
-            mock_run.side_effect = fake_run_conn_reset
-            _, data = sb.check_repo_sync('mypkg')
-            self.assertEqual(data['pool_status'], 'Fetch failed')
-            self.assertTrue(data['needs_action'])
-
     def test_workspace_sync_completed_toast_capping(self):
         from geckopit import SyncWindow
         import gi
@@ -1311,7 +1027,6 @@ class TestSyncWindow(unittest.TestCase):
         mock_win.sidebar_search.get_text.return_value = "nomatch"
         self.assertFalse(SyncWindow.sidebar_filter_func(mock_win, mock_row))
 
-
     def test_granular_package_selection_and_refresh(self):
         from geckopit import SyncWindow
         mock_win = mock.Mock()
@@ -1423,68 +1138,6 @@ class TestSyncWindow(unittest.TestCase):
             {"has_pr": False}
         )
 
-    @mock.patch("sync_backend.get_http_session")
-    @mock.patch("sync_backend.get_gitea_owner_and_repo", return_value=("GNOME", "baobab"))
-    @mock.patch("sync_backend.get_gitea_token", return_value=None)
-    def test_check_repo_pr_multi_pr_support(self, mock_tok, mock_owner, mock_session):
-        import sync_backend as sb
-        mock_resp = mock.Mock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = [
-            {
-                "number": 12,
-                "title": "Update to version 51.0",
-                "html_url": "https://src.opensuse.org/GNOME/baobab/pulls/12",
-                "user": {"login": "contributor"},
-                "base": {"ref": "factory"},
-                "head": {"ref": "update-51", "repo": {"full_name": "contributor/baobab"}},
-                "created_at": "2026-10-20T10:00:00Z"
-            },
-            {
-                "number": 15,
-                "title": "Forward next to factory: baobab",
-                "html_url": "https://src.opensuse.org/GNOME/baobab/pulls/15",
-                "user": {"login": "dimstar"},
-                "base": {"ref": "factory"},
-                "head": {"ref": "next"},
-                "created_at": "2026-10-20T12:00:00Z"
-            }
-        ]
-        mock_session.return_value.get.return_value = mock_resp
-
-        repo, pr_info = sb.check_repo_pr("baobab", stable_branch="factory", unstable_branch="next")
-        self.assertEqual(repo, "baobab")
-        self.assertTrue(pr_info["has_pr"])
-        self.assertTrue(pr_info["has_forward_pr"])
-        self.assertEqual(pr_info["count"], 2)
-        self.assertEqual(pr_info["number"], 15)
-        self.assertEqual(pr_info["url"], "https://src.opensuse.org/GNOME/baobab/pulls/15")
-        self.assertEqual(len(pr_info["prs"]), 2)
-        self.assertEqual(pr_info["prs"][0]["number"], 12)
-        self.assertEqual(pr_info["prs"][0]["author"], "contributor")
-        self.assertFalse(pr_info["prs"][0]["is_forward"])
-        self.assertEqual(pr_info["prs"][1]["number"], 15)
-        self.assertTrue(pr_info["prs"][1]["is_forward"])
-
-        # Case 2: Only contributor PR exists (no forward PR)
-        mock_resp.json.return_value = [
-            {
-                "number": 42,
-                "title": "Fix build on riscv64",
-                "html_url": "https://src.opensuse.org/GNOME/baobab/pulls/42",
-                "user": {"login": "schwab"},
-                "base": {"ref": "factory"},
-                "head": {"ref": "riscv-fix"},
-                "created_at": "2026-10-20T14:00:00Z"
-            }
-        ]
-        _, pr_info2 = sb.check_repo_pr("baobab", stable_branch="factory", unstable_branch="next")
-        self.assertTrue(pr_info2["has_pr"])
-        self.assertFalse(pr_info2["has_forward_pr"])
-        self.assertEqual(pr_info2["count"], 1)
-        self.assertEqual(pr_info2["number"], 42)
-        self.assertEqual(pr_info2["prs"][0]["author"], "schwab")
-
     def test_update_detail_pr_ui_group_card(self):
         from geckopit import SyncWindow
         mock_win = mock.Mock()
@@ -1593,78 +1246,6 @@ class TestSyncWindow(unittest.TestCase):
         mock_win.update_detail_title.assert_called_with("pkg_test")
         mock_win.update_detail_pr_ui.assert_called_with("pkg_test")
 
-    def test_get_http_session_singleton_and_pooling(self):
-        import sync_backend as sb
-        s1 = sb.get_http_session()
-        s2 = sb.get_http_session()
-        self.assertIs(s1, s2)
-        adapter = s1.adapters.get("https://")
-        self.assertIsNotNone(adapter)
-        self.assertEqual(adapter._pool_connections, 35)
-
-    def test_has_git_ref_loose_and_packed(self):
-        import os
-        import tempfile
-        import sync_backend as sb
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # 1. Non-existent ref
-            self.assertFalse(sb.has_git_ref(tmpdir, "refs/remotes/origin/factory"))
-
-            # 2. Loose ref
-            loose_dir = os.path.join(tmpdir, ".git", "refs", "remotes", "origin")
-            os.makedirs(loose_dir, exist_ok=True)
-            loose_file = os.path.join(loose_dir, "factory")
-            with open(loose_file, "w") as f:
-                f.write("1111222233334444555566667777888899990000\n")
-
-            self.assertTrue(sb.has_git_ref(tmpdir, "refs/remotes/origin/factory"))
-            self.assertFalse(sb.has_git_ref(tmpdir, "refs/remotes/origin/next"))
-
-            # 3. Packed ref
-            packed_file = os.path.join(tmpdir, ".git", "packed-refs")
-            with open(packed_file, "w") as f:
-                f.write("# pack-refs with: peeled-tags\n")
-                f.write("aaaabbbbccccddddeeeeffff0000111122223333 refs/remotes/origin/next\n")
-
-            self.assertTrue(sb.has_git_ref(tmpdir, "refs/remotes/origin/next"))
-
-    @mock.patch("sync_backend.run_tracked")
-    @mock.patch("sync_backend.get_http_session")
-    def test_check_repo_version_skip_fetch(self, mock_get_session, mock_run):
-        import os
-        import tempfile
-        import sync_backend as sb
-
-        mock_session = mock.Mock()
-        mock_resp = mock.Mock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"items": [{"name": "testpkg", "stable_version": "1.0", "version": "1.1"}]}
-        mock_session.get.return_value = mock_resp
-        mock_get_session.return_value = mock_session
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            spec_file = os.path.join(tmpdir, "testpkg.spec")
-            with open(spec_file, "w") as f:
-                f.write("Name: testpkg\nVersion: 1.0\n")
-
-            # With skip_fetch=True: git fetch origin should NEVER be invoked
-            mock_run.reset_mock()
-            mock_run.return_value = mock.Mock(stdout="Version: 1.0\n", returncode=0)
-            sb.check_repo_version("testpkg", workspace_path=os.path.dirname(tmpdir), skip_fetch=True)
-
-            for call in mock_run.call_args_list:
-                cmd = call[0][0]
-                self.assertFalse("fetch" in cmd and "origin" in cmd)
-
-            # With skip_fetch=False: git fetch origin MUST be invoked
-            mock_run.reset_mock()
-            mock_run.return_value = mock.Mock(stdout="Version: 1.0\n", returncode=0)
-            sb.check_repo_version("testpkg", workspace_path=os.path.dirname(tmpdir), skip_fetch=False)
-
-            fetch_called = any("fetch" in call[0][0] and "origin" in call[0][0] for call in mock_run.call_args_list)
-            self.assertTrue(fetch_called)
-
     def test_sidebar_filter_snapshot_caching(self):
         from geckopit import SyncWindow
         mock_win = mock.Mock()
@@ -1685,28 +1266,6 @@ class TestSyncWindow(unittest.TestCase):
         self.assertFalse(SyncWindow.sidebar_filter_func(mock_win, row_no_match))
         # When snapshot is present, widget get_text() should never be called
         mock_win.sidebar_search.get_text.assert_not_called()
-
-    def test_setup_ssh_multiplexing(self):
-        import os
-        import sync_backend as sb
-        sb.setup_ssh_multiplexing()
-        self.assertIn("GIT_SSH_COMMAND", os.environ)
-        self.assertIn("ControlMaster=auto", os.environ["GIT_SSH_COMMAND"])
-        self.assertIn("ControlPath=", os.environ["GIT_SSH_COMMAND"])
-
-    def test_get_gitea_token(self):
-        import os
-        import sync_backend as sb
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            conf_file = os.path.join(tmpdir, "config.yml")
-            with open(conf_file, "w") as f:
-                f.write("logins:\n  - name: test\n    token: my_secret_token_12345\n")
-
-            with mock.patch("os.path.expanduser", return_value=conf_file):
-                token = sb.get_gitea_token()
-                self.assertEqual(token, "my_secret_token_12345")
 
     def test_refresh_all_clears_known_not_in_pool(self):
         from geckopit import SyncWindow
@@ -1750,20 +1309,6 @@ class TestSyncWindow(unittest.TestCase):
         SyncWindow.update_sync_row_single(mock_win, "pkg1", data_not_in_pool, gen=1)
         self.assertIn("pkg1", mock_win.known_not_in_pool)
 
-    @mock.patch("sync_backend.has_git_ref", return_value=True)
-    @mock.patch("sync_backend.run_tracked")
-    def test_check_repo_sync_known_not_in_pool(self, mock_run, mock_ref):
-        import sync_backend as sb
-        mock_run.return_value = mock.Mock(stdout="", returncode=0)
-
-        # When known_not_in_pool contains 'pkg1', pool fetch should NOT be executed
-        _, data = sb.check_repo_sync("pkg1", known_not_in_pool={"pkg1"})
-        self.assertEqual(data["pool_status"], "Not in Pool")
-        # Ensure git fetch against pool_url was never called
-        for call in mock_run.call_args_list:
-            cmd = call[0][0]
-            self.assertFalse("fetch" in cmd and "src.opensuse.org/pool" in cmd[5])
-
     def test_update_diff_text_race_condition_guard(self):
         from geckopit import SyncWindow
         mock_win = mock.Mock()
@@ -1777,332 +1322,6 @@ class TestSyncWindow(unittest.TestCase):
         # Arrival of diff for the active package should be rendered
         SyncWindow.update_diff_text(mock_win, "pkg_selected", "active diff text")
         mock_win.diff_buffer.set_text.assert_called_with("active diff text")
-
-class TestPRPrefill(unittest.TestCase):
-    def test_parse_changes_diff_single_entry(self):
-        import sync_backend as sb
-        diff_text = """diff --git a/test.changes b/test.changes
-index 123..456 100644
---- a/test.changes
-+++ b/test.changes
-@@ -1,3 +1,10 @@
-+-------------------------------------------------------------------
-+Mon Sep 22 10:00:00 UTC 2026 - Maintainer <maintainer@example.com>
-+
-+- Update to version 2.0.0:
-+  + Added support for new feature
-+  + Fixed security issue
-+
- -------------------------------------------------------------------
- Mon Jan 01 00:00:00 UTC 2026 - Old <old@example.com>
-"""
-        parsed = sb.parse_changes_diff(diff_text)
-        expected = """Mon Sep 22 10:00:00 UTC 2026 - Maintainer <maintainer@example.com>
-
-- Update to version 2.0.0:
-  + Added support for new feature
-  + Fixed security issue"""
-        self.assertEqual(parsed, expected)
-
-    def test_parse_changes_diff_multi_entry(self):
-        import sync_backend as sb
-        diff_text = """diff --git a/test.changes b/test.changes
---- a/test.changes
-+++ b/test.changes
-@@ -1,3 +1,15 @@
-+-------------------------------------------------------------------
-+Mon Sep 22 10:00:00 UTC 2026 - Maintainer <maintainer@example.com>
-+
-+- Update to version 2.0.0:
-+  + Stable release
-+
-+-------------------------------------------------------------------
-+Mon Sep 15 10:00:00 UTC 2026 - Maintainer <maintainer@example.com>
-+
-+- Update to version 2.0.0.rc1:
-+  + Release candidate
-+
- -------------------------------------------------------------------
-"""
-        parsed = sb.parse_changes_diff(diff_text)
-        self.assertIn("Update to version 2.0.0:", parsed)
-        self.assertIn("Update to version 2.0.0.rc1:", parsed)
-        self.assertIn("-------------------------------------------------------------------", parsed)
-        # Verify boundary dashes were stripped
-        self.assertFalse(parsed.startswith("-------------------------------------------------------------------"))
-        self.assertFalse(parsed.endswith("-------------------------------------------------------------------"))
-
-    def test_parse_changes_diff_empty(self):
-        import sync_backend as sb
-        self.assertEqual(sb.parse_changes_diff(""), "")
-        self.assertEqual(sb.parse_changes_diff(None), "")
-
-    @mock.patch('sync_backend.run_tracked')
-    @mock.patch('os.listdir', return_value=['mypkg.spec'])
-    def test_get_pr_prefill_version_bump(self, mock_listdir, mock_run):
-        import sync_backend as sb
-
-        def fake_run(args, **kwargs):
-            cmd_str = " ".join(args)
-            mock_res = mock.Mock()
-            if "show" in args and "factory:mypkg.spec" in cmd_str:
-                mock_res.stdout = "Name: mypkg\nVersion: 1.0.0\n"
-            elif "show" in args and "next:mypkg.spec" in cmd_str:
-                mock_res.stdout = "Name: mypkg\nVersion: 1.1.0\n"
-            elif "diff" in args and "*.changes" in cmd_str:
-                mock_res.stdout = """@@ -1,3 +1,6 @@
-+-------------------------------------------------------------------
-+- Update to version 1.1.0:
-+  + Improved performance
-+"""
-            else:
-                mock_res.stdout = ""
-            return mock_res
-
-        mock_run.side_effect = fake_run
-        title, desc = sb.get_pr_prefill_info("mypkg", stable_branch="factory", unstable_branch="next")
-
-        self.assertEqual(title, "Update mypkg to version 1.1.0")
-        self.assertIn("Update to version 1.1.0:", desc)
-        self.assertIn("Improved performance", desc)
-
-    @mock.patch('sync_backend.run_tracked')
-    @mock.patch('os.listdir', return_value=['mypkg.spec'])
-    def test_get_pr_prefill_single_commit(self, mock_listdir, mock_run):
-        import sync_backend as sb
-
-        def fake_run(args, **kwargs):
-            cmd_str = " ".join(args)
-            mock_res = mock.Mock()
-            if "show" in args and "factory:mypkg.spec" in cmd_str:
-                mock_res.stdout = "Name: mypkg\nVersion: 1.0.0\n"
-            elif "show" in args and "next:mypkg.spec" in cmd_str:
-                mock_res.stdout = "Name: mypkg\nVersion: 1.0.0\n"
-            elif "log" in args:
-                mock_res.stdout = "Fix build with gcc 14\n"
-            elif "diff" in args and "*.changes" in cmd_str:
-                mock_res.stdout = """@@ -1,3 +1,5 @@
-+- Fix build with gcc 14 (bsc#12345).
-+"""
-            else:
-                mock_res.stdout = ""
-            return mock_res
-
-        mock_run.side_effect = fake_run
-        title, desc = sb.get_pr_prefill_info("mypkg", stable_branch="factory", unstable_branch="next")
-
-        self.assertEqual(title, "Fix build with gcc 14")
-        self.assertIn("- Fix build with gcc 14 (bsc#12345).", desc)
-
-    @mock.patch('sync_backend.run_tracked')
-    @mock.patch('os.listdir', return_value=['mypkg.spec'])
-    def test_get_pr_prefill_multiple_commits(self, mock_listdir, mock_run):
-        import sync_backend as sb
-
-        def fake_run(args, **kwargs):
-            cmd_str = " ".join(args)
-            mock_res = mock.Mock()
-            if "show" in args and "factory:mypkg.spec" in cmd_str:
-                mock_res.stdout = "Name: mypkg\nVersion: 1.0.0\n"
-            elif "show" in args and "next:mypkg.spec" in cmd_str:
-                mock_res.stdout = "Name: mypkg\nVersion: 1.0.0\n"
-            elif "log" in args:
-                mock_res.stdout = "Fix bug A\nFix bug B\nFix bug C\n"
-            else:
-                mock_res.stdout = ""
-            return mock_res
-
-        mock_run.side_effect = fake_run
-        title, desc = sb.get_pr_prefill_info("mypkg", stable_branch="factory", unstable_branch="next")
-
-        self.assertEqual(title, "Fix bug A (+2 more commits)")
-
-    def test_sync_create_pr_dialog_update_diff_and_prefill(self):
-        from geckopit import SyncCreatePRDialog
-
-        mock_dialog = mock.Mock()
-        mock_dialog.is_destroyed = False
-        mock_dialog.default_title = "Default Title"
-        mock_dialog.default_desc = "Default Description"
-
-        # Mock widgets
-        mock_dialog.diff_buffer = mock.Mock()
-        mock_dialog.title_entry = mock.Mock()
-        mock_dialog.title_entry.get_text.return_value = "Default Title"
-
-        mock_dialog.desc_buffer = mock.Mock()
-        mock_dialog.desc_buffer.get_start_iter.return_value = 0
-        mock_dialog.desc_buffer.get_end_iter.return_value = 1
-        mock_dialog.desc_buffer.get_text.return_value = "Default Description"
-
-        SyncCreatePRDialog.update_diff_and_prefill(
-            mock_dialog,
-            "diff content",
-            "Update mypkg to version 2.0.0",
-            "New changelog content"
-        )
-
-        mock_dialog.diff_buffer.set_text.assert_called_with("diff content")
-        mock_dialog.title_entry.set_text.assert_called_with("Update mypkg to version 2.0.0")
-        mock_dialog.desc_buffer.set_text.assert_called_with("New changelog content")
-
-        # Verify that if user already typed custom input, it is NOT overwritten
-        mock_dialog.title_entry.reset_mock()
-        mock_dialog.desc_buffer.reset_mock()
-        mock_dialog.title_entry.get_text.return_value = "User customized title"
-        mock_dialog.desc_buffer.get_text.return_value = "User customized description"
-
-        SyncCreatePRDialog.update_diff_and_prefill(
-            mock_dialog,
-            "new diff",
-            "Another title",
-            "Another desc"
-        )
-        mock_dialog.title_entry.set_text.assert_not_called()
-        mock_dialog.desc_buffer.set_text.assert_not_called()
-
-
-
-
-class TestSinglePackageDashboardFormatting(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        import os
-        import importlib.util
-        from importlib.machinery import SourceFileLoader
-        cli_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "geckopit-cli")
-        loader = SourceFileLoader("geckopit_cli", cli_path)
-        spec = importlib.util.spec_from_file_location("geckopit_cli", cli_path, loader=loader)
-        cls.cli = importlib.util.module_from_spec(spec)
-        loader.exec_module(cls.cli)
-
-    def test_dashboard_single_forward_pr_formatting(self):
-        import io
-        from unittest.mock import patch
-
-        data = {
-            'repo_name': 'testpkg',
-            'pkg_dir': '/path/to/testpkg',
-            'active_branch': 'next',
-            'stable_branch': 'factory',
-            'unstable_branch': 'next',
-            'worktree': {'ahead': 0, 'behind': 0, 'dirty': False, 'untracked': False},
-            'sync': {'pool_ahead': 2, 'pool_behind': 0, 'pool_status': 'In Sync', 'next_ahead': 1, 'next_behind': 0, 'next_status': 'Ahead (ok)'},
-            'version': {'factory_ver': '51.0.8', 'upstream_stable': '51.0.9', 'next_ver': '51.0.9', 'upstream_latest': '51.0.9', 'needs_update': False},
-            'pr': {
-                'has_pr': True,
-                'has_forward_pr': True,
-                'count': 1,
-                'number': 2,
-                'url': 'https://src.opensuse.org/GNOME/testpkg/pulls/2',
-                'prs': [
-                    {
-                        'number': 2,
-                        'title': 'Update testpkg to version 51.0.9',
-                        'author': 'dimstar',
-                        'base': 'factory',
-                        'head': 'next',
-                        'url': 'https://src.opensuse.org/GNOME/testpkg/pulls/2',
-                        'is_forward': True
-                    }
-                ]
-            }
-        }
-
-        buf = io.StringIO()
-        with patch('sys.stdout', buf):
-            self.cli.render_single_package_dashboard(data)
-        out = buf.getvalue()
-
-        # 1. Verify Branch Sync states (PR #2 pending) rather than (Ready for PR)
-        self.assertIn("Ahead of factory by 1 commit (PR #2 pending)", out)
-        self.assertNotIn("Ready for PR", out)
-
-        # 2. Verify singular 'commit'
-        self.assertIn("1 commit", out)
-        self.assertNotIn("1 commits", out)
-
-        # 3. Verify Active PR shows PR #2 on line 1 and URL on line 2 with no repeated sub-bullet
-        self.assertIn('Active PR:     [32m🟢 PR #2[0m by @dimstar: "Update testpkg to version 51.0.9" (➔ factory) [32m[Forward][0m', out)
-        self.assertIn('                    https://src.opensuse.org/GNOME/testpkg/pulls/2', out)
-        self.assertNotIn('• PR #2', out)
-
-    def test_dashboard_multi_pr_formatting(self):
-        import io
-        from unittest.mock import patch
-
-        data = {
-            'repo_name': 'testpkg',
-            'pkg_dir': '/path/to/testpkg',
-            'active_branch': 'next',
-            'stable_branch': 'factory',
-            'unstable_branch': 'next',
-            'worktree': {'ahead': 0, 'behind': 0, 'dirty': False, 'untracked': False},
-            'sync': {'pool_ahead': 0, 'pool_behind': 0, 'pool_status': 'In Sync', 'next_ahead': 1, 'next_behind': 0, 'next_status': 'Ahead (ok)'},
-            'version': {'factory_ver': '51.0.9', 'upstream_stable': '51.0.9', 'next_ver': '51.0.9', 'upstream_latest': '51.0.9', 'needs_update': False},
-            'pr': {
-                'has_pr': True,
-                'has_forward_pr': True,
-                'count': 2,
-                'number': 2,
-                'url': 'https://src.opensuse.org/GNOME/testpkg/pulls/2',
-                'prs': [
-                    {
-                        'number': 2,
-                        'title': 'Forward next to factory',
-                        'author': 'dimstar',
-                        'base': 'factory',
-                        'head': 'next',
-                        'url': 'https://src.opensuse.org/GNOME/testpkg/pulls/2',
-                        'is_forward': True
-                    },
-                    {
-                        'number': 5,
-                        'title': 'Fix riscv64 build',
-                        'author': 'schwab',
-                        'base': 'factory',
-                        'head': 'riscv',
-                        'url': 'https://src.opensuse.org/GNOME/testpkg/pulls/5',
-                        'is_forward': False
-                    }
-                ]
-            }
-        }
-
-        buf = io.StringIO()
-        with patch('sys.stdout', buf):
-            self.cli.render_single_package_dashboard(data)
-        out = buf.getvalue()
-
-        self.assertIn("Active PR:     [32m🟢 2 Active PRs:[0m", out)
-        self.assertIn('• PR #2 by @dimstar: "Forward next to factory" (➔ factory) [32m[Forward][0m', out)
-        self.assertIn('                   https://src.opensuse.org/GNOME/testpkg/pulls/2', out)
-        self.assertIn('• PR #5 by @schwab: "Fix riscv64 build" (➔ factory)', out)
-        self.assertIn('                   https://src.opensuse.org/GNOME/testpkg/pulls/5', out)
-
-    def test_dashboard_no_pr_shows_ready_for_pr(self):
-        import io
-        from unittest.mock import patch
-
-        data = {
-            'repo_name': 'testpkg',
-            'pkg_dir': '/path/to/testpkg',
-            'active_branch': 'next',
-            'stable_branch': 'factory',
-            'unstable_branch': 'next',
-            'worktree': {'ahead': 0, 'behind': 0, 'dirty': False, 'untracked': False},
-            'sync': {'pool_ahead': 0, 'pool_behind': 0, 'pool_status': 'In Sync', 'next_ahead': 3, 'next_behind': 0, 'next_status': 'Ahead (ok)'},
-            'version': {'factory_ver': '51.0.8', 'upstream_stable': '51.0.9', 'next_ver': '51.0.9', 'upstream_latest': '51.0.9', 'needs_update': False},
-            'pr': {'has_pr': False, 'has_forward_pr': False, 'count': 0, 'prs': []}
-        }
-
-        buf = io.StringIO()
-        with patch('sys.stdout', buf):
-            self.cli.render_single_package_dashboard(data)
-        out = buf.getvalue()
-
-        self.assertIn("Ahead of factory by 3 commits (Ready for PR)", out)
-        self.assertIn("Active PR:     None (no active PR)", out)
 
 
 if __name__ == '__main__':

@@ -5,7 +5,17 @@ import unittest
 import tempfile
 import tarfile
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'helpers'))
+import os
+import sys
+
+TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+GECKOPIT_DIR = os.path.dirname(TESTS_DIR)
+HELPERS_DIR = os.path.join(GECKOPIT_DIR, "helpers")
+
+for p in [GECKOPIT_DIR, HELPERS_DIR]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
 from patch_checker import get_spec_patches, get_spec_details, find_primary_source_archive, check_patches_sequential, run_check_patches_cli, rebase_patch_cli, get_default_editor, record_patch_rebase_changelog
 
 class TestPatchChecker(unittest.TestCase):
