@@ -305,7 +305,7 @@ class PackageRow(Gtk.ListBoxRow):
             elif pool_status == "OSC Managed":
                 pass
             elif pool_status == "Not in Pool":
-                subtitle_parts.append("Not in Gitea")
+                subtitle_parts.append("Not in Pool")
                 tt = f"<b>Central Pool Status</b>\n• Package <b>{self.package_name}</b> is not hosted in the central Gitea pool."
                 self.badges_box.append(self.create_badge("No Pool", "yellow", tooltip=tt))
             elif pool_status in ("Fetch failed", "Error"):

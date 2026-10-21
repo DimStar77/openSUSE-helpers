@@ -1486,5 +1486,10 @@ class TestSyncWindow(unittest.TestCase):
         self.assertIn("OSC: games", row_osc.sub_label.get_text())
         self.assertIsNone(row_osc.badges_box.get_first_child())
 
+        # 3. Absent from central pool: shows 'Not in Pool'
+        row_nopool = PackageRow("telegnome", mock_win)
+        row_nopool.update_ui({"pool_status": "Not in Pool"}, {}, {}, {})
+        self.assertIn("Not in Pool", row_nopool.sub_label.get_text())
+
 if __name__ == '__main__':
     unittest.main()
