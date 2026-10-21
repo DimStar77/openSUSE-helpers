@@ -70,6 +70,11 @@ if [[ ${#TARGET_DIRS[@]} -eq 0 ]]; then
     TARGET_DIRS=(".")
 fi
 
+# Setup DBUS session bus for osc keyring in non-interactive/subprocess environments
+if [[ -z "$DBUS_SESSION_BUS_ADDRESS" && -e "${XDG_RUNTIME_DIR:-/run/user/$UID}/bus" ]]; then
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR:-/run/user/$UID}/bus"
+fi
+
 # Setup persistent OpenSSH connection multiplexing if not already active
 if [[ -z "$GIT_SSH_COMMAND" || "$GIT_SSH_COMMAND" != *"ControlPath"* ]]; then
     SSH_MUX_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ssh-mux-XXXXXX")
@@ -221,7 +226,60 @@ for target in "${TARGET_DIRS[@]}"; do
     fi
 
     if ! git -C "$target" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        echo "Directory '$target' is not a git repository, skipping." >&2
+        # Check if individual OSC package checkout
+        if [[ -d "$target/.osc" && -f "$target/.osc/_package" ]]; then
+            PKG_NAME=$(basename "$target")
+            echo "--- Synchronizing $PKG_NAME (OSC package checkout) ---"
+            ( cd "$target" && osc up )
+            continue
+        fi
+
+        # Check if target is a packaging container directory (e.g. portfolio mode, depth <= 2)
+        CHILD_REPOS=()
+        OSC_PKGS=()
+
+        for d in "$target"/*; do
+            [[ -d "$d" ]] || continue
+            b=$(basename "$d")
+            [[ "$b" =~ ^\. ]] && continue
+
+            if [[ -d "$d/.git" || -f "$d/.git" ]]; then
+                CHILD_REPOS+=("$d")
+            elif [[ -d "$d/.osc" && -f "$d/.osc/_package" ]]; then
+                OSC_PKGS+=("$d")
+            else
+                for subd in "$d"/*; do
+                    [[ -d "$subd" ]] || continue
+                    subb=$(basename "$subd")
+                    [[ "$subb" =~ ^\. ]] && continue
+
+                    if [[ -d "$subd/.git" || -f "$subd/.git" ]]; then
+                        CHILD_REPOS+=("$subd")
+                    elif [[ -d "$subd/.osc" && -f "$subd/.osc/_package" ]]; then
+                        OSC_PKGS+=("$subd")
+                    fi
+                done
+            fi
+        done
+
+        if [[ ${#CHILD_REPOS[@]} -gt 0 || ${#OSC_PKGS[@]} -gt 0 ]]; then
+            TARGET_NAME=$(basename "$target")
+            echo "=== Synchronizing container workspace: $TARGET_NAME (${#CHILD_REPOS[@]} Git, ${#OSC_PKGS[@]} OSC packages) ==="
+            for cr in "${CHILD_REPOS[@]}"; do
+                sync_project "$cr"
+            done
+            for op in "${OSC_PKGS[@]}"; do
+                PKG_NAME=$(basename "$op")
+                PARENT_DIR=$(basename "$(dirname "$op")")
+                echo "--- Synchronizing $PKG_NAME (OSC package in $PARENT_DIR) ---"
+                ( cd "$op" && osc up ) || {
+                    echo "⚠️  'osc up' failed in $PKG_NAME." >&2
+                }
+            done
+            continue
+        fi
+
+        echo "Directory '$target' is not a git repository or packaging container, skipping." >&2
         continue
     fi
 

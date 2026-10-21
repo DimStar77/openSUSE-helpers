@@ -1470,5 +1470,21 @@ class TestSyncWindow(unittest.TestCase):
             self.assertIn("Ahead of Gitea Pool by 2 commits", markup)
             mock_win.submit_pool_btn.set_sensitive.assert_called_with(True)
 
+    def test_package_row_portfolio_category_and_osc_badge(self):
+        from geckopit import PackageRow
+        mock_win = mock.Mock()
+
+        # 1. Package with category: dimstar/vlc
+        row_cat = PackageRow("dimstar/vlc", mock_win)
+        self.assertIn("dimstar", row_cat.name_label.get_label())
+        self.assertIn("vlc", row_cat.name_label.get_label())
+
+        # 2. OSC package metadata subtitle (clean packages have no badge noise)
+        sync_data = {"is_osc": True, "osc_project": "games"}
+        row_osc = PackageRow("games/toycars", mock_win)
+        row_osc.update_ui(sync_data, {}, {}, {})
+        self.assertIn("OSC: games", row_osc.sub_label.get_text())
+        self.assertIsNone(row_osc.badges_box.get_first_child())
+
 if __name__ == '__main__':
     unittest.main()

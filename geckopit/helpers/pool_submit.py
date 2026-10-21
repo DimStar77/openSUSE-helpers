@@ -455,6 +455,29 @@ def resolve_source_obs_project(package_dir: str, default: str = "GNOME:Factory")
 
 def extract_pool_changes(package_dir: str, stable_branch: str = "factory") -> str:
     """
+    is_osc = os.path.isdir(os.path.join(package_dir, ".osc")) and not os.path.exists(os.path.join(package_dir, ".git"))
+    if is_osc:
+        for f in os.listdir(package_dir):
+            if f.endswith(".changes"):
+                try:
+                    with open(os.path.join(package_dir, f), "r", encoding="utf-8", errors="replace") as fh:
+                        lines = []
+                        in_entry = False
+                        for line in fh:
+                            if line.startswith("-------------------------------------------------------------------"):
+                                if in_entry:
+                                    break
+                                in_entry = True
+                                continue
+                            if in_entry:
+                                lines.append(line.rstrip())
+                        txt = "\n".join(lines).strip()
+                        if txt:
+                            return txt
+                except Exception:
+                    pass
+        return f"Update {os.path.basename(package_dir)}"
+
     Extracts added .changes entries between refs/pool/{stable_branch} and origin/{stable_branch} (or HEAD).
     Returns clean changelog text suitable for the -m description of an osc submit request.
     Uses --ignore-space-at-eol to eliminate trailing whitespace edits on older changelog entries.
@@ -541,33 +564,14 @@ def extract_pool_changes(package_dir: str, stable_branch: str = "factory") -> st
 
 def discover_workspace_packages(workspace_path: str) -> List[str]:
     """
-    Discovers all packages in a workspace, checking both .gitmodules
-    and directories containing .git or .osc.
+    Discovers all packages in a workspace using sync_backend.discover_workspace_packages.
     """
-    pkgs = set()
-    gitmodules = os.path.join(workspace_path, ".gitmodules")
-    if os.path.isfile(gitmodules):
-        try:
-            res = subprocess.run(
-                ["git", "config", "--file", gitmodules, "--get-regexp", "path"],
-                capture_output=True, text=True, check=True
-            )
-            for line in res.stdout.splitlines():
-                pts = line.split()
-                if len(pts) >= 2:
-                    pkgs.add(pts[1])
-        except Exception:
-            pass
-
     try:
-        for entry in os.listdir(workspace_path):
-            full = os.path.join(workspace_path, entry)
-            if os.path.isdir(full) and (os.path.exists(os.path.join(full, ".git")) or os.path.exists(os.path.join(full, ".osc"))):
-                pkgs.add(entry)
-    except Exception:
-        pass
-
-    return sorted(pkgs)
+        from . import sync_backend as sb
+        return sb.discover_workspace_packages(workspace_path)
+    except ImportError:
+        import sync_backend as sb
+        return sb.discover_workspace_packages(workspace_path)
 
 
 def submit_package_to_pool(
@@ -590,6 +594,62 @@ def submit_package_to_pool(
     """
     if not os.path.isdir(package_dir):
         return False, f"Package directory '{package_dir}' does not exist."
+
+    # Handle OSC checkouts (.osc without .git)
+    is_osc = os.path.isdir(os.path.join(package_dir, ".osc")) and not os.path.exists(os.path.join(package_dir, ".git"))
+    if is_osc:
+        try:
+            from .sync_backend import check_osc_worktree_fast
+        except ImportError:
+            from sync_backend import check_osc_worktree_fast
+        dirty, untracked = check_osc_worktree_fast(package_dir)
+        if (dirty or untracked) and not force:
+            return False, f"Working tree for '{package_name}' has uncommitted changes. Run 'osc ci' before submitting."
+
+        source_project = resolve_source_obs_project(package_dir, default="")
+        if not source_project:
+            return False, f"Could not determine source OBS project for '{package_name}'."
+
+        if not force:
+            try:
+                rdiff = subprocess.run(
+                    ["osc", "rdiff", source_project, package_name, target_project],
+                    capture_output=True, text=True, timeout=15, env=get_obs_env()
+                )
+                if rdiff.returncode == 0 and not rdiff.stdout.strip():
+                    return False, f"Package '{package_name}' is already in sync with {target_project} (no differences between {source_project} and {target_project})."
+            except Exception:
+                pass
+
+        status_info = get_package_pool_submission_status(package_name, target_project=target_project)
+        if status_info["status"] == "pending" and not force:
+            req_id = status_info["request_id"]
+            return False, f"Active submit request #{req_id} is already pending against {target_project}."
+        if status_info["status"] == "accepted_pending_sync" and not force:
+            req_id = status_info["request_id"]
+            return False, f"Submit request #{req_id} was already accepted; awaiting backend sync to central pool."
+
+        if not message or not message.strip():
+            message = extract_pool_changes(package_dir, stable_branch=stable_branch) or f"Update {package_name} from {source_project}"
+
+        if dry_run:
+            return True, f"[Dry-Run] Would execute: osc sr {source_project} {package_name} {target_project} -m '{message[:80]}...'"
+
+        try:
+            cmd = ["osc", "sr", source_project, package_name, target_project, "-m", message]
+            env = dict(os.environ)
+            if "DBUS_SESSION_BUS_ADDRESS" not in env:
+                xdg_runtime = env.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+                bus_path = os.path.join(xdg_runtime, "bus")
+                if os.path.exists(bus_path):
+                    env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus_path}"
+
+            res = subprocess.run(cmd, capture_output=True, text=True, check=True, env=get_obs_env())
+            out = res.stdout.strip()
+            return True, out if out else f"Submitted {package_name} to {target_project} via osc sr."
+        except subprocess.CalledProcessError as e:
+            err = (e.stderr or e.stdout or str(e)).strip()
+            return False, f"osc sr failed (code {e.returncode}): {err}"
 
     # 0. Guarantee local refs match authoritative remotes on src.opensuse.org
     ensure_origin_ref_fresh(package_dir, branch=stable_branch)

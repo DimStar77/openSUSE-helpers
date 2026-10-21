@@ -530,15 +530,12 @@ def run_sync_action(target_pkg_dir=None, force=False, jobs=16):
     else:
         # Workspace-level sync
         targets = []
-        if os.path.isfile(".gitmodules"):
+        if os.path.isfile(".gitmodules") or sb.discover_workspace_packages("."):
             targets = [os.path.abspath(".")]
         else:
-            cfg = sb.load_config()
-            active_prof = cfg.get_active_profile() if hasattr(cfg, "get_active_profile") else {}
-            if not active_prof and isinstance(cfg, dict):
-                active_prof = cfg.get("profiles", {}).get(cfg.get("active_profile", ""), {})
-            sp = active_prof.get("stable_path")
-            up = active_prof.get("unstable_path")
+            cfg = sb.load_geckopit_profile_config()
+            sp = cfg.get("stable_path")
+            up = cfg.get("unstable_path")
             for p in (sp, up):
                 if p and os.path.isdir(p) and p not in targets:
                     targets.append(os.path.abspath(p))
@@ -741,30 +738,53 @@ def run_sync_check(repos, include_not_in_pool=False):
 
             rows.append((repo, stage1_str, stage2_str, action_str))
 
-    headers = [
-        "Package",
-        "Stage 1: pool ➔ devel:stable",
-        "Stage 2: devel:stable ➔ devel:unstable",
-        "Recommended Action"
-    ]
+    has_unstable_stream = has_next_count > 0
 
-    w1 = max(sb.visual_len(headers[0]), max(sb.visual_len(r[0]) for r in rows) if rows else 0)
-    w2 = max(sb.visual_len(headers[1]), max(sb.visual_len(r[1]) for r in rows) if rows else 0)
-    w3 = max(sb.visual_len(headers[2]), max(sb.visual_len(r[2]) for r in rows) if rows else 0)
-    w4 = max(sb.visual_len(headers[3]), max(sb.visual_len(r[3]) for r in rows) if rows else 0)
+    if has_unstable_stream:
+        headers = [
+            "Package",
+            "Stage 1: pool ➔ devel:stable",
+            "Stage 2: devel:stable ➔ devel:unstable",
+            "Recommended Action"
+        ]
+        w1 = max(sb.visual_len(headers[0]), max(sb.visual_len(r[0]) for r in rows) if rows else 0)
+        w2 = max(sb.visual_len(headers[1]), max(sb.visual_len(r[1]) for r in rows) if rows else 0)
+        w3 = max(sb.visual_len(headers[2]), max(sb.visual_len(r[2]) for r in rows) if rows else 0)
+        w4 = max(sb.visual_len(headers[3]), max(sb.visual_len(r[3]) for r in rows) if rows else 0)
 
-    print(f"Total Packages: {total} | Packages with 'next' branch: {has_next_count}\n")
-    print(f"### 🔄 Downstream Sync Table ({sb.BOLD}Action Required{sb.RESET})\n")
-    print(f"| {sb.pad_left(headers[0], w1)} | {sb.pad_left(headers[1], w2)} | {sb.pad_left(headers[2], w3)} | {sb.pad_left(headers[3], w4)} |")
-    print(f"| {'-'*w1} | {'-'*w2} | {'-'*w3} | {'-'*w4} |")
+        print(f"Total Packages: {total} | Packages with 'next' branch: {has_next_count}\n")
+        print(f"### 🔄 Downstream Sync Table ({sb.BOLD}Action Required{sb.RESET})\n")
+        print(f"| {sb.pad_left(headers[0], w1)} | {sb.pad_left(headers[1], w2)} | {sb.pad_left(headers[2], w3)} | {sb.pad_left(headers[3], w4)} |")
+        print(f"| {'-'*w1} | {'-'*w2} | {'-'*w3} | {'-'*w4} |")
 
-    for r in rows:
-        print(f"| {sb.pad_left(r[0], w1)} | {sb.pad_left(r[1], w2)} | {sb.pad_left(r[2], w3)} | {sb.pad_left(r[3], w4)} |")
+        for r in rows:
+            print(f"| {sb.pad_left(r[0], w1)} | {sb.pad_left(r[1], w2)} | {sb.pad_left(r[2], w3)} | {sb.pad_left(r[3], w4)} |")
+    else:
+        headers = [
+            "Package",
+            "Central Pool Status",
+            "Recommended Action"
+        ]
+        w1 = max(sb.visual_len(headers[0]), max(sb.visual_len(r[0]) for r in rows) if rows else 0)
+        w2 = max(sb.visual_len(headers[1]), max(sb.visual_len(r[1]) for r in rows) if rows else 0)
+        w3 = max(sb.visual_len(headers[2]), max(sb.visual_len(r[3]) for r in rows) if rows else 0)
+
+        print(f"Total Packages: {total}\n")
+        print(f"### 🔄 Downstream Sync Table ({sb.BOLD}Action Required{sb.RESET})\n")
+        print(f"| {sb.pad_left(headers[0], w1)} | {sb.pad_left(headers[1], w2)} | {sb.pad_left(headers[2], w3)} |")
+        print(f"| {'-'*w1} | {'-'*w2} | {'-'*w3} |")
+
+        for r in rows:
+            print(f"| {sb.pad_left(r[0], w1)} | {sb.pad_left(r[1], w2)} | {sb.pad_left(r[3], w3)} |")
 
     print(f"\n*Total packages requiring sync action: {len(rows)}*")
     if not_in_pool_count > 0 and not include_not_in_pool:
         print(f"\n💡 {sb.BOLD}Note:{sb.RESET} {not_in_pool_count} package(s) not in central Gitea pool (hidden to avoid noise; use '--include-not-in-pool' to include in table, or '--not-in-pool' for dedicated audit list).")
-    print(f"\n💡 {sb.BOLD}Tip:{sb.RESET} Try './geckopit-cli --version' to check upstream releases, or '--forward' to find forwardable next branches.")
+
+    if has_unstable_stream:
+        print(f"\n💡 {sb.BOLD}Tip:{sb.RESET} Try 'geckopit-cli --version' to check upstream releases, or '--forward' to find forwardable next branches.")
+    else:
+        print(f"\n💡 {sb.BOLD}Tip:{sb.RESET} Try 'geckopit-cli --version' to check upstream releases, or '--check-pool' to audit Factory submit requests.")
 
 
 def run_version_check(repos, branch=None):
@@ -776,9 +796,21 @@ def run_version_check(repos, branch=None):
     else:
         print(f"Checking versions for {total} packages against release-monitoring.org (30 threads)...", file=sys.stderr)
 
+    unstable_b = prof.get("unstable_branch") if prof.get("unstable_path") else None
+    stable_b = prof.get("stable_branch") or "factory"
+
     results = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
-        futures = {executor.submit(sb.check_repo_version, repo, branch, ignored_unstable_versions=ignored_versions): repo for repo in repos}
+        futures = {
+            executor.submit(
+                sb.check_repo_version,
+                repo,
+                branch,
+                stable_branch=stable_b,
+                unstable_branch=unstable_b,
+                ignored_unstable_versions=ignored_versions
+            ): repo for repo in repos
+        }
         completed = 0
         for future in concurrent.futures.as_completed(futures):
             repo_name, data = future.result()
@@ -787,6 +819,11 @@ def run_version_check(repos, branch=None):
             if completed % 25 == 0 or completed == total:
                 print(f"Progress: {completed}/{total} checked...", end='\r', file=sys.stderr)
     print("", file=sys.stderr)
+
+    has_unstable_stream = bool(
+        prof.get("unstable_path") and
+        any(d.get("next_ver") not in (None, "—") for d in results.values())
+    )
 
     rows = []
     up_to_date_count = 0
@@ -804,7 +841,7 @@ def run_version_check(repos, branch=None):
             continue
 
         if data["needs_update"]:
-            if branch == "factory":
+            if not has_unstable_stream or branch in ("factory", "stable"):
                 if sb.is_version_newer(data["upstream_stable"], data["factory_ver"], repo):
                     f_local = f"{sb.RED}{data['factory_ver']}{sb.RESET}"
                     f_up = f"{sb.GREEN}{data['upstream_stable']}{sb.RESET}"
@@ -813,7 +850,7 @@ def run_version_check(repos, branch=None):
                     f_up = f"{sb.GREEN}{data['upstream_stable']}{sb.RESET}"
                 rows.append((repo, f_local, f_up))
 
-            elif branch == "next":
+            elif branch in ("next", "unstable"):
                 if data["next_ver"] != "—" and sb.is_version_newer(data["upstream_latest"], data["next_ver"], repo):
                     n_local = f"{sb.RED}{data['next_ver']}{sb.RESET}"
                     n_up = f"{sb.GREEN}{data['upstream_latest']}{sb.RESET}"
@@ -847,13 +884,19 @@ def run_version_check(repos, branch=None):
         else:
             up_to_date_count += 1
 
-    if branch == "factory":
+    if not has_unstable_stream:
+        headers = [
+            "Package",
+            "Local Version",
+            "Upstream Version"
+        ]
+    elif branch in ("factory", "stable"):
         headers = [
             "Package",
             "Local (stable)",
             "Upstream (stable)"
         ]
-    elif branch == "next":
+    elif branch in ("next", "unstable"):
         headers = [
             "Package",
             "Local (unstable)",
@@ -1506,8 +1549,16 @@ def main():
     target_pkg_dir = None
     if sb.is_package_dir("."):
         target_pkg_dir = "."
-    elif target_arg and sb.is_package_dir(target_arg):
-        target_pkg_dir = target_arg
+    elif target_arg:
+        if sb.is_package_dir(target_arg):
+            target_pkg_dir = target_arg
+        else:
+            # Check if target_arg matches a subpackage in discovered workspace packages
+            discovered = sb.discover_workspace_packages('.')
+            for p in discovered:
+                if p == target_arg or os.path.basename(p) == target_arg:
+                    target_pkg_dir = p
+                    break
 
     # Parse sync options
     show_sync = "--sync" in sys.argv or "-s" in sys.argv or "--fetch" in sys.argv
@@ -1623,7 +1674,34 @@ def main():
                 print(f"  State:          accepted on {r.get('state_when', 'recently')}")
                 print(f"  Target:         {r['target_project']} (awaiting sync to central pool)")
             else:
-                print(f"  Status:         {sb.CYAN}📤 Unsubmitted{sb.RESET} (Ready for 'geckopit-cli --submit-pool')")
+                is_osc_pkg = os.path.isdir(os.path.join(target_pkg_dir, ".osc")) and not os.path.exists(os.path.join(target_pkg_dir, ".git"))
+                if is_osc_pkg:
+                    src_prj = pool_submit.resolve_source_obs_project(target_pkg_dir, default="")
+                    has_diff = False
+                    if src_prj:
+                        try:
+                            rdiff = subprocess.run(["osc", "rdiff", src_prj, pkg_name, "openSUSE:Factory"], capture_output=True, text=True, timeout=10, env=pool_submit.get_obs_env())
+                            if rdiff.returncode == 0 and rdiff.stdout.strip():
+                                has_diff = True
+                        except Exception:
+                            pass
+                    if has_diff:
+                        print(f"  Status:         {sb.CYAN}📤 Unsubmitted{sb.RESET} (Differences detected in {src_prj}; ready for 'geckopit-cli --submit-pool')")
+                    else:
+                        print(f"  Status:         {sb.GREEN}✅ Up-to-date with openSUSE:Factory{sb.RESET} (no unsubmitted differences)")
+                else:
+                    pool_submit.ensure_pool_ref_fresh(target_pkg_dir)
+                    pool_ahead = 0
+                    try:
+                        ahead_res = subprocess.run(["git", "-C", target_pkg_dir, "rev-list", "refs/pool/factory..origin/factory", "--count"], capture_output=True, text=True)
+                        if ahead_res.returncode == 0:
+                            pool_ahead = int(ahead_res.stdout.strip() or "0")
+                    except Exception:
+                        pass
+                    if pool_ahead > 0:
+                        print(f"  Status:         {sb.CYAN}📤 Unsubmitted{sb.RESET} (Ahead of pool by {pool_ahead} commit{'s' if pool_ahead != 1 else ''}; ready for 'geckopit-cli --submit-pool')")
+                    else:
+                        print(f"  Status:         {sb.GREEN}✅ Up-to-date with central pool{sb.RESET} (0 commits ahead)")
             sys.exit(0)
         else:
             sys.exit(run_pool_audit_cli(workspace_path=os.getcwd()))
@@ -1724,10 +1802,7 @@ def main():
         return
 
     # Operating in Project Directory (Multi-Package batch mode)
-    repos = sorted([
-        d for d in os.listdir('.')
-        if os.path.isdir(d) and os.path.exists(os.path.join(d, '.git'))
-    ])
+    repos = sb.discover_workspace_packages('.')
 
     if show_versions:
         run_version_check(repos, version_branch)

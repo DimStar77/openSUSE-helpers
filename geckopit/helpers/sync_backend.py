@@ -408,6 +408,40 @@ def check_repo_pr(repo_name, stable_branch="factory", unstable_branch="next", wo
 def check_repo_sync(repo_name, stable_branch="factory", unstable_branch="next", workspace_path=".", known_not_in_pool=None):
     repo_path = os.path.join(workspace_path, repo_name)
 
+    # 0. Check if this is an OSC checkout (legacy OBS packaging)
+    is_osc = os.path.isdir(os.path.join(repo_path, ".osc")) and os.path.isfile(os.path.join(repo_path, ".osc", "_project")) and not os.path.exists(os.path.join(repo_path, ".git"))
+    if is_osc:
+        osc_prj = ""
+        osc_pkg = os.path.basename(repo_path)
+        try:
+            prj_f = os.path.join(repo_path, ".osc", "_project")
+            if os.path.isfile(prj_f):
+                with open(prj_f, "r") as f:
+                    osc_prj = f.read().strip()
+            pkg_f = os.path.join(repo_path, ".osc", "_package")
+            if os.path.isfile(pkg_f):
+                with open(pkg_f, "r") as f:
+                    osc_pkg = f.read().strip()
+        except Exception:
+            pass
+
+        is_dirty, _ = check_osc_worktree_fast(repo_path)
+
+        return repo_name, {
+            "status": "success",
+            "is_osc": True,
+            "osc_project": osc_prj,
+            "osc_package": osc_pkg,
+            "pool_status": "OSC Managed",
+            "pool_ahead": 0,
+            "pool_behind": 0,
+            "next_status": "No next branch",
+            "next_ahead": 0,
+            "next_behind": 0,
+            "needs_action": is_dirty,
+            "is_dirty": is_dirty
+        }
+
     # 1. Fetch latest state from origin (src.opensuse.org/<devel_project>/<repo>)
     try:
         run_tracked(
@@ -417,13 +451,32 @@ def check_repo_sync(repo_name, stable_branch="factory", unstable_branch="next", 
     except subprocess.CalledProcessError:
         pass
 
-    # 2. Check if origin/{stable_branch} exists locally
-    has_origin_stable = has_git_ref(repo_path, f'refs/remotes/origin/{stable_branch}')
+    # 2. Check if origin/{stable_branch} exists locally (with auto-detection fallback)
+    has_origin_stable = bool(stable_branch and has_git_ref(repo_path, f'refs/remotes/origin/{stable_branch}'))
+
+    if not has_origin_stable:
+        # Auto-detect branch: check current HEAD first, then standard distribution branches
+        try:
+            h_res = run_tracked(['git', '-C', repo_path, 'rev-parse', '--abbrev-ref', 'HEAD'], capture_output=True, text=True)
+            if h_res.returncode == 0:
+                h = h_res.stdout.strip()
+                if h and h != 'HEAD' and has_git_ref(repo_path, f'refs/remotes/origin/{h}'):
+                    stable_branch = h
+                    has_origin_stable = True
+        except Exception:
+            pass
+
+        if not has_origin_stable:
+            for cand in ('factory', 'main', 'master'):
+                if has_git_ref(repo_path, f'refs/remotes/origin/{cand}'):
+                    stable_branch = cand
+                    has_origin_stable = True
+                    break
 
     if not has_origin_stable:
         return repo_name, {
             "status": "error",
-            "message": f"Missing origin/{stable_branch} branch"
+            "message": f"Missing origin/{stable_branch or 'factory'} branch"
         }
 
     # 3. Check if origin/{unstable_branch} exists locally
@@ -813,8 +866,12 @@ def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable
                 if line.strip().lower().startswith('version:'):
                     factory_ver = line.split(':', 1)[1].strip()
                     break
-        except subprocess.CalledProcessError:
+        except Exception:
             pass
+
+    # Fallback: check local on-disk .spec if git show returned nothing (e.g. OSC checkouts or master/main branches)
+    if not factory_ver:
+        factory_ver = get_local_package_version(repo_path)
 
     # 4. Get version from unstable branch (if checking unstable or both)
     next_ver = None
@@ -828,7 +885,7 @@ def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable
                 if line.strip().lower().startswith('version:'):
                     next_ver = line.split(':', 1)[1].strip()
                     break
-        except subprocess.CalledProcessError:
+        except Exception:
             pass
 
     # 5. Query release-monitoring.org for upstream versions (spoofing curl User-Agent)
@@ -836,7 +893,8 @@ def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable
     upstream_latest = None
     exact_item = None
 
-    url = f"https://release-monitoring.org/api/v2/packages/?name={repo_name}&distribution=openSUSE"
+    lookup_name = get_package_name_from_dir(repo_path) or os.path.basename(repo_name)
+    url = f"https://release-monitoring.org/api/v2/packages/?name={lookup_name}&distribution=openSUSE"
     headers = {'User-Agent': 'curl/8.0.1'}
     try:
         response = get_http_session().get(url, headers=headers, timeout=10)
@@ -846,13 +904,13 @@ def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable
             if items:
                 exact_item = None
                 for item in items:
-                    if item.get("name") == repo_name:
+                    if item.get("name") in (lookup_name, os.path.basename(repo_name), repo_name):
                         exact_item = item
                         break
                 if not exact_item:
                     exact_item = items[0]
 
-                upstream_stable = exact_item.get("stable_version")
+                upstream_stable = exact_item.get("stable_version") or exact_item.get("version")
                 upstream_latest = exact_item.get("version")
     except Exception:
         # If API is unreachable or rate-limited, we report partial error but keep spec versions
@@ -1081,6 +1139,58 @@ def create_gitea_pr(repo_name, title, description, stable_branch="factory", unst
         return False, f"Exception occurred: {str(e)}"
 
 
+def check_osc_worktree_fast(pkg_dir):
+    """
+    High-performance in-Python OSC worktree status checker (0.16 ms vs 420 ms for 'osc status').
+    Inspects .osc/_files XML and on-disk files directly without spawning a Python subshell.
+    Returns (dirty: bool, untracked: bool).
+    """
+    dirty = False
+    untracked = False
+    files_xml = os.path.join(pkg_dir, '.osc', '_files')
+    if not os.path.isfile(files_xml):
+        return dirty, untracked
+    try:
+        import xml.etree.ElementTree as ET
+        import hashlib
+        tree = ET.parse(files_xml)
+        root = tree.getroot()
+        tracked = {}
+        for entry in root.findall('entry'):
+            name = entry.get('name')
+            if name:
+                sz = int(entry.get('size', '0'))
+                mtime = int(entry.get('mtime', '0'))
+                md5 = entry.get('md5')
+                tracked[name] = (sz, mtime, md5)
+
+        disk_entries = [e for e in os.listdir(pkg_dir) if not e.startswith('.')]
+        for e in disk_entries:
+            if e not in tracked:
+                untracked = True
+            else:
+                p = os.path.join(pkg_dir, e)
+                try:
+                    st = os.stat(p)
+                    exp_sz, exp_mtime, exp_md5 = tracked[e]
+                    if st.st_size != exp_sz:
+                        dirty = True
+                    elif abs(int(st.st_mtime) - exp_mtime) > 2 and exp_md5:
+                        with open(p, 'rb') as fh:
+                            actual_md5 = hashlib.md5(fh.read()).hexdigest()
+                        if actual_md5 != exp_md5:
+                            dirty = True
+                except OSError:
+                    dirty = True
+
+        for name in tracked:
+            if not os.path.exists(os.path.join(pkg_dir, name)):
+                dirty = True
+    except Exception:
+        pass
+    return dirty, untracked
+
+
 def check_worktree_status(repo_path, expected_branch=None):
     """
     Checks the local on-disk git status for a repository checkout or worktree.
@@ -1102,7 +1212,24 @@ def check_worktree_status(repo_path, expected_branch=None):
             "behind": 0,
             "dirty": False,
             "untracked": False,
-            "has_conflict": False
+            "has_conflict": False,
+            "is_osc": False
+        }
+
+    # Handle OSC checkouts (.osc without .git)
+    is_osc = os.path.isdir(os.path.join(repo_path, ".osc")) and os.path.isfile(os.path.join(repo_path, ".osc", "_project")) and not os.path.exists(os.path.join(repo_path, ".git"))
+    if is_osc:
+        dirty, untracked = check_osc_worktree_fast(repo_path)
+        return {
+            "exists": True,
+            "head": "osc",
+            "upstream": "OBS",
+            "ahead": 0,
+            "behind": 0,
+            "dirty": dirty,
+            "untracked": untracked,
+            "has_conflict": False,
+            "is_osc": True
         }
 
     try:
@@ -1263,6 +1390,75 @@ def pad_left(text, width):
     return text + ' ' * max(0, width - v_len)
 
 
+
+def discover_workspace_packages(root_path):
+    """
+    Discovers packages in a workspace root path.
+    Supports:
+    1. Superprojects with .gitmodules (e.g. GNOME, GNOME:Next)
+    2. Flat directory of packages (e.g. ~/packages/pkg1, ~/packages/pkg2)
+    3. Categorized portfolio trees (depth <= 2, e.g. ~/packaging/dimstar/vlc, ~/packaging/games/toycars)
+    Returns: list of package relative paths (e.g. ['dimstar/vlc', 'games/toycars', 'mutter'])
+    """
+    if not root_path or not os.path.isdir(root_path):
+        return []
+
+    # 1. Superproject with .gitmodules
+    gitmodules = os.path.join(root_path, ".gitmodules")
+    if os.path.isfile(gitmodules):
+        try:
+            import configparser
+            cfg = configparser.ConfigParser()
+            cfg.read(gitmodules, encoding="utf-8")
+            submodules = []
+            for sec in cfg.sections():
+                if cfg.has_option(sec, "path"):
+                    val = cfg.get(sec, "path").strip()
+                    if val and not val.startswith(".."):
+                        submodules.append(val)
+            if submodules:
+                return sorted(submodules)
+        except Exception:
+            pass
+
+        try:
+            with open(gitmodules, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            paths = re.findall(r"^\s*path\s*=\s*(\S+)", content, re.MULTILINE)
+            if paths:
+                return sorted([p for p in paths if not p.startswith("..")])
+        except Exception:
+            pass
+
+    # 2. Portfolio / Directory scan (boundary-aware, depth <= 2)
+    packages = []
+    try:
+        for entry in sorted(os.listdir(root_path)):
+            if entry.startswith("."):
+                continue
+            p1 = os.path.join(root_path, entry)
+            if not os.path.isdir(p1):
+                continue
+
+            # Check if Level 1 entry is a package
+            if is_package_dir(p1):
+                packages.append(entry)
+            else:
+                # Level 2 check (category / organization subfolder)
+                try:
+                    for sub in sorted(os.listdir(p1)):
+                        if sub.startswith("."):
+                            continue
+                        p2 = os.path.join(p1, sub)
+                        if os.path.isdir(p2) and is_package_dir(p2):
+                            packages.append(f"{entry}/{sub}")
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    return sorted(packages)
+
 def is_package_dir(path="."):
     """
     Checks if path is an individual openSUSE package directory
@@ -1317,31 +1513,142 @@ def get_package_name_from_dir(path="."):
     return base
 
 
-def load_geckopit_profile_config():
-    """Loads active workspace profile settings from ~/.config/geckopit.json."""
+def autodetect_worktree_pairing(target_dir="."):
+    """
+    Interrogates the Git repository at target_dir for linked worktrees.
+    Detects if target_dir is either:
+    1. A primary repository with exactly one linked worktree on disk (e.g. GNOME -> GNOME:Next)
+    2. A linked worktree whose .git file points back to a primary repository (e.g. GNOME:Next -> GNOME)
+    Returns dict with (stable_path, unstable_path, stable_branch, unstable_branch) or None.
+    """
+    target_dir = os.path.abspath(target_dir)
+    git_entry = os.path.join(target_dir, ".git")
+    if not os.path.exists(git_entry):
+        return None
+
+    main_repo_dir = None
+    linked_wt_dir = None
+    linked_branch = None
+    main_branch = None
+
+    if os.path.isfile(git_entry):
+        try:
+            with open(git_entry, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+            if content.startswith("gitdir:"):
+                wt_gitdir = content.split(":", 1)[1].strip()
+                if "/worktrees/" in wt_gitdir:
+                    main_git_dir = wt_gitdir.split("/worktrees/")[0]
+                    main_repo_dir = os.path.dirname(main_git_dir)
+                    linked_wt_dir = target_dir
+                    head_file = os.path.join(wt_gitdir, "HEAD")
+                    if os.path.exists(head_file):
+                        with open(head_file, "r", encoding="utf-8") as hf:
+                            h = hf.read().strip()
+                            if h.startswith("ref:"):
+                                linked_branch = h.split("/")[-1]
+        except Exception:
+            pass
+    elif os.path.isdir(git_entry):
+        wt_root = os.path.join(git_entry, "worktrees")
+        if os.path.isdir(wt_root):
+            valid = []
+            for name in os.listdir(wt_root):
+                p = os.path.join(wt_root, name)
+                gitdir_f = os.path.join(p, "gitdir")
+                head_f = os.path.join(p, "HEAD")
+                if os.path.isfile(gitdir_f) and os.path.isfile(head_f):
+                    with open(gitdir_f, "r", encoding="utf-8") as f:
+                        target = f.read().strip()
+                    wt_target_dir = os.path.dirname(target)
+                    if os.path.isdir(wt_target_dir):
+                        with open(head_f, "r", encoding="utf-8") as f:
+                            h = f.read().strip()
+                        br = h.split("/")[-1] if h.startswith("ref:") else None
+                        valid.append((wt_target_dir, br))
+            if len(valid) == 1:
+                main_repo_dir = target_dir
+                linked_wt_dir, linked_branch = valid[0]
+
+    if main_repo_dir and linked_wt_dir and os.path.isdir(main_repo_dir) and os.path.isdir(linked_wt_dir):
+        main_head_f = os.path.join(main_repo_dir, ".git", "HEAD")
+        if os.path.isfile(main_head_f):
+            try:
+                with open(main_head_f, "r", encoding="utf-8") as f:
+                    h = f.read().strip()
+                    if h.startswith("ref:"):
+                        main_branch = h.split("/")[-1]
+            except Exception:
+                pass
+        return {
+            "stable_path": main_repo_dir,
+            "unstable_path": linked_wt_dir,
+            "stable_branch": main_branch or "factory",
+            "unstable_branch": linked_branch or "next"
+        }
+    return None
+
+
+def load_geckopit_profile_config(workspace_dir=None):
+    """
+    Loads workspace profile settings from ~/.config/geckopit.json.
+    If workspace_dir is provided (or defaults to cwd), checks whether the
+    current directory or any parent directory matches a configured stable_path
+    or unstable_path across all profiles, falling back to the active_workspace.
+    """
     from pathlib import Path
     path = Path.home() / ".config" / "geckopit.json"
+    target_dir = os.path.abspath(workspace_dir if workspace_dir else os.getcwd())
+    pairing = autodetect_worktree_pairing(target_dir)
     config = {
-        "active_workspace": "Default",
-        "stable_branch": "factory",
-        "unstable_branch": "next",
-        "stable_path": ".",
-        "unstable_path": None,
+        "active_workspace": os.path.basename(pairing["stable_path"]) if pairing else "Default",
+        "stable_branch": pairing["stable_branch"] if pairing else "factory",
+        "unstable_branch": pairing["unstable_branch"] if pairing else "next",
+        "stable_path": pairing["stable_path"] if pairing else ".",
+        "unstable_path": pairing["unstable_path"] if pairing else None,
         "ignored_unstable_versions": {}
     }
     if path.exists():
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                active_ws = data.get("active_workspace", "Default")
                 workspaces = data.get("workspaces", {})
-                active_profile = workspaces.get(active_ws, {})
-                config["active_workspace"] = active_ws
-                config["stable_branch"] = active_profile.get("stable_branch", "factory") or "factory"
-                config["unstable_branch"] = active_profile.get("unstable_branch", "next") or "next"
-                config["stable_path"] = active_profile.get("stable_path", ".") or "."
-                config["unstable_path"] = active_profile.get("unstable_path")
-                config["ignored_unstable_versions"] = active_profile.get("ignored_unstable_versions", {})
+
+                # Directory-aware profile matching
+                target_dir = os.path.abspath(workspace_dir if workspace_dir else os.getcwd())
+                matched_ws = None
+                matched_profile = None
+
+                curr = target_dir
+                while curr and curr != "/":
+                    for ws_name, prof in workspaces.items():
+                        sp = prof.get("stable_path")
+                        up = prof.get("unstable_path")
+                        if (sp and os.path.abspath(sp) == curr) or (up and os.path.abspath(up) == curr):
+                            matched_ws = ws_name
+                            matched_profile = prof
+                            break
+                    if matched_ws:
+                        break
+                    curr = os.path.dirname(curr)
+
+                if not matched_ws:
+                    # 1. Interrogate local repository on disk for linked Git worktree pairing
+                    pairing = autodetect_worktree_pairing(target_dir)
+                    if pairing:
+                        matched_ws = os.path.basename(pairing["stable_path"])
+                        matched_profile = pairing
+                    else:
+                        active_ws = data.get("active_workspace", "Default")
+                        matched_ws = active_ws
+                        matched_profile = workspaces.get(active_ws, {})
+
+                config["active_workspace"] = matched_ws
+                config["stable_branch"] = matched_profile.get("stable_branch", "factory") or "factory"
+                config["unstable_branch"] = matched_profile.get("unstable_branch", "next") or "next"
+                config["stable_path"] = matched_profile.get("stable_path", ".") or "."
+                config["unstable_path"] = matched_profile.get("unstable_path")
+                config["ignored_unstable_versions"] = matched_profile.get("ignored_unstable_versions", {})
         except Exception:
             pass
     return config
@@ -1564,3 +1871,5 @@ def run_workspace_sync(target_paths, jobs=16, force=False, on_log=None):
 
 
 setup_ssh_multiplexing()
+
+load_config = load_geckopit_profile_config

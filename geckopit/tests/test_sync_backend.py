@@ -267,5 +267,137 @@ class TestSyncBackend(unittest.TestCase):
             self.assertFalse("fetch" in cmd and "src.opensuse.org/pool" in cmd[5])
 
 
+    def test_discover_workspace_packages(self):
+        import tempfile
+        import sync_backend as sb
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # 1. Superproject with .gitmodules
+            sp_dir = os.path.join(tmpdir, "superproject")
+            os.makedirs(sp_dir)
+            with open(os.path.join(sp_dir, ".gitmodules"), "w") as f:
+                f.write("[submodule \"pkgA\"]\n\tpath = pkgA\n[submodule \"pkgB\"]\n\tpath = pkgB\n")
+
+            found_sp = sb.discover_workspace_packages(sp_dir)
+            self.assertEqual(found_sp, ["pkgA", "pkgB"])
+
+            # 1b. Regression test: .gitmodules with 'path' in package name and relative URL
+            with open(os.path.join(sp_dir, ".gitmodules"), "w") as f:
+                f.write('[submodule "telepathy-farstream"]\n\tpath = telepathy-farstream\n\turl = ../telepathy-farstream\n')
+            found_tele = sb.discover_workspace_packages(sp_dir)
+            self.assertEqual(found_tele, ["telepathy-farstream"])
+
+            # 2. Categorized portfolio tree (depth <= 2)
+            pf_dir = os.path.join(tmpdir, "portfolio")
+            p_vlc = os.path.join(pf_dir, "dimstar", "vlc")
+            p_toycars = os.path.join(pf_dir, "games", "toycars")
+            os.makedirs(p_vlc)
+            os.makedirs(p_toycars)
+
+            with open(os.path.join(p_vlc, "vlc.spec"), "w") as f:
+                f.write("Name: vlc\nVersion: 3.0\n")
+            with open(os.path.join(p_toycars, "toycars.spec"), "w") as f:
+                f.write("Name: toycars\nVersion: 0.3\n")
+
+            found_pf = sb.discover_workspace_packages(pf_dir)
+            self.assertEqual(found_pf, ["dimstar/vlc", "games/toycars"])
+
+    def test_check_repo_sync_osc_checkout(self):
+        import tempfile
+        import sync_backend as sb
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pkg_dir = os.path.join(tmpdir, "games", "toycars")
+            osc_dir = os.path.join(pkg_dir, ".osc")
+            os.makedirs(osc_dir)
+
+            with open(os.path.join(osc_dir, "_project"), "w") as f:
+                f.write("games\n")
+            with open(os.path.join(osc_dir, "_package"), "w") as f:
+                f.write("toycars\n")
+            with open(os.path.join(pkg_dir, "toycars.spec"), "w") as f:
+                f.write("Name: toycars\nVersion: 0.3.10\n")
+
+            name, data = sb.check_repo_sync("games/toycars", workspace_path=tmpdir)
+            self.assertEqual(data["status"], "success")
+            self.assertTrue(data.get("is_osc"))
+            self.assertEqual(data.get("osc_project"), "games")
+            self.assertEqual(data.get("osc_package"), "toycars")
+            self.assertEqual(data.get("pool_status"), "OSC Managed")
+
+    def test_check_worktree_status_osc_checkout(self):
+        import tempfile
+        import sync_backend as sb
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pkg_dir = os.path.join(tmpdir, "toycars")
+            osc_dir = os.path.join(pkg_dir, ".osc")
+            os.makedirs(osc_dir)
+            with open(os.path.join(osc_dir, "_project"), "w") as f:
+                f.write("games\n")
+            with open(os.path.join(pkg_dir, "toycars.spec"), "w") as f:
+                f.write("Name: toycars\n")
+
+            wt = sb.check_worktree_status(pkg_dir)
+            self.assertTrue(wt["exists"])
+            self.assertTrue(wt.get("is_osc"))
+            self.assertEqual(wt["head"], "osc")
+            self.assertEqual(wt["upstream"], "OBS")
+
+    def test_check_repo_version_local_spec_fallback(self):
+        import tempfile
+        import sync_backend as sb
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pkg_dir = os.path.join(tmpdir, "graphics", "shotwell")
+            os.makedirs(pkg_dir)
+            with open(os.path.join(pkg_dir, "shotwell.spec"), "w") as f:
+                f.write("Name: shotwell\nVersion: 33.0\n")
+
+            with mock.patch("sync_backend.run_tracked", side_effect=Exception("No git")):
+                with mock.patch("sync_backend.get_http_session") as mock_sess:
+                    mock_resp = mock.Mock()
+                    mock_resp.status_code = 200
+                    mock_resp.json.return_value = {"items": [{"name": "shotwell", "version": "0.32.17"}]}
+                    mock_sess.return_value.get.return_value = mock_resp
+
+                    name, ver = sb.check_repo_version("graphics/shotwell", workspace_path=tmpdir, skip_fetch=True)
+                    self.assertEqual(ver["status"], "success")
+                    self.assertEqual(ver["factory_ver"], "33.0")
+                    self.assertEqual(ver["upstream_stable"], "0.32.17")
+
+    def test_autodetect_worktree_pairing(self):
+        import tempfile
+        import sync_backend as sb
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main_repo = os.path.join(tmpdir, "main")
+            wt_repo = os.path.join(tmpdir, "main_next")
+            os.makedirs(os.path.join(main_repo, ".git", "worktrees", "main_next"))
+            os.makedirs(wt_repo)
+
+            with open(os.path.join(main_repo, ".git", "HEAD"), "w") as f:
+                f.write("ref: refs/heads/factory\n")
+
+            with open(os.path.join(main_repo, ".git", "worktrees", "main_next", "gitdir"), "w") as f:
+                f.write(f"{wt_repo}/.git\n")
+            with open(os.path.join(main_repo, ".git", "worktrees", "main_next", "HEAD"), "w") as f:
+                f.write("ref: refs/heads/next\n")
+
+            with open(os.path.join(wt_repo, ".git"), "w") as f:
+                f.write(f"gitdir: {main_repo}/.git/worktrees/main_next\n")
+
+            res_main = sb.autodetect_worktree_pairing(main_repo)
+            self.assertIsNotNone(res_main)
+            self.assertEqual(res_main["stable_path"], main_repo)
+            self.assertEqual(res_main["unstable_path"], wt_repo)
+            self.assertEqual(res_main["stable_branch"], "factory")
+            self.assertEqual(res_main["unstable_branch"], "next")
+
+            res_wt = sb.autodetect_worktree_pairing(wt_repo)
+            self.assertIsNotNone(res_wt)
+            self.assertEqual(res_wt["stable_path"], main_repo)
+            self.assertEqual(res_wt["unstable_path"], wt_repo)
+
 if __name__ == '__main__':
     unittest.main()

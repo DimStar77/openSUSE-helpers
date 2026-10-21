@@ -195,7 +195,15 @@ class PackageRow(Gtk.ListBoxRow):
 
         # Package Title
         self.name_label = Gtk.Label(halign=Gtk.Align.START)
-        self.name_label.set_markup(f"<span weight='bold'>{package_name}</span>")
+        base_name = os.path.basename(package_name)
+        category = os.path.dirname(package_name)
+        esc_base = GLib.markup_escape_text(base_name)
+        if category:
+            esc_cat = GLib.markup_escape_text(category)
+            title_markup = f"<span size='small' foreground='gray'>📂 {esc_cat} / </span><span weight='bold'>{esc_base}</span>"
+        else:
+            title_markup = f"<span weight='bold'>{esc_base}</span>"
+        self.name_label.set_markup(title_markup)
         self.name_label.set_ellipsize(Pango.EllipsizeMode.END)
         text_box.append(self.name_label)
 
@@ -248,6 +256,13 @@ class PackageRow(Gtk.ListBoxRow):
 
         subtitle_parts = []
 
+        # 0. VCS metadata (OSC project subtitle)
+        is_osc = (sync_data and sync_data.get("is_osc")) or (worktree_data and worktree_data.get("is_osc", False))
+        if is_osc:
+            osc_prj = (sync_data and sync_data.get("osc_project")) or "OBS"
+            if not any(p.startswith("OSC:") for p in subtitle_parts):
+                subtitle_parts.append(f"OSC: {osc_prj}")
+
         # 1. Sync & Gitea Pool state
         if sync_data:
             pool_behind = sync_data.get("pool_behind", 0)
@@ -287,6 +302,8 @@ class PackageRow(Gtk.ListBoxRow):
                         f"• Remote: https://src.opensuse.org/pool/{self.package_name}.git"
                     )
                     self.badges_box.append(self.create_badge("Pool", "orange", tooltip=tt))
+            elif pool_status == "OSC Managed":
+                pass
             elif pool_status == "Not in Pool":
                 subtitle_parts.append("Not in Gitea")
                 tt = f"<b>Central Pool Status</b>\n• Package <b>{self.package_name}</b> is not hosted in the central Gitea pool."
@@ -321,7 +338,7 @@ class PackageRow(Gtk.ListBoxRow):
                 )
                 self.badges_box.append(self.create_badge("Stable 🔺", "green", tooltip=tt))
 
-            if is_version_newer(upstream_latest, next_ver, self.package_name):
+            if getattr(self.parent_window, "unstable_b", None) and is_version_newer(upstream_latest, next_ver, self.package_name):
                 subtitle_parts.append("Unstable Update")
                 tt = (
                     f"<b>Unstable Upstream Release</b>\n"
@@ -1333,8 +1350,9 @@ class WorkspaceManagerDialog(Gtk.Window):
         self.grid.attach(self.stable_path_entry, 1, 1, 1, 1)
         self.grid.attach(btn_browse_stable, 2, 1, 1, 1)
 
-        lbl_stable_br = Gtk.Label(label="Stable Branch:", halign=Gtk.Align.START)
+        lbl_stable_br = Gtk.Label(label="Default Branch:", halign=Gtk.Align.START)
         self.stable_br_entry = Gtk.Entry()
+        self.stable_br_entry.set_placeholder_text("Auto-detect (factory / master / main)")
         self.grid.attach(lbl_stable_br, 0, 2, 1, 1)
         self.grid.attach(self.stable_br_entry, 1, 2, 2, 1)
 
@@ -1736,7 +1754,7 @@ class SyncWindow(Adw.ApplicationWindow):
         self.stable_p = active_prof.get("stable_path", ".") or "."
         self.unstable_p = active_prof.get("unstable_path")
         self.stable_b = active_prof.get("stable_branch", "factory") or "factory"
-        self.unstable_b = active_prof.get("unstable_branch", "next") or "next"
+        self.unstable_b = active_prof.get("unstable_branch") if self.unstable_p else None
         self.ignored_unstable_versions = active_prof.get("ignored_unstable_versions", {})
 
         # Core data
@@ -2026,26 +2044,8 @@ class SyncWindow(Adw.ApplicationWindow):
         stable_p = active_prof.get("stable_path", "")
         unstable_p = active_prof.get("unstable_path", "")
 
-        factory_repos = set()
-        next_repos = set()
-
-        def is_git_repo(path):
-            if not os.path.exists(path) or not os.path.isdir(path):
-                return False
-            git_sub = os.path.join(path, ".git")
-            return os.path.exists(git_sub)
-
-        if stable_p and os.path.exists(stable_p):
-            try:
-                factory_repos = {d for d in os.listdir(stable_p) if is_git_repo(os.path.join(stable_p, d))}
-            except Exception:
-                pass
-
-        if unstable_p and os.path.exists(unstable_p):
-            try:
-                next_repos = {d for d in os.listdir(unstable_p) if is_git_repo(os.path.join(unstable_p, d))}
-            except Exception:
-                pass
+        factory_repos = set(sb.discover_workspace_packages(stable_p)) if stable_p else set()
+        next_repos = set(sb.discover_workspace_packages(unstable_p)) if unstable_p else set()
 
         self.repos = sorted(list(factory_repos | next_repos))
 
@@ -2227,7 +2227,7 @@ class SyncWindow(Adw.ApplicationWindow):
         self.stable_p = active_prof.get("stable_path", ".") or "."
         self.unstable_p = active_prof.get("unstable_path")
         self.stable_b = active_prof.get("stable_branch", "factory") or "factory"
-        self.unstable_b = active_prof.get("unstable_branch", "next") or "next"
+        self.unstable_b = active_prof.get("unstable_branch") if self.unstable_p else None
         self.ignored_unstable_versions = active_prof.get("ignored_unstable_versions", {})
 
         # Clear session refreshed state registry
@@ -2271,10 +2271,11 @@ class SyncWindow(Adw.ApplicationWindow):
             if os.path.exists(path):
                 return path
 
-        fallback_p = stable_p if stable_p else unstable_p
-        if fallback_p:
-            return os.path.join(fallback_p, package_name)
-        return os.path.abspath(os.path.join('.', package_name))
+        if target_branch == "factory" and stable_p:
+            return os.path.join(stable_p, package_name)
+        elif target_branch == "next" and unstable_p:
+            return os.path.join(unstable_p, package_name)
+        return ""
 
     def is_shell_pid_active(self, shell_pid):
         """Scans /proc directly in pure Python without spawning subprocesses (pgrep)."""
@@ -3581,13 +3582,13 @@ class SyncWindow(Adw.ApplicationWindow):
             stable_needs_action = bool(is_version_newer(upstream_stable, factory_ver, package_name))
 
         if isinstance(ver, dict) and "unstable_needs_update" in ver:
-            unstable_needs_action = bool(ver["unstable_needs_update"])
+            unstable_needs_action = bool(self.unstable_b and ver["unstable_needs_update"])
         else:
             next_ver = ver.get("next_ver", "—") if isinstance(ver, dict) else "—"
             upstream_latest = ver.get("upstream_latest", "—") if isinstance(ver, dict) else "—"
             ignored_ver = getattr(self, "ignored_unstable_versions", {}).get(package_name) if isinstance(getattr(self, "ignored_unstable_versions", None), dict) else None
             is_ignored_unstable = bool(ignored_ver and is_version_equal(upstream_latest, ignored_ver, package_name))
-            unstable_needs_action = bool(is_version_newer(upstream_latest, next_ver, package_name) and not is_ignored_unstable)
+            unstable_needs_action = bool(self.unstable_b and is_version_newer(upstream_latest, next_ver, package_name) and not is_ignored_unstable)
 
         is_update = bool(stable_needs_action or unstable_needs_action)
 
@@ -3659,9 +3660,9 @@ class SyncWindow(Adw.ApplicationWindow):
 
         # Title
         title_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        lbl_stable = Gtk.Label()
-        lbl_stable.set_markup("<span weight='bold' size='medium' foreground='#2ec27e'>🟢 STABLE PIPELINE (factory)</span>")
-        title_box.append(lbl_stable)
+        self.stable_card_title_lbl = Gtk.Label()
+        self.stable_card_title_lbl.set_markup("<span weight='bold' size='medium' foreground='#2ec27e'>🟢 PACKAGE PIPELINE</span>")
+        title_box.append(self.stable_card_title_lbl)
         box.append(title_box)
 
         # Info Grid
@@ -3707,11 +3708,17 @@ class SyncWindow(Adw.ApplicationWindow):
         self.submit_pool_btn.connect("clicked", self.on_submit_pool_clicked)
         actions_box.append(self.submit_pool_btn)
 
+        self.osc_ci_btn = Gtk.Button(label="💾 osc ci")
+        self.osc_ci_btn.set_tooltip_text("Commit OSC changes to Open Build Service")
+        self.osc_ci_btn.connect("clicked", self.on_osc_ci_clicked)
+        self.osc_ci_btn.set_visible(False)
+        actions_box.append(self.osc_ci_btn)
+
         self.update_factory_btn = Gtk.Button(label="⚙️ Run SCM Update")
         self.update_factory_btn.connect("clicked", self.on_detail_update_factory_clicked)
         actions_box.append(self.update_factory_btn)
 
-        self.open_term_fac_btn = Gtk.Button(label="🖥️ Open Factory Terminal")
+        self.open_term_fac_btn = Gtk.Button(label="🖥️ Terminal")
         self.open_term_fac_btn.connect("clicked", lambda btn: self.allocate_terminal(self.current_selected_package, "factory"))
         actions_box.append(self.open_term_fac_btn)
 
@@ -4457,11 +4464,60 @@ class SyncWindow(Adw.ApplicationWindow):
         return False
 
     def run_bg_diff_perspective(self, package_name, perspective):
+        repo_path = self.get_mapped_worktree_path(package_name, "factory")
+        is_osc = os.path.isdir(os.path.join(repo_path, ".osc")) and not os.path.exists(os.path.join(repo_path, ".git"))
+
+        if is_osc:
+            try:
+                from helpers.pool_submit import get_obs_env, resolve_source_obs_project
+                from helpers.sync_backend import check_osc_worktree_fast
+            except ImportError:
+                from pool_submit import get_obs_env, resolve_source_obs_project
+                from sync_backend import check_osc_worktree_fast
+
+            dirty, _ = check_osc_worktree_fast(repo_path)
+            diff_text = ""
+
+            if dirty:
+                try:
+                    res = subprocess.run(
+                        ["osc", "diff"],
+                        cwd=repo_path,
+                        env=get_obs_env(),
+                        capture_output=True,
+                        text=True,
+                        timeout=10
+                    )
+                    diff_text = res.stdout
+                except Exception as e:
+                    diff_text = f"Error performing osc diff: {e}"
+            else:
+                source_prj = resolve_source_obs_project(repo_path, default="")
+                short_pkg = os.path.basename(package_name)
+                if source_prj:
+                    try:
+                        res = subprocess.run(
+                            ["osc", "rdiff", source_prj, short_pkg, "openSUSE:Factory"],
+                            env=get_obs_env(),
+                            capture_output=True,
+                            text=True,
+                            timeout=15
+                        )
+                        diff_text = res.stdout
+                        if not diff_text.strip():
+                            diff_text = f"No differences in spec files or sources detected between devel project ({source_prj}) and openSUSE:Factory."
+                    except Exception as e:
+                        diff_text = f"Error performing osc rdiff ({source_prj} vs openSUSE:Factory): {e}"
+                else:
+                    diff_text = "No differences in spec files or sources detected."
+
+            GLib.idle_add(self.update_diff_text, package_name, diff_text)
+            return
+
         if perspective == "next_factory":
             diff_text = sb.get_git_diff(package_name, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
         else:
             diff_text = ""
-            repo_path = self.get_mapped_worktree_path(package_name, "factory")
             try:
                 gitea_name = sb.get_gitea_repo_name(repo_path, package_name)
                 pool_url = f"https://src.opensuse.org/pool/{gitea_name}.git"
@@ -4506,8 +4562,13 @@ class SyncWindow(Adw.ApplicationWindow):
     def on_submit_pool_clicked(self, btn):
         if getattr(self, "current_selected_package", None):
             pkg = self.current_selected_package
-            command = f"geckopit-cli {pkg} --submit-pool"
+            command = "geckopit-cli --submit-pool"
             self.allocate_terminal(pkg, "factory", command)
+
+    def on_osc_ci_clicked(self, btn):
+        if getattr(self, "current_selected_package", None):
+            pkg = self.current_selected_package
+            self.allocate_terminal(pkg, "factory", "osc ci")
 
     def on_catchup_merge_clicked(self, btn):
         if getattr(self, "current_selected_package", None):
@@ -4856,7 +4917,11 @@ class SyncWindow(Adw.ApplicationWindow):
             return
         is_fresh = package_name in getattr(self, "refreshed_packages", set())
         title_suffix = "" if is_fresh else " <span size='small' style='italic' foreground='gray' weight='normal'>(cached)</span>"
-        self.detail_title_label.set_markup(f"<span size='large' weight='bold'>{package_name}</span>{title_suffix}")
+        base_name = os.path.basename(package_name)
+        category = os.path.dirname(package_name)
+        esc_base = GLib.markup_escape_text(base_name)
+        cat_prefix = f"<span size='small' foreground='gray'>📂 {GLib.markup_escape_text(category)} / </span>" if category else ""
+        self.detail_title_label.set_markup(f"{cat_prefix}<span size='large' weight='bold'>{esc_base}</span>{title_suffix}")
 
     def update_detail_worktree_ui(self, package_name):
         if getattr(self, "current_selected_package", None) != package_name:
@@ -4890,7 +4955,33 @@ class SyncWindow(Adw.ApplicationWindow):
         if self.unstable_b:
             self.render_worktree_ui(unstable_wt, self.unstable_b, self.unstable_wt_lbl, self.pull_unstable_btn, self.push_unstable_btn)
 
-        self.open_term_fac_btn.set_label(f"🖥️ Terminal ({self.stable_b})")
+        is_osc = stable_wt.get("is_osc", False)
+        if hasattr(self, "stable_card_title_lbl"):
+            if is_osc:
+                osc_prj = self.package_data.get(package_name, {}).get("sync", {}).get("osc_project") or "OSC"
+                esc_prj = GLib.markup_escape_text(osc_prj)
+                self.stable_card_title_lbl.set_markup(f"<span weight='bold' size='medium' foreground='#00d2ff'>📦 OBS PACKAGE PIPELINE ({esc_prj})</span>")
+            elif not self.unstable_b:
+                branch_name = stable_wt.get("head") or self.stable_b or "master"
+                esc_br = GLib.markup_escape_text(branch_name)
+                self.stable_card_title_lbl.set_markup(f"<span weight='bold' size='medium' foreground='#2ec27e'>🟢 PACKAGE PIPELINE ({esc_br})</span>")
+            else:
+                esc_st = GLib.markup_escape_text(self.stable_b)
+                self.stable_card_title_lbl.set_markup(f"<span weight='bold' size='medium' foreground='#2ec27e'>🟢 STABLE PIPELINE ({esc_st})</span>")
+
+        if is_osc and hasattr(self, "osc_ci_btn"):
+            is_dirty = bool(stable_wt.get("dirty", False) or stable_wt.get("untracked", False))
+            self.osc_ci_btn.set_sensitive(is_dirty)
+            if is_dirty:
+                self.osc_ci_btn.set_tooltip_text("Commit modified packaging files to Open Build Service via osc ci")
+            else:
+                self.osc_ci_btn.set_tooltip_text("Working directory is clean (no changes to commit)")
+
+        if is_osc or not self.unstable_b:
+            self.open_term_fac_btn.set_label("🖥️ Terminal")
+        else:
+            self.open_term_fac_btn.set_label(f"🖥️ Terminal ({self.stable_b})")
+
         if self.unstable_b:
             self.open_term_next_btn.set_label(f"🖥️ Terminal ({self.unstable_b})")
 
@@ -4918,14 +5009,22 @@ class SyncWindow(Adw.ApplicationWindow):
             self.detail_web_btn.set_sensitive(False)
         else:
             self.detail_web_btn.set_sensitive(True)
+            is_osc = (self.package_data.get(package_name, {}).get("sync", {}).get("is_osc") or
+                      self.package_data.get(package_name, {}).get("worktree", {}).get("is_osc", False))
             if is_version_newer(upstream_stable, factory_ver, package_name):
                 self.stable_ver_lbl.set_markup(f"<span weight='bold' foreground='red'>{factory_ver}</span> ➔ <span weight='bold' foreground='green'>{upstream_stable} (Update Available)</span>{pr_hint}")
                 self.update_factory_btn.set_sensitive(True)
-                self.update_factory_btn.set_label(f"Update Factory to {upstream_stable}")
+                if is_osc or not self.unstable_b:
+                    self.update_factory_btn.set_label(f"Update Package to {upstream_stable}")
+                else:
+                    self.update_factory_btn.set_label(f"Update {self.stable_b.capitalize()} to {upstream_stable}")
             else:
                 self.stable_ver_lbl.set_text(f"{factory_ver} (Up-To-Date)")
                 self.update_factory_btn.set_sensitive(False)
-                self.update_factory_btn.set_label("Factory Up-To-Date")
+                if is_osc or not self.unstable_b:
+                    self.update_factory_btn.set_label("Package Up-To-Date")
+                else:
+                    self.update_factory_btn.set_label(f"{self.stable_b.capitalize()} Up-To-Date")
 
         next_ver = ver.get("next_ver", "—")
         upstream_latest = ver.get("upstream_latest", "—")
@@ -4964,6 +5063,16 @@ class SyncWindow(Adw.ApplicationWindow):
 
         sync = self.package_data.get(package_name, {}).get("sync") or {}
         pr = self.package_data.get(package_name, {}).get("pr") or {}
+
+        is_osc = sync.get("is_osc", False)
+        if hasattr(self, "osc_ci_btn"):
+            self.osc_ci_btn.set_visible(is_osc)
+        if hasattr(self, "pull_stable_btn"):
+            self.pull_stable_btn.set_visible(not is_osc)
+        if hasattr(self, "push_stable_btn"):
+            self.push_stable_btn.set_visible(not is_osc)
+        if hasattr(self, "pull_pool_btn"):
+            self.pull_pool_btn.set_visible(not is_osc)
 
         pool_status = sync.get("pool_status", "unknown")
         pool_behind = sync.get("pool_behind", 0)
@@ -5024,6 +5133,13 @@ class SyncWindow(Adw.ApplicationWindow):
                     if hasattr(self, "submit_pool_btn"):
                         self.submit_pool_btn.set_sensitive(True)
                         self.submit_pool_btn.set_tooltip_text("Submit package changes to openSUSE:Factory via osc sr")
+            elif pool_status == "OSC Managed":
+                osc_prj = sync.get("osc_project") or "OBS"
+                p1_text = f"<span foreground='#00d2ff' weight='bold'>📦 OSC Managed [{osc_prj}]</span>"
+                self.pull_pool_btn.set_sensitive(False)
+                if hasattr(self, "submit_pool_btn"):
+                    self.submit_pool_btn.set_sensitive(False)
+                    self.submit_pool_btn.set_tooltip_text(f"Package is managed in {osc_prj}")
             elif pool_status == "Not in Pool":
                 p1_text = "<span foreground='yellow' weight='bold'>Not in Gitea Pool</span>"
                 self.pull_pool_btn.set_sensitive(False)
@@ -5341,6 +5457,10 @@ class SyncWindow(Adw.ApplicationWindow):
         self.update_detail_pr_ui(package_name)
         self.update_detail_drift_ui(package_name, force_reload=False)
 
+        repo_path = self.get_mapped_worktree_path(package_name, "factory")
+        is_osc = os.path.isdir(os.path.join(repo_path, ".osc")) and not os.path.exists(os.path.join(repo_path, ".git"))
+        self.diff_selector.set_visible(bool(self.unstable_b and not is_osc))
+
         # -------------------------------------------------------------
         # POPULATE DIFF REVIEW (only on package switch or explicit request)
         # -------------------------------------------------------------
@@ -5358,6 +5478,22 @@ class SyncWindow(Adw.ApplicationWindow):
             pull_btn.set_label("📥 Pull")
             push_btn.set_sensitive(False)
             push_btn.set_label("📤 Push")
+            return
+
+        # Special handling for OSC checkouts (.osc without .git)
+        if wt_info.get("is_osc", False):
+            dirty = wt_info.get("dirty", False)
+            untracked = wt_info.get("untracked", False)
+            if dirty and untracked:
+                lbl_widget.set_markup("<span foreground='#e5a50a' weight='bold'>Modified + untracked files</span> <span size='small' foreground='gray'>('osc ci' needed)</span>")
+            elif dirty:
+                lbl_widget.set_markup("<span foreground='#e5a50a' weight='bold'>Uncommitted modifications</span> <span size='small' foreground='gray'>('osc ci' needed)</span>")
+            elif untracked:
+                lbl_widget.set_markup("<span foreground='#e5a50a' weight='bold'>Untracked files present</span> <span size='small' foreground='gray'>('osc add' needed)</span>")
+            else:
+                lbl_widget.set_markup("<span foreground='#2ec27e'>Clean working directory</span> <span size='small' foreground='gray'>(OSC)</span>")
+            pull_btn.set_visible(False)
+            push_btn.set_visible(False)
             return
 
         ahead = wt_info.get("ahead", 0)
@@ -5413,10 +5549,11 @@ class SyncWindow(Adw.ApplicationWindow):
             push_btn.set_sensitive(True)
             push_btn.set_label(f"📤 Push ({ahead})")
         else:
+            upstream = wt_info.get("upstream") or f"origin/{target_branch}"
             if dirty or untracked:
-                lbl_widget.set_markup(f"<span foreground='#2ec27e'>In sync with origin/{target_branch}</span>{dirty_flag}")
+                lbl_widget.set_markup(f"<span foreground='#2ec27e'>In sync with {upstream}</span>{dirty_flag}")
             else:
-                lbl_widget.set_markup(f"<span foreground='#2ec27e'>In sync with origin/{target_branch}</span>")
+                lbl_widget.set_markup(f"<span foreground='#2ec27e'>In sync with {upstream}</span>")
             pull_btn.set_sensitive(False)
             pull_btn.set_label("📥 Pull")
             push_btn.set_sensitive(False)

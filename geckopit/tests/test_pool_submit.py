@@ -270,5 +270,34 @@ class TestPoolSubmit(unittest.TestCase):
                                 self.assertIn("[DRY-RUN] Would execute: osc sr GNOME:Factory pkg openSUSE:Factory", msg)
 
 
+    def test_submit_package_to_pool_osc(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            osc_dir = os.path.join(tmpdir, ".osc")
+            os.makedirs(osc_dir)
+            with open(os.path.join(osc_dir, "_project"), "w") as f:
+                f.write("graphics\n")
+            with open(os.path.join(osc_dir, "_package"), "w") as f:
+                f.write("shotwell\n")
+            with open(os.path.join(tmpdir, "shotwell.changes"), "w") as f:
+                f.write("-------------------------------------------------------------------\n- Update to 33.0\n")
+
+            # 1. Clean check with no differences -> already in sync
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(stdout="", returncode=0)
+                ok, msg = pool_submit.submit_package_to_pool("shotwell", tmpdir)
+                self.assertFalse(ok)
+                self.assertIn("already in sync", msg)
+
+            # 2. Dry run with differences -> triggers osc sr
+            with patch("subprocess.run") as mock_run:
+                def side_effect(cmd, **kwargs):
+                    if "rdiff" in cmd:
+                        return MagicMock(stdout="diff content", returncode=0)
+                    return MagicMock(stdout="", returncode=0)
+                mock_run.side_effect = side_effect
+                ok, msg = pool_submit.submit_package_to_pool("shotwell", tmpdir, dry_run=True)
+                self.assertTrue(ok)
+                self.assertIn("Would execute: osc sr graphics shotwell openSUSE:Factory", msg)
+
 if __name__ == "__main__":
     unittest.main()

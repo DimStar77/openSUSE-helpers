@@ -51,7 +51,25 @@ Geckopit manages multiple independent packaging checkouts via Workspace Profiles
   * **Zero-Click Onboarding**: When selecting a workspace directory, Geckopit inspects `.git/worktrees` on disk. If a linked worktree exists, it automatically pre-fills stable and unstable paths and branch names.
   * **Dual-Pipeline vs Single-Pipeline Mode**:
     * **Dual-Pipeline**: Configured with both `factory` and `next` paths. Both Stable and Unstable pipeline cards are active.
-    * **Single-Pipeline**: For Factory-only or standalone maintenance, leave the Unstable branch path empty. Geckopit automatically streamlines the interface, hiding the Unstable card and optimizing all audits.
+    * **Single-Pipeline / Portfolio Mode**: For standalone maintenance or multi-project portfolios, leave the Unstable branch path empty. Geckopit automatically streamlines the interface: the Unstable card is hidden, branch forwarding tracks are dimmed, and the cockpit focuses 100% on package state, upstream releases, and pool submissions.
+* **Maintainer Portfolio Trees & Hybrid Packaging (Git + OSC)**:
+  * Maintainers managing personal packages across multiple OBS devel projects and Gitea organizations can point Geckopit at a single container directory (e.g. `~/packaging`):
+    ```text
+    ~/packaging/
+    ├── dimstar/                 (Git-managed personal packages)
+    │   ├── meson/               [Git]
+    │   └── vlc/                 [Git]
+    ├── games/                   (OBS 'games' project checkout)
+    │   ├── toycars/             [OSC]
+    │   └── xmoto/               [OSC]
+    └── graphics/                (OBS 'graphics' project checkout)
+        └── shotwell/            [OSC]
+    ```
+  * **Boundary-Aware Discovery**: Geckopit automatically discovers packages up to 2 levels deep, stopping recursion at package boundaries (`.spec` with `.git` or `.osc`).
+  * **Visual Category Subtitles**: Packages display their category / organization tag in the sidebar: `📂 dimstar / vlc`, `📂 games / toycars`.
+  * **Hybrid VCS Support**: OSC packages display their project origin in the subtitle (e.g. `OSC: games`) and adapt card actions to `💾 osc ci` when modified.
+  * **Sub-Millisecond Status Checks**: Local modifications are verified via in-Python XML inspection in 0.16 ms (eliminating CLI subshell lag).
+  * **Safe Workspace Sync**: Running `geckopit-cli --sync` synchronizes all nested Git checkouts in parallel while safely leaving OSC directories untouched.
   * **Background Concurrency**: Adjust worker pool size (`Max Concurrent Scans`, from 5 to 50 threads).
   * **Ignored Versions Sub-Panel**: Review, add, or remove stagnant upstream release tags ignored across your packages.
 

@@ -218,5 +218,37 @@ class TestSinglePackageDashboardFormatting(unittest.TestCase):
         self.assertIn("⏳ Wait for accepted SR #1384945 to sync into central pool", out_acc)
         self.assertNotIn("Submit changes to central pool", out_acc)
 
+    def test_version_check_single_stream_table_formatting(self):
+        import io
+        from unittest.mock import patch
+
+        fake_results = {
+            "gstreamer-docs": {
+                "status": "success",
+                "factory_ver": "1.28.8",
+                "next_ver": "—",
+                "upstream_stable": "1.29.2",
+                "upstream_latest": "1.29.2",
+                "needs_update": True,
+                "stable_needs_update": True,
+                "unstable_needs_update": False,
+            }
+        }
+
+        buf = io.StringIO()
+        with patch.object(self.cli.sb, 'load_geckopit_profile_config', return_value={'unstable_path': None}):
+            with patch.object(self.cli.sb, 'check_repo_version', side_effect=lambda r, *args, **kwargs: (r, fake_results[r])):
+                with patch('sys.stdout', buf):
+                    self.cli.run_version_check(["gstreamer-docs"])
+        out = buf.getvalue()
+
+        self.assertIn("Local Version", out)
+        self.assertIn("Upstream Version", out)
+        self.assertNotIn("Local (unstable)", out)
+        self.assertNotIn("Upstream (unstable)", out)
+        self.assertIn("gstreamer-docs", out)
+        self.assertIn("1.28.8", out)
+        self.assertIn("1.29.2", out)
+
 if __name__ == '__main__':
     unittest.main()
