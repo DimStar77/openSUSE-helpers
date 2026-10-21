@@ -46,6 +46,7 @@ except ValueError:
 # Make sure we can import sync_backend from helpers/ by resolving symlinks
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), 'helpers'))
 import sync_backend as sb
+import pool_submit
 from upgrade import get_upgrade_helper
 
 import shlex
@@ -224,6 +225,7 @@ class PackageRow(Gtk.ListBoxRow):
             "orange": "#ff9f0a",
             "yellow": "#f5c211",
             "cyan": "#00d2ff",
+            "blue": "#3584e4",
             "red": "#ff453a",
             "green": "#30d158",
             "purple": "#bf5af2",
@@ -256,13 +258,35 @@ class PackageRow(Gtk.ListBoxRow):
 
             if pool_behind > 0 or pool_ahead > 0:
                 subtitle_parts.append(f"Pool: B:{pool_behind}/A:{pool_ahead}")
-                tt = (
-                    f"<b>Central Pool Status</b>\n"
-                    f"• Behind Pool: <b>{pool_behind}</b> commit{'s' if pool_behind != 1 else ''} (Pull needed)\n"
-                    f"• Ahead of Pool: <b>{pool_ahead}</b> commit{'s' if pool_ahead != 1 else ''} (Submit needed)\n"
-                    f"• Remote: https://src.opensuse.org/pool/{self.package_name}.git"
-                )
-                self.badges_box.append(self.create_badge("Pool", "orange", tooltip=tt))
+                sr_info = sync_data.get("pool_sr") if pool_ahead > 0 else None
+                if sr_info and sr_info.get("status") == "pending":
+                    req_id = sr_info.get("request_id")
+                    st = sr_info.get("state", "review")
+                    src = sr_info.get("source_project", "GNOME:Factory")
+                    tt = (
+                        f"<b>Central Pool Status</b>\n"
+                        f"• Pending Submit Request: <b>#{req_id}</b> ({st} from {src})\n"
+                        f"• Target: openSUSE:Factory/{self.package_name}\n"
+                        f"• Remote: https://src.opensuse.org/pool/{self.package_name}.git"
+                    )
+                    self.badges_box.append(self.create_badge(f"SR #{req_id}", "blue", tooltip=tt))
+                elif sr_info and sr_info.get("status") == "accepted_pending_sync":
+                    req_id = sr_info.get("request_id")
+                    tt = (
+                        f"<b>Central Pool Status</b>\n"
+                        f"• Submit Request <b>#{req_id}</b> Accepted (awaiting pool sync)\n"
+                        f"• Target: openSUSE:Factory/{self.package_name}\n"
+                        f"• Remote: https://src.opensuse.org/pool/{self.package_name}.git"
+                    )
+                    self.badges_box.append(self.create_badge(f"SR #{req_id}", "green", tooltip=tt))
+                else:
+                    tt = (
+                        f"<b>Central Pool Status</b>\n"
+                        f"• Behind Pool: <b>{pool_behind}</b> commit{'s' if pool_behind != 1 else ''} (Pull needed)\n"
+                        f"• Ahead of Pool: <b>{pool_ahead}</b> commit{'s' if pool_ahead != 1 else ''} (Submit needed)\n"
+                        f"• Remote: https://src.opensuse.org/pool/{self.package_name}.git"
+                    )
+                    self.badges_box.append(self.create_badge("Pool", "orange", tooltip=tt))
             elif pool_status == "Not in Pool":
                 subtitle_parts.append("Not in Gitea")
                 tt = f"<b>Central Pool Status</b>\n• Package <b>{self.package_name}</b> is not hosted in the central Gitea pool."
@@ -1727,6 +1751,10 @@ class SyncWindow(Adw.ApplicationWindow):
         self.executor = None
         self.init_executors()
 
+        # OBS Pending and Accepted Requests cache
+        self.obs_pending_requests = {}
+        self.obs_accepted_requests = {}
+
         # Open tab registry for active monitoring and deduplication
         self.terminal_tabs = []
 
@@ -2887,6 +2915,18 @@ class SyncWindow(Adw.ApplicationWindow):
         # Now trigger the parallel scans on the main GLib thread safely!
         GLib.idle_add(self.trigger_bulk_scans)
 
+    def load_obs_requests_cache(self):
+        """Fetches the project-wide pending and accepted requests collection from OBS."""
+        try:
+            self.obs_pending_requests = pool_submit.get_pending_obs_requests("openSUSE:Factory")
+            self.obs_accepted_requests = pool_submit.get_recently_accepted_obs_requests("openSUSE:Factory")
+            curr = getattr(self, "current_selected_package", None)
+            if curr:
+                GLib.idle_add(self.update_detail_sync_ui, curr)
+        except Exception:
+            self.obs_pending_requests = {}
+            self.obs_accepted_requests = {}
+
     def trigger_bulk_scans(self):
         if not self.repos:
             self.sidebar_progress_label.set_text("No packages found")
@@ -2897,6 +2937,12 @@ class SyncWindow(Adw.ApplicationWindow):
         self.fwd_completed_count = 0
         self.update_progress_ui()
         current_gen = getattr(self, "scan_generation", 0)
+
+        # Query OBS active requests snapshot once in background
+        try:
+            self.sync_executor.submit(self.load_obs_requests_cache)
+        except RuntimeError:
+            pass
 
         # Dispatch across dedicated worker pools:
         # 1. SCM pool for local Git checks, worktrees, and conditional PR detection
@@ -2939,7 +2985,26 @@ class SyncWindow(Adw.ApplicationWindow):
     def run_bg_sync_single(self, repo, gen=None):
         if gen is not None and gen != getattr(self, "scan_generation", 0):
             return
-        name, data = sb.check_repo_sync(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
+        kwargs = {
+            "stable_branch": self.stable_b,
+            "unstable_branch": self.unstable_b,
+            "workspace_path": self.stable_p
+        }
+        known_nip = getattr(self, "known_not_in_pool", None)
+        if isinstance(known_nip, (set, list)):
+            kwargs["known_not_in_pool"] = known_nip
+
+        name, data = sb.check_repo_sync(repo, **kwargs)
+        if data.get("pool_ahead", 0) > 0:
+            repo_path = os.path.join(self.stable_p, repo) if getattr(self, "stable_p", None) else None
+            data["pool_sr"] = pool_submit.get_package_pool_submission_status(
+                repo,
+                target_project="openSUSE:Factory",
+                pending_requests=getattr(self, "obs_pending_requests", None),
+                accepted_requests=getattr(self, "obs_accepted_requests", None),
+                pkg_dir=repo_path,
+                stable_branch=self.stable_b
+            )
         wt_data = self.check_worktrees_for_repo(repo)
         # Always check PRs on priority single-package refresh
         _, pr_data = sb.check_repo_pr(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
@@ -2956,6 +3021,10 @@ class SyncWindow(Adw.ApplicationWindow):
         if name not in self.package_data:
             return
         if data.get("status") == "success":
+            if "pool_sr" not in data and name in self.package_data:
+                prev_sr = self.package_data[name].get("sync", {}).get("pool_sr")
+                if prev_sr:
+                    data["pool_sr"] = prev_sr
             self.package_data[name]["sync"] = data
             if wt_data:
                 self.package_data[name]["worktree"] = wt_data
@@ -3632,6 +3701,11 @@ class SyncWindow(Adw.ApplicationWindow):
         self.pull_pool_btn = Gtk.Button(label="📥 Pull Pool")
         self.pull_pool_btn.connect("clicked", self.on_pull_pool_clicked)
         actions_box.append(self.pull_pool_btn)
+
+        self.submit_pool_btn = Gtk.Button(label="📤 Submit Pool")
+        self.submit_pool_btn.set_tooltip_text("Submit package changes to openSUSE:Factory via osc sr")
+        self.submit_pool_btn.connect("clicked", self.on_submit_pool_clicked)
+        actions_box.append(self.submit_pool_btn)
 
         self.update_factory_btn = Gtk.Button(label="⚙️ Run SCM Update")
         self.update_factory_btn.connect("clicked", self.on_detail_update_factory_clicked)
@@ -4429,6 +4503,12 @@ class SyncWindow(Adw.ApplicationWindow):
             command = f"git fetch {pool_url} {self.stable_b} && git merge FETCH_HEAD"
             self.allocate_terminal(self.current_selected_package, "factory", command)
 
+    def on_submit_pool_clicked(self, btn):
+        if getattr(self, "current_selected_package", None):
+            pkg = self.current_selected_package
+            command = f"geckopit-cli {pkg} --submit-pool"
+            self.allocate_terminal(pkg, "factory", command)
+
     def on_catchup_merge_clicked(self, btn):
         if getattr(self, "current_selected_package", None):
             command = f"git fetch origin && git merge origin/{self.stable_b} --no-edit"
@@ -4892,30 +4972,78 @@ class SyncWindow(Adw.ApplicationWindow):
         if not sync:
             self.stable_pool_lbl.set_text("Loading...")
             self.pull_pool_btn.set_sensitive(False)
+            if hasattr(self, "submit_pool_btn"):
+                self.submit_pool_btn.set_sensitive(False)
         else:
             b_s = 's' if pool_behind != 1 else ''
             a_s = 's' if pool_ahead != 1 else ''
             if pool_behind > 0 and pool_ahead > 0:
                 p1_text = f"<span weight='bold' foreground='red'>Diverged</span> (Behind Pool: {pool_behind} commit{b_s} / Ahead Pool: {pool_ahead} commit{a_s})"
                 self.pull_pool_btn.set_sensitive(True)
+                if hasattr(self, "submit_pool_btn"):
+                    self.submit_pool_btn.set_sensitive(False)
             elif pool_behind > 0:
                 p1_text = f"<span weight='bold' foreground='orange'>Behind Gitea Pool by {pool_behind} commit{b_s}</span> (Pull needed)"
                 self.pull_pool_btn.set_sensitive(True)
+                if hasattr(self, "submit_pool_btn"):
+                    self.submit_pool_btn.set_sensitive(False)
             elif pool_ahead > 0:
-                p1_text = f"<span weight='bold' foreground='cyan'>Ahead of Gitea Pool by {pool_ahead} commit{a_s}</span> (Push/PR needed)"
                 self.pull_pool_btn.set_sensitive(False)
+                repo_path = self.get_mapped_worktree_path(package_name, "factory") if hasattr(self, "get_mapped_worktree_path") else None
+                sr_status = pool_submit.get_package_pool_submission_status(
+                    package_name,
+                    target_project="openSUSE:Factory",
+                    pending_requests=getattr(self, "obs_pending_requests", None),
+                    accepted_requests=getattr(self, "obs_accepted_requests", None),
+                    pkg_dir=repo_path,
+                    stable_branch=getattr(self, "stable_b", "factory")
+                )
+                if package_name in self.package_data and "sync" in self.package_data[package_name]:
+                    self.package_data[package_name]["sync"]["pool_sr"] = sr_status
+                    if hasattr(self, "update_row_ui"):
+                        self.update_row_ui(package_name)
+
+                if sr_status.get("status") == "pending":
+                    req = sr_status.get("request", {})
+                    req_id = req.get("id")
+                    st = req.get("state", "review")
+                    src = req.get("source_project", "GNOME:Factory")
+                    p1_text = f"⏳ <span weight='bold' foreground='#e5a50a'>Pending Submit Request #{req_id}</span> ({st} from {src})"
+                    if hasattr(self, "submit_pool_btn"):
+                        self.submit_pool_btn.set_sensitive(False)
+                        self.submit_pool_btn.set_tooltip_text(f"Submit Request #{req_id} ({st}) is already pending in openSUSE:Factory")
+                elif sr_status.get("status") == "accepted_pending_sync":
+                    req = sr_status.get("request", {})
+                    req_id = req.get("id")
+                    p1_text = f"⏳ <span weight='bold' foreground='#2ec27e'>Submit Request #{req_id} Accepted</span> (awaiting central pool sync)"
+                    if hasattr(self, "submit_pool_btn"):
+                        self.submit_pool_btn.set_sensitive(False)
+                        self.submit_pool_btn.set_tooltip_text(f"Submit Request #{req_id} was already accepted; awaiting backend mirror to central pool")
+                else:
+                    p1_text = f"📤 <span weight='bold' foreground='#3584e4'>Ahead of Gitea Pool by {pool_ahead} commit{a_s}</span> (Submit needed)"
+                    if hasattr(self, "submit_pool_btn"):
+                        self.submit_pool_btn.set_sensitive(True)
+                        self.submit_pool_btn.set_tooltip_text("Submit package changes to openSUSE:Factory via osc sr")
             elif pool_status == "Not in Pool":
                 p1_text = "<span foreground='yellow' weight='bold'>Not in Gitea Pool</span>"
                 self.pull_pool_btn.set_sensitive(False)
+                if hasattr(self, "submit_pool_btn"):
+                    self.submit_pool_btn.set_sensitive(False)
             elif pool_status in ("Fetch failed", "Error", "unknown"):
                 p1_text = f"<span foreground='red' weight='bold'>Pool Check Failed ({pool_status})</span>"
                 self.pull_pool_btn.set_sensitive(False)
+                if hasattr(self, "submit_pool_btn"):
+                    self.submit_pool_btn.set_sensitive(False)
             elif pool_status == "In Sync":
                 p1_text = "<span foreground='green'>Fully In Sync with Gitea Pool</span>"
                 self.pull_pool_btn.set_sensitive(False)
+                if hasattr(self, "submit_pool_btn"):
+                    self.submit_pool_btn.set_sensitive(False)
             else:
                 p1_text = f"<span foreground='yellow'>{pool_status}</span>"
                 self.pull_pool_btn.set_sensitive(False)
+                if hasattr(self, "submit_pool_btn"):
+                    self.submit_pool_btn.set_sensitive(False)
             self.stable_pool_lbl.set_markup(p1_text)
 
         next_status = sync.get("next_status", "unknown")
@@ -4981,10 +5109,10 @@ class SyncWindow(Adw.ApplicationWindow):
             icon_name = "pan-end-symbolic" if folded else "pan-down-symbolic"
             self.pr_card_chevron.set_from_icon_name(icon_name)
 
-    def on_pr_card_clicked(self, gesture, n_press, x, y, url, pr_num=None):
+    def on_pr_card_clicked(self, gesture, n_press, x, y, url, pr_num=None, label_type="PR"):
         if n_press == 2:
             webbrowser.open(url)
-            pr_label = f"PR #{pr_num}" if pr_num else "PR"
+            pr_label = f"{label_type} #{pr_num}" if pr_num else label_type
             toast = Adw.Toast.new(f"Opened {pr_label} in default browser")
             self.toast_overlay.add_toast(toast)
 
@@ -4997,13 +5125,26 @@ class SyncWindow(Adw.ApplicationWindow):
         has_pr = pr_data.get("has_pr", False)
         prs = pr_data.get("prs", [])
 
-        if not has_pr:
+        sync_data = pkg_data.get("sync") or {}
+        sr_info = sync_data.get("pool_sr")
+        has_sr = bool(sr_info and sr_info.get("status") in ("pending", "accepted_pending_sync"))
+
+        if not has_pr and not has_sr:
             if hasattr(self, "pr_card_revealer"):
                 self.pr_card_revealer.set_reveal_child(False)
             return
 
-        count = pr_data.get("count", len(prs)) or len(prs) or 1
-        hdr_text = f"<span weight='bold' size='medium' foreground='#3584e4'>📥 ACTIVE PULL REQUESTS ({count})</span>"
+        total_pr_count = pr_data.get("count", len(prs)) or len(prs) if has_pr else 0
+        total_sr_count = 1 if has_sr else 0
+        total_count = total_pr_count + total_sr_count
+
+        if has_pr and has_sr:
+            hdr_text = f"<span weight='bold' size='medium' foreground='#3584e4'>📥 ACTIVE REQUESTS ({total_count})</span>"
+        elif has_sr:
+            hdr_text = f"<span weight='bold' size='medium' foreground='#3584e4'>📥 ACTIVE SUBMIT REQUEST ({total_sr_count})</span>"
+        else:
+            hdr_text = f"<span weight='bold' size='medium' foreground='#3584e4'>📥 ACTIVE PULL REQUESTS ({total_pr_count or 1})</span>"
+
         if hasattr(self, "pr_card_title_lbl"):
             self.pr_card_title_lbl.set_markup(hdr_text)
 
@@ -5016,24 +5157,19 @@ class SyncWindow(Adw.ApplicationWindow):
                     break
                 self.pr_card_items_box.remove(child)
 
-            display_prs = prs if prs else [{
-                "number": pr_data.get("number"),
-                "title": pr_data.get("title") or "Pull Request",
-                "url": pr_data.get("url"),
-                "author": "contributor",
-                "base": self.stable_b,
-                "head": "",
-                "is_forward": pr_data.get("has_forward_pr", False)
-            }]
-
-            for pr in display_prs:
-                pr_num = pr.get("number")
-                pr_title = html.escape(str(pr.get("title") or "Pull Request"))
-                pr_author = html.escape(str(pr.get("author") or "unknown"))
-                pr_base = html.escape(str(pr.get("base") or self.stable_b))
-                pr_head = html.escape(str(pr.get("head") or ""))
-                pr_url = pr.get("url") or "https://src.opensuse.org"
-                is_forward = pr.get("is_forward", False)
+            # 1. Render OBS Submit Request card item if active
+            if has_sr and sr_info:
+                req = sr_info.get("request") or {}
+                req_id = req.get("id") or sr_info.get("request_id")
+                st = req.get("state") or sr_info.get("state", "review")
+                creator = html.escape(str(req.get("creator") or "maintainer"))
+                src_prj = html.escape(str(req.get("source_project") or "GNOME:Factory"))
+                t_prj = html.escape(str(req.get("target_project") or "openSUSE:Factory"))
+                desc_text = req.get("description", "").strip()
+                first_line = desc_text.splitlines()[0] if desc_text else "Submit Request"
+                sr_desc = html.escape(first_line)
+                sr_url = f"https://build.opensuse.org/request/show/{req_id}" if req_id else "https://build.opensuse.org"
+                is_accepted = sr_info.get("status") == "accepted_pending_sync"
 
                 card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
                 card.add_css_class("card")
@@ -5047,28 +5183,28 @@ class SyncWindow(Adw.ApplicationWindow):
                 text_box.set_margin_bottom(6)
                 text_box.set_hexpand(True)
 
-                # Line 1: PR Number, Title, and optional [Branch Forward] badge
+                # Line 1: SR ID, description, and status pill
                 title_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
                 c_title = Gtk.Label(halign=Gtk.Align.START)
-                c_title.set_markup(f"<b>#{pr_num}:</b> {pr_title}")
+                c_title.set_markup(f"<b>SR #{req_id}:</b> {sr_desc}")
                 c_title.set_wrap(True)
                 c_title.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
                 c_title.set_hexpand(True)
                 title_box.append(c_title)
 
-                if is_forward:
-                    fwd_pill = Gtk.Label()
-                    fwd_pill.set_markup("<span size='smaller' weight='bold' foreground='#2ec27e'>[Branch Forward]</span>")
-                    title_box.append(fwd_pill)
-
+                sr_pill = Gtk.Label()
+                if is_accepted:
+                    sr_pill.set_markup("<span size='smaller' weight='bold' foreground='#2ec27e'>[Accepted - OBS SR]</span>")
+                else:
+                    sr_pill.set_markup(f"<span size='smaller' weight='bold' foreground='#e5a50a'>[{html.escape(st.title())} - OBS SR]</span>")
+                title_box.append(sr_pill)
                 text_box.append(title_box)
 
-                # Line 2: Author and Target branch
-                source_desc = f" (from <i>{pr_head}</i>)" if pr_head else ""
+                # Line 2: Creator, target, source, and state
+                status_desc = "awaiting pool sync" if is_accepted else f"State: <b>{html.escape(st)}</b>"
                 meta_lbl = Gtk.Label(halign=Gtk.Align.START)
-                meta_lbl.set_markup(f"<span size='small' foreground='gray'>👤 @{pr_author}  |  🎯 Target: <b>{pr_base}</b>{source_desc}</span>")
+                meta_lbl.set_markup(f"<span size='small' foreground='gray'>👤 @{creator}  |  🎯 Target: <b>{t_prj}</b> (from {src_prj})  |  {status_desc}</span>")
                 text_box.append(meta_lbl)
-
                 card.append(text_box)
 
                 # Trailing web browser icon as subtle visual cue
@@ -5079,16 +5215,92 @@ class SyncWindow(Adw.ApplicationWindow):
 
                 # Action-focused micro-tooltip (non-obtrusive, no duplicate metadata)
                 card.set_tooltip_markup(
-                    f"<i>Double-click to open on Gitea</i>\n"
-                    f"<i>Merge:</i> <tt>geckopit-cli --merge-pr {pr_num}</tt>"
+                    f"<i>Double-click to open on Open Build Service</i>\n"
+                    f"<i>Review:</i> <tt>osc request show {req_id}</tt>"
                 )
 
                 gesture = Gtk.GestureClick.new()
                 gesture.set_button(1)
-                gesture.connect("released", self.on_pr_card_clicked, pr_url, pr_num)
+                gesture.connect("released", self.on_pr_card_clicked, sr_url, req_id, "SR")
                 card.add_controller(gesture)
 
                 self.pr_card_items_box.append(card)
+
+            # 2. Render Gitea Pull Request card items if active
+            if has_pr:
+                display_prs = prs if prs else [{
+                    "number": pr_data.get("number"),
+                    "title": pr_data.get("title") or "Pull Request",
+                    "url": pr_data.get("url"),
+                    "author": "contributor",
+                    "base": self.stable_b,
+                    "head": "",
+                    "is_forward": pr_data.get("has_forward_pr", False)
+                }]
+
+                for pr in display_prs:
+                    pr_num = pr.get("number")
+                    pr_title = html.escape(str(pr.get("title") or "Pull Request"))
+                    pr_author = html.escape(str(pr.get("author") or "unknown"))
+                    pr_base = html.escape(str(pr.get("base") or self.stable_b))
+                    pr_head = html.escape(str(pr.get("head") or ""))
+                    pr_url = pr.get("url") or "https://src.opensuse.org"
+                    is_forward = pr.get("is_forward", False)
+
+                    card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                    card.add_css_class("card")
+                    card.set_margin_top(1)
+                    card.set_margin_bottom(1)
+                    card.set_cursor_from_name("pointer")
+
+                    text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                    text_box.set_margin_start(10)
+                    text_box.set_margin_top(6)
+                    text_box.set_margin_bottom(6)
+                    text_box.set_hexpand(True)
+
+                    # Line 1: PR Number, Title, and optional [Branch Forward] badge
+                    title_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                    c_title = Gtk.Label(halign=Gtk.Align.START)
+                    c_title.set_markup(f"<b>#{pr_num}:</b> {pr_title}")
+                    c_title.set_wrap(True)
+                    c_title.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                    c_title.set_hexpand(True)
+                    title_box.append(c_title)
+
+                    if is_forward:
+                        fwd_pill = Gtk.Label()
+                        fwd_pill.set_markup("<span size='smaller' weight='bold' foreground='#2ec27e'>[Branch Forward]</span>")
+                        title_box.append(fwd_pill)
+
+                    text_box.append(title_box)
+
+                    # Line 2: Author and Target branch
+                    source_desc = f" (from <i>{pr_head}</i>)" if pr_head else ""
+                    meta_lbl = Gtk.Label(halign=Gtk.Align.START)
+                    meta_lbl.set_markup(f"<span size='small' foreground='gray'>👤 @{pr_author}  |  🎯 Target: <b>{pr_base}</b>{source_desc}</span>")
+                    text_box.append(meta_lbl)
+
+                    card.append(text_box)
+
+                    # Trailing web browser icon as subtle visual cue
+                    web_icon = Gtk.Image.new_from_icon_name("web-browser-symbolic")
+                    web_icon.add_css_class("dim-label")
+                    web_icon.set_margin_end(12)
+                    card.append(web_icon)
+
+                    # Action-focused micro-tooltip (non-obtrusive, no duplicate metadata)
+                    card.set_tooltip_markup(
+                        f"<i>Double-click to open on Gitea</i>\n"
+                        f"<i>Merge:</i> <tt>geckopit-cli --merge-pr {pr_num}</tt>"
+                    )
+
+                    gesture = Gtk.GestureClick.new()
+                    gesture.set_button(1)
+                    gesture.connect("released", self.on_pr_card_clicked, pr_url, pr_num, "PR")
+                    card.add_controller(gesture)
+
+                    self.pr_card_items_box.append(card)
 
             self.pr_card_revealer.set_reveal_child(True)
 
@@ -5439,6 +5651,17 @@ class SyncWindow(Adw.ApplicationWindow):
             self.known_not_in_pool.add(name)
         elif data.get("pool_status") != "Not in Pool" and isinstance(getattr(self, "known_not_in_pool", None), set):
             self.known_not_in_pool.discard(name)
+
+        if data.get("pool_ahead", 0) > 0:
+            repo_path = os.path.join(self.stable_p, repo) if getattr(self, "stable_p", None) else None
+            data["pool_sr"] = pool_submit.get_package_pool_submission_status(
+                repo,
+                target_project="openSUSE:Factory",
+                pending_requests=getattr(self, "obs_pending_requests", None),
+                accepted_requests=getattr(self, "obs_accepted_requests", None),
+                pkg_dir=repo_path,
+                stable_branch=self.stable_b
+            )
         wt_data = self.check_worktrees_for_repo(repo)
         pr_data = {"has_pr": False}
         if self.unstable_b and data.get("status") == "success" and data.get("next_status") != "No next branch":
@@ -5469,6 +5692,10 @@ class SyncWindow(Adw.ApplicationWindow):
         self.sync_completed_count += 1
 
         if data.get("status") == "success":
+            if "pool_sr" not in data and name in self.package_data:
+                prev_sr = self.package_data[name].get("sync", {}).get("pool_sr")
+                if prev_sr:
+                    data["pool_sr"] = prev_sr
             self.package_data[name]["sync"] = data
             if wt_data:
                 self.package_data[name]["worktree"] = wt_data

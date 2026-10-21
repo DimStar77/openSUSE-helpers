@@ -165,7 +165,7 @@ class TestSinglePackageDashboardFormatting(unittest.TestCase):
         from unittest.mock import patch
 
         data = {
-            'repo_name': 'gnome-shell-extension-desktop-icons',
+            'repo_name': 'testpkg',
             'pkg_dir': '/path/to/pkg',
             'active_branch': 'next',
             'stable_branch': 'factory',
@@ -176,22 +176,47 @@ class TestSinglePackageDashboardFormatting(unittest.TestCase):
             'pr': {'has_pr': False, 'has_forward_pr': False, 'count': 0, 'prs': []}
         }
 
+        # 1. Test unsubmitted package
         buf = io.StringIO()
-        with patch('sys.stdout', buf):
-            self.cli.render_single_package_dashboard(data)
+        with patch('pool_submit.get_package_pool_submission_status', return_value={'status': 'unsubmitted'}):
+            with patch('sys.stdout', buf):
+                self.cli.render_single_package_dashboard(data)
         out = buf.getvalue()
 
-        # 1. Branch Sync is clean 'In Sync' without '(no unforwarded commits)'
-        self.assertIn("Branch Sync:   \x1b[32m✅ In Sync\x1b[0m", out)
+        self.assertIn("Branch Sync:   [32m✅ In Sync[0m", out)
         self.assertNotIn("(no unforwarded commits)", out)
-
-        # 2. Active PR is completely omitted when 0 PRs exist
         self.assertNotIn("Active PR:", out)
-
-        # 3. pool_ahead > 0 generates pool submission action
+        self.assertIn("Ahead of central pool by 3 commits (Submit needed)", out)
         self.assertIn("📤 Submit changes to central pool (openSUSE:Factory)", out)
-        self.assertNotIn("No action needed!", out)
 
+        # 2. Test pending SR
+        buf_pending = io.StringIO()
+        with patch('pool_submit.get_package_pool_submission_status', return_value={
+            'status': 'pending',
+            'request': {'id': '1386637', 'state': 'review', 'source_project': 'GNOME:Factory'},
+            'request_id': '1386637',
+            'state': 'review'
+        }):
+            with patch('sys.stdout', buf_pending):
+                self.cli.render_single_package_dashboard(data)
+        out_pending = buf_pending.getvalue()
+        self.assertIn("⏳ Pending SR #1386637 (review from GNOME:Factory)", out_pending)
+        self.assertIn("⏳ Wait for pending SR #1386637 (review) to merge in openSUSE:Factory", out_pending)
+        self.assertNotIn("Submit changes to central pool", out_pending)
+
+        # 3. Test accepted SR awaiting sync
+        buf_acc = io.StringIO()
+        with patch('pool_submit.get_package_pool_submission_status', return_value={
+            'status': 'accepted_pending_sync',
+            'request': {'id': '1384945', 'state': 'accepted'},
+            'request_id': '1384945'
+        }):
+            with patch('sys.stdout', buf_acc):
+                self.cli.render_single_package_dashboard(data)
+        out_acc = buf_acc.getvalue()
+        self.assertIn("⏳ SR #1384945 accepted (awaiting central pool sync)", out_acc)
+        self.assertIn("⏳ Wait for accepted SR #1384945 to sync into central pool", out_acc)
+        self.assertNotIn("Submit changes to central pool", out_acc)
 
 if __name__ == '__main__':
     unittest.main()

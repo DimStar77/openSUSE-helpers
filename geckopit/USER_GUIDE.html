@@ -165,7 +165,7 @@ hr {
 <li><a href="#2-finding-what-needs-attention-browsing">🎯 Finding What Needs Attention &amp; Browsing</a></li>
 <li><a href="#3-upgrading-a-package-to-a-new-upstream-release">⚙️ Upgrading a Package to a New Upstream Release</a></li>
 <li><a href="#4-auditing-fixing-build-dependency-drift-meson-cmake-autotools-python">🔧 Auditing &amp; Fixing Build Dependency Drift (Meson, CMake, Autotools, Python)</a></li>
-<li><a href="#5-promoting-next-pre-releases-to-factory-gitea-prs">🔀 Promoting Next Pre-Releases to Factory (Gitea PRs)</a></li>
+<li><a href="#5-promoting-next-pre-releases-to-factory-pull-requests-pool-submissions">🔀 Promoting Next Pre-Releases to Factory, Pull Requests &amp; Pool Submissions</a></li>
 <li><a href="#6-synchronizing-multi-branch-workspaces">🔄 Synchronizing Multi-Branch Workspaces</a></li>
 <li><a href="#7-committing-packaging-changes-whitespace-sanitization">💾 Committing Packaging Changes &amp; Whitespace Sanitization</a></li>
 <li><a href="#8-hands-off-the-mouse-keyboard-navigation">⌨️ Hands-Off-The-Mouse Keyboard Navigation</a></li>
@@ -255,6 +255,11 @@ hr {
 <td style="text-align: left;">Automated sync encountered git merge conflicts.</td>
 <td style="text-align: left;">Resolve in console drawer shell.</td>
 </tr>
+<tr>
+<td style="text-align: left;"><code>SR #N</code></td>
+<td style="text-align: left;">Active OBS submit request under review in Factory staging (or awaiting pool sync).</td>
+<td style="text-align: left;">Inspect in OBS (<code>osc request show N</code>) or wait for sync.</td>
+</tr>
 </tbody>
 </table>
 <hr />
@@ -276,6 +281,105 @@ hr {
 <li>Select <strong><code>🚫 Ignore Version {Version}</code></strong>. The package will slide out of your filtered sidebar list. (Repeat and click <strong><code>🔄 Unignore</code></strong> to restore).</li>
 </ul>
 <hr />
+<h3 id="extended-filtering-capabilities-query-tokens">🔍 Extended Filtering Capabilities &amp; Query Tokens</h3>
+<p>Geckopit provides a three-tiered filtering architecture combining instant toolbar tracks, rich search query tokens, and a visual advanced filters popover:</p>
+<h3 id="figure-2b-advanced-filters-popover-ctrl-shift-f">Figure 2b: Advanced Filters Popover (<code>Ctrl</code> + <code>Shift</code> + <code>F</code>)</h3>
+<p><img alt="Advanced Filters Popover" src="./docs/images/figure2b_advanced_filters_popover.png" /></p>
+<h4 id="1-quick-filter-tracks-toolbar-ctrl-1-5">1. Quick Filter Tracks Toolbar (<code>Ctrl</code> + <code>1</code> .. <code>5</code>)</h4>
+<ul>
+<li><strong><code>⚠️ Needs</code></strong> (<code>Ctrl</code> + <code>1</code>): Toggles between focused <strong>Action Queue</strong> mode and full catalog <strong>Browse</strong> mode.</li>
+<li><strong><code>📡 Pool</code></strong> (<code>Ctrl</code> + <code>2</code>): Filters for central pool synchronization tasks (packages behind pool, unsubmitted commits, or missing from pool).</li>
+<li><strong><code>🟢 Stable</code></strong> (<code>Ctrl</code> + <code>3</code>): Filters for stable pipeline actions (<code>factory</code> upstream bumps, unpushed commits, unpulled remote commits, or local modifications).</li>
+<li><strong><code>🟠 Unst.</code></strong> (<code>Ctrl</code> + <code>4</code>): Filters for unstable pipeline actions (<code>next</code> upstream bumps, unpushed commits, unpulled remote commits, or local modifications).</li>
+<li><strong><code>🔀 Fwd.</code></strong> (<code>Ctrl</code> + <code>5</code>): Filters for pre-release forwarding readiness (<code>next</code> ahead of <code>factory</code> ready to merge or create PR).</li>
+<li><strong>Multi-Track Unions</strong>: Click multiple track buttons simultaneously (e.g. <code>📡 Pool</code> + <code>🔀 Fwd.</code>) to display packages matching any of the selected tracks.</li>
+</ul>
+<h4 id="2-search-by-query-tokens-token-or-istoken">2. Search by Query Tokens (<code>@token</code> or <code>is:token</code>)</h4>
+<p>Type tokens directly into the search bar, with or without package name fragments:</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Category</th>
+<th style="text-align: left;">Query Token</th>
+<th style="text-align: left;">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>Worktree State</strong></td>
+<td style="text-align: left;"><code>@dirty</code> <em>(or <code>@modified</code>, <code>@uncommitted</code>, <code>@untracked</code>)</em></td>
+<td style="text-align: left;">Packages with modified or untracked local files on disk.</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: left;"><code>@unpushed</code> <em>(or <code>@push</code>, <code>@ahead</code>)</em></td>
+<td style="text-align: left;">Packages with local commits waiting to be pushed to remote origin.</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: left;"><code>@pull</code> <em>(or <code>@behind</code>)</em></td>
+<td style="text-align: left;">Packages behind remote tracking branch (<code>git pull</code> needed).</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: left;"><code>@conflict</code> <em>(or <code>@conflicts</code>, <code>@merge-conflict</code>)</em></td>
+<td style="text-align: left;">Packages with unresolved git merge conflicts.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Branch Sync</strong></td>
+<td style="text-align: left;"><code>@diverged</code></td>
+<td style="text-align: left;">Packages where <code>next</code> and <code>factory</code> branches have diverged history.</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: left;"><code>@catchup</code> <em>(or <code>@merge</code>)</em></td>
+<td style="text-align: left;">Packages where <code>next</code> is behind <code>factory</code> requiring a catch-up merge.</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: left;"><code>@promote</code> <em>(or <code>@fwd</code>, <code>@forward</code>)</em></td>
+<td style="text-align: left;">Packages where <code>next</code> is ahead of <code>factory</code> without an open PR.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Packaging &amp; Pool</strong></td>
+<td style="text-align: left;"><code>@pr</code> <em>(or <code>@prs</code>, <code>@pullrequest</code>)</em></td>
+<td style="text-align: left;">Packages with active Gitea Pull Requests or pending OBS Submit Requests.</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: left;"><code>@nopr</code> <em>(or <code>@unsubmitted</code>)</em></td>
+<td style="text-align: left;">Packages forwardable from <code>next</code> to <code>factory</code> without an open PR.</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: left;"><code>@pool</code></td>
+<td style="text-align: left;">Packages that are ahead or behind the central openSUSE Gitea pool.</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: left;"><code>@nopool</code> <em>(or <code>@not-in-pool</code>)</em></td>
+<td style="text-align: left;">Packages not hosted in the central Gitea pool.</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: left;"><code>@update</code> <em>(or <code>@updates</code>, <code>@needs-update</code>)</em></td>
+<td style="text-align: left;">Packages with newer upstream releases on release-monitoring.org.</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>Compound Queries</strong>: Combine package names with multiple tokens freely (e.g. <code>gnome @pr</code>, <code>gtk @dirty</code>, <code>lib @update @pool</code>).</li>
+<li><strong>Instant Keyboard Confirmation</strong>: Press <strong><code>/</code></strong> or <strong><code>Ctrl</code> + <code>P</code></strong> to jump to the search bar. Press <strong><code>Enter</code></strong> or <strong><code>Down</code></strong> to immediately confirm your query and focus the first matching package in the list.</li>
+<li><strong>Selection Lock Guard</strong>: When typing or switching filter tracks, the currently selected package remains pinned and immune to filter removal, ensuring your active workspace never slides out of view.</li>
+</ul>
+<h4 id="3-visual-advanced-filters-popover-ctrl-shift-f">3. Visual Advanced Filters Popover (<code>Ctrl</code> + <code>Shift</code> + <code>F</code>)</h4>
+<p>Click the settings icon (<code>preferences-other-symbolic</code>) next to the search bar (or press <code>Ctrl</code> + <code>Shift</code> + <code>F</code>) to open the filter menu:</p>
+<ul>
+<li>Toggle checkboxes across Worktree State, Branch Synchronization, and Packaging &amp; Pool categories.</li>
+<li>The button illuminates with a blue accent badge (<code>.suggested-action</code>) whenever popover filters are active.</li>
+<li>Click <strong>Reset</strong> to clear all active popover filters at once.</li>
+</ul>
+<hr />
 <h3 id="in-the-terminal-cli">💻 In the Terminal (CLI)</h3>
 <p>Run high-throughput parallel batch audits across all packages in your workspace:</p>
 <pre><code class="language-bash"># Default audit: Shows only packages requiring action (hides up-to-date and non-pool items)
@@ -295,6 +399,15 @@ geckopit-cli --include-not-in-pool
 
 # Filter downstream sync table strictly for packages requiring maintainer action
 geckopit-cli --todo
+
+# Central pool submission audit: Check which packages need submission to openSUSE:Factory
+geckopit-cli --check-pool
+
+# Submit package changes to openSUSE:Factory (dry-run preview)
+geckopit-cli libnotify --submit-pool --dry-run
+
+# Submit package changes to openSUSE:Factory with auto-extracted .changes description
+geckopit-cli libnotify --submit-pool
 
 # Audit against a specific workspace profile and customize worker concurrency
 geckopit-cli --profile GNOME --jobs 8
@@ -334,6 +447,15 @@ fetching new sources ➔ bumping the version in <code>.spec</code> ➔ extractin
 <li>Upon completion, the update button transitions to <strong><code>Up-To-Date</code></strong> and illuminates the <strong><code>Push</code></strong> button.</li>
 <li>Click <strong><code>Push</code></strong> to push your packaging commits to <code>origin</code>.</li>
 </ol>
+<p><strong>Stable Pipeline Card Action Buttons</strong>:</p>
+<ul>
+<li><strong><code>📥 Pull</code></strong>: Fast-forward pull remote commits from origin into your local stable checkout.</li>
+<li><strong><code>📤 Push</code></strong>: Push committed packaging updates to remote origin.</li>
+<li><strong><code>📥 Pull Pool</code></strong>: Merge upstream updates down from the central Gitea pool into your stable branch.</li>
+<li><strong><code>📤 Submit Pool</code></strong>: Submit package changes from <code>factory</code> to <code>openSUSE:Factory</code> via <code>osc sr</code>, with automated pre-flight worktree verification, changelog diff extraction, and pending SR detection.</li>
+<li><strong><code>⚙️ Run SCM Update</code></strong>: Execute automated package upgrade engine.</li>
+<li><strong><code>🖥️ Terminal (factory)</code></strong>: Launch a dedicated console drawer tab navigated to the package's stable worktree.</li>
+</ul>
 <hr />
 <h3 id="in-the-terminal-cli_1">💻 In the Terminal (CLI)</h3>
 <p>Run <code>geckopit-cli --upgrade</code> directly inside the package directory:</p>
@@ -434,12 +556,33 @@ geckopit-cli --fix-deps
 💡 Recommended Action: Update BuildRequires in zenity.spec to match upstream requirements.
 </code></pre>
 <hr />
-<h2 id="5-promoting-next-pre-releases-to-factory-gitea-prs">🔀 5. Promoting Next Pre-Releases to Factory (Gitea PRs)</h2>
-<p>During development cycles, maintainers test pre-releases on <code>next</code> before promoting them to <code>factory</code>.</p>
+<h2 id="5-promoting-next-pre-releases-to-factory-pull-requests-pool-submissions">🔀 5. Promoting Next Pre-Releases to Factory, Pull Requests &amp; Pool Submissions</h2>
+<p>During development cycles, maintainers test pre-releases on <code>next</code> before promoting them to <code>factory</code>, and submit stabilized updates from <code>factory</code> to <code>openSUSE:Factory</code>.</p>
 <hr />
 <h3 id="in-the-cockpit-gui_3">🖥️ In the Cockpit (GUI)</h3>
-<h3 id="figure-4-integrated-code-diff-viewer-patch-clipboard-export">Figure 4: Integrated Code-Diff Viewer &amp; Patch Clipboard Export</h3>
-<p><img alt="Integrated Code-Diff Viewer" src="./docs/images/figure4_diff_reviewer.png" /></p>
+<h3 id="unified-active-requests-drawer-gitea-prs-obs-srs">📥 Unified Active Requests Drawer (Gitea PRs &amp; OBS SRs)</h3>
+<p>Geckopit unifies <strong>Gitea Pull Requests</strong> and <strong>OBS Submit Requests (SRs)</strong> into a single, interactive collapsible card located directly below the pipeline cards:</p>
+<h3 id="figure-4-unified-active-pull-submit-requests-drawer">Figure 4: Unified Active Pull &amp; Submit Requests Drawer</h3>
+<p><img alt="Unified Active Requests Drawer" src="./docs/images/figure4_active_requests_drawer.png" /></p>
+<ul>
+<li><strong>Adaptive Presence (0 Height When Clean)</strong>: The drawer remains hidden when no requests are active, instantly expanding when either a Gitea PR or an OBS Submit Request is pending.</li>
+<li><strong>Dynamic Adaptive Header</strong>:</li>
+<li><code>📥 ACTIVE REQUESTS (N)</code>: When both Gitea PRs and OBS SRs exist.</li>
+<li><code>📥 ACTIVE SUBMIT REQUEST (1)</code>: When an in-flight OBS submit request is under evaluation in Factory.</li>
+<li><code>📥 ACTIVE PULL REQUESTS (N)</code>: When open Gitea pull requests are present.</li>
+<li><strong>OBS Submit Request Cards</strong>:</li>
+<li>Displays the SR number (<code>SR #1385454</code>), submit message subject, creator (<code>@author</code>), target project (<code>openSUSE:Factory</code>), source project (<code>GNOME:Factory</code>), and status pill (<code>[Review - OBS SR]</code> in amber or <code>[Accepted - OBS SR]</code> in soft green).</li>
+<li><strong>Interactive Double-Click</strong>: Double-clicking an SR card directly launches <code>https://build.opensuse.org/request/show/&lt;ID&gt;</code> in your default browser, accompanied by an in-app <code>Adw.Toast</code> confirmation banner.</li>
+<li><strong>Tooltip</strong>: Displays the exact command to inspect the request in your terminal (<code>osc request show &lt;ID&gt;</code>).</li>
+<li><strong>Gitea Pull Request Cards</strong>:</li>
+<li>Displays the PR number (<code>#77</code>), title, author, target branch, and <code>[Branch Forward]</code> badge for developmental branch promotions.</li>
+<li><strong>Interactive Double-Click</strong>: Double-clicking launches <code>https://src.opensuse.org/.../pulls/&lt;ID&gt;</code> in your browser with an <code>Adw.Toast</code> confirmation.</li>
+<li><strong>Tooltip</strong>: Displays the one-command merge shortcut (<code>geckopit-cli --merge-pr &lt;ID&gt;</code>).</li>
+<li><strong>Session-Persistent Folding</strong>: Click the header row or chevron to collapse or expand the drawer; your folded/unfolded preference is remembered as you navigate between packages.</li>
+</ul>
+<hr />
+<h3 id="figure-5-integrated-code-diff-viewer-patch-clipboard-export">Figure 5: Integrated Code-Diff Viewer &amp; Patch Clipboard Export</h3>
+<p><img alt="Integrated Code-Diff Viewer" src="./docs/images/figure5_diff_reviewer.png" /></p>
 <ol>
 <li>In the sidebar, click the <strong><code>🔀 Fwd.</code></strong> track filter (or press <code>Ctrl+5</code>).</li>
 <li>Select a package showing forwardable commits (e.g. <code>Ahead by 1 commits</code>).</li>
@@ -489,12 +632,41 @@ geckopit-cli --merge-pr 24 --no-commit
 <li><strong>Forwarded PR &amp; Group Intelligence</strong>: <code>--list-prs</code> queries <code>_ObsPrj</code> to report whether a package PR is forwarded individually or bundled into a multi-package release group (e.g. <code>pr-manage combine</code>).</li>
 </ul>
 <hr />
+<h3 id="central-pool-submissions-pending-request-audit">📤 Central Pool Submissions &amp; Pending Request Audit</h3>
+<p>When developmental updates on <code>factory</code> are ready for integration into the distribution, submit them to <code>openSUSE:Factory</code> with automated pending request detection:</p>
+<pre><code class="language-bash"># Workspace-wide audit: Identify which packages truly need submission to openSUSE:Factory
+geckopit-cli --check-pool
+
+# Inspect pending submit requests for an individual package
+geckopit-cli libnotify --check-pool
+
+# Submit package changes to openSUSE:Factory (dry-run simulation)
+geckopit-cli libnotify --submit-pool --dry-run
+
+# Submit package changes with auto-extracted .changes description
+geckopit-cli libnotify --submit-pool
+
+# Submit with a custom message
+geckopit-cli libnotify --submit-pool -m &quot;Update to version 0.8.9&quot;
+
+# Interactively submit all unsubmitted workspace packages at once
+geckopit-cli --submit-pool --all
+</code></pre>
+<p><strong>Key Submission Capabilities</strong>:</p>
+<ul>
+<li><strong>Sub-2-Second Distribution Audit</strong>: Queries the project-wide OBS submit request collection (<code>/request?view=collection&amp;project=openSUSE:Factory&amp;states=review,new&amp;types=submit</code>) in ~1.8 seconds total, cross-referencing all 500+ packages in memory.</li>
+<li><strong>Existing SR Guard</strong>: Prevents redundant submissions when a request is already under evaluation in Factory staging (e.g. <code>⏳ Pending SR #1385454 (review)</code>).</li>
+<li><strong>Sync Gap Intelligence</strong>: Audits recently accepted submit requests within a sliding window to catch packages accepted in OBS that have not yet finished backend mirroring to <code>src.opensuse.org/pool/&lt;pkg&gt;.git</code>.</li>
+<li><strong>Safe Workspace Crossover</strong>: When invoked from an unstable worktree (such as <code>GNOME:Next</code> on <code>next</code>), Geckopit automatically notifies you and routes the submission to your configured stable checkout (<code>GNOME</code> on <code>factory</code>), preventing developmental code from leaking into Factory.</li>
+<li><strong>Future Git-Pool Readiness</strong>: Inspects target project meta for <code>&lt;scmsync&gt;</code> tags, automatically guiding maintainers toward Gitea Pull Requests once <code>openSUSE:Factory</code> migrates to Git.</li>
+</ul>
+<hr />
 <h2 id="6-synchronizing-multi-branch-workspaces">🔄 6. Synchronizing Multi-Branch Workspaces</h2>
 <p>Synchronize your local workspace trees with remote tracking branches across all profile checkouts.</p>
 <hr />
 <h3 id="in-the-cockpit-gui_4">🖥️ In the Cockpit (GUI)</h3>
-<h3 id="figure-5-embedded-multi-tab-console-drawer">Figure 5: Embedded Multi-Tab Console Drawer</h3>
-<p><img alt="Embedded Multi-Tab Console Drawer" src="./docs/images/figure5_console_drawer.png" /></p>
+<h3 id="figure-6-embedded-multi-tab-console-drawer">Figure 6: Embedded Multi-Tab Console Drawer</h3>
+<p><img alt="Embedded Multi-Tab Console Drawer" src="./docs/images/figure6_console_drawer.png" /></p>
 <ol>
 <li>Click the <strong><code>🔄 Sync Workspace</code></strong> button in the HeaderBar.</li>
 <li>Geckopit synchronizes all package checkouts in the background. A spinner animates on the button while working.</li>
@@ -598,6 +770,11 @@ geckopit-cli --commit --no-edit
 <td style="text-align: left;">Action Queue mode</td>
 </tr>
 <tr>
+<td style="text-align: left;"><strong><code>Ctrl</code> + <code>Shift</code> + <code>F</code></strong></td>
+<td style="text-align: left;">Open <strong>Advanced Filters</strong> popover menu</td>
+<td style="text-align: left;">Anywhere in Cockpit</td>
+</tr>
+<tr>
 <td style="text-align: left;"><strong><code>Ctrl</code> + <code>F</code></strong></td>
 <td style="text-align: left;">Activate inline search inside the diff viewer</td>
 <td style="text-align: left;">When viewing diffs</td>
@@ -642,8 +819,8 @@ geckopit-cli --commit --no-edit
 <hr />
 <h3 id="in-the-cockpit-gui_6">In the Cockpit (GUI)</h3>
 <p>Click the <strong>Setup &amp; Verification</strong> button (<code>avatar-default-symbolic</code>) on the right side of the HeaderBar to open the interactive setup assistant:</p>
-<h3 id="figure-6-packaging-environment-setup-dialog">Figure 6: Packaging Environment Setup Dialog</h3>
-<p><img alt="Packaging Environment Setup Dialog" src="./docs/images/figure6_environment_setup.png" /></p>
+<h3 id="figure-7-packaging-environment-setup-dialog">Figure 7: Packaging Environment Setup Dialog</h3>
+<p><img alt="Packaging Environment Setup Dialog" src="./docs/images/figure7_environment_setup.png" /></p>
 <ul>
 <li><strong>Git Identity</strong>: Fill in your Full Name and Packaging Email, then click <strong>Save</strong>.</li>
 <li><strong>SSH Authentication</strong>:</li>

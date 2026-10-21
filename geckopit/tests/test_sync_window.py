@@ -1217,6 +1217,60 @@ class TestSyncWindow(unittest.TestCase):
         SyncWindow.update_detail_pr_ui(mock_win, "mypkg")
         mock_win.pr_card_revealer.set_reveal_child.assert_called_with(False)
 
+    def test_update_detail_pr_ui_obs_sr_card(self):
+        from geckopit import SyncWindow
+        mock_win = mock.Mock()
+        mock_win.current_selected_package = "srpkg"
+        mock_win.stable_b = "factory"
+        mock_win.unstable_b = "next"
+        mock_win.package_data = {
+            "srpkg": {
+                "version": {},
+                "pr": {"has_pr": False},
+                "sync": {
+                    "pool_sr": {
+                        "status": "pending",
+                        "request": {
+                            "id": "1385454",
+                            "state": "review",
+                            "creator": "dimstar",
+                            "source_project": "GNOME:Factory",
+                            "target_project": "openSUSE:Factory",
+                            "description": "Push GNOME 51.1 release"
+                        }
+                    }
+                }
+            }
+        }
+        mock_win.pr_card_revealer = mock.Mock()
+        mock_win.pr_card_inner_revealer = mock.Mock()
+        mock_win.pr_card_chevron = mock.Mock()
+        mock_win.pr_card_title_lbl = mock.Mock()
+        mock_win.pr_card_items_box = mock.Mock()
+        mock_win.pr_card_items_box.get_first_child.return_value = None
+        mock_win.pr_card_folded = False
+        mock_win.sync_pr_card_folded_state = lambda: None
+
+        # 1. Render card with single OBS SR
+        SyncWindow.update_detail_pr_ui(mock_win, "srpkg")
+        mock_win.pr_card_revealer.set_reveal_child.assert_called_with(True)
+        self.assertIn("ACTIVE SUBMIT REQUEST (1)", mock_win.pr_card_title_lbl.set_markup.call_args[0][0])
+        mock_win.pr_card_items_box.append.assert_called()
+
+        appended_card = mock_win.pr_card_items_box.append.call_args[0][0]
+        tt_markup = appended_card.get_tooltip_markup()
+        self.assertIn("osc request show 1385454", tt_markup)
+        self.assertIn("Double-click to open on Open Build Service", tt_markup)
+
+        # 2. Render card with both PR and SR
+        mock_win.package_data["srpkg"]["pr"] = {
+            "has_pr": True,
+            "count": 1,
+            "prs": [{"number": 101, "title": "Patch fix", "author": "alice", "url": "https://src.o.o/pr/101"}]
+        }
+        SyncWindow.update_detail_pr_ui(mock_win, "srpkg")
+        self.assertIn("ACTIVE REQUESTS (2)", mock_win.pr_card_title_lbl.set_markup.call_args[0][0])
+
     def test_update_sync_row_single_pr_propagation(self):
         from geckopit import SyncWindow
         mock_win = mock.Mock()
@@ -1330,6 +1384,11 @@ class TestSyncWindow(unittest.TestCase):
         mock_win.current_selected_package = "testpkg"
         mock_win.stable_pool_lbl = mock.Mock()
         mock_win.pull_pool_btn = mock.Mock()
+        mock_win.submit_pool_btn = mock.Mock()
+        mock_win.obs_pending_requests = {}
+        mock_win.obs_accepted_requests = {}
+        mock_win.get_mapped_worktree_path.return_value = None
+        mock_win.stable_b = "factory"
         mock_win.unstable_branch_lbl = mock.Mock()
         mock_win.catchup_merge_btn = mock.Mock()
         mock_win.create_pr_btn = mock.Mock()
@@ -1363,6 +1422,53 @@ class TestSyncWindow(unittest.TestCase):
         markup = mock_win.stable_pool_lbl.set_markup.call_args[0][0]
         self.assertIn("Behind Pool: 2 commits / Ahead Pool: 1 commit", markup)
 
+
+    def test_update_detail_sync_ui_sr_status(self):
+        from unittest.mock import patch
+        mock_win = mock.Mock()
+        mock_win.current_selected_package = "testpkg"
+        mock_win.stable_pool_lbl = mock.Mock()
+        mock_win.pull_pool_btn = mock.Mock()
+        mock_win.submit_pool_btn = mock.Mock()
+        mock_win.unstable_branch_lbl = mock.Mock()
+        mock_win.catchup_merge_btn = mock.Mock()
+        mock_win.create_pr_btn = mock.Mock()
+
+        mock_win.package_data = {
+            "testpkg": {
+                "sync": {"pool_ahead": 2, "pool_behind": 0, "pool_status": "In Sync", "next_status": "In Sync", "next_ahead": 0, "next_behind": 0},
+                "pr": {"has_pr": False, "has_forward_pr": False}
+            }
+        }
+
+        # 1. Active Pending SR -> button disabled, label shows pending SR
+        with patch("pool_submit.get_package_pool_submission_status", return_value={
+            "status": "pending",
+            "request": {"id": "1385454", "state": "review", "source_project": "GNOME:Factory"}
+        }):
+            SyncWindow.update_detail_sync_ui(mock_win, "testpkg")
+            markup = mock_win.stable_pool_lbl.set_markup.call_args[0][0]
+            self.assertIn("Pending Submit Request #1385454", markup)
+            mock_win.submit_pool_btn.set_sensitive.assert_called_with(False)
+
+        # 2. Accepted SR awaiting sync -> button disabled, label shows accepted
+        with patch("pool_submit.get_package_pool_submission_status", return_value={
+            "status": "accepted_pending_sync",
+            "request": {"id": "1384945", "state": "accepted"}
+        }):
+            SyncWindow.update_detail_sync_ui(mock_win, "testpkg")
+            markup = mock_win.stable_pool_lbl.set_markup.call_args[0][0]
+            self.assertIn("Submit Request #1384945 Accepted", markup)
+            mock_win.submit_pool_btn.set_sensitive.assert_called_with(False)
+
+        # 3. Unsubmitted -> button enabled
+        with patch("pool_submit.get_package_pool_submission_status", return_value={
+            "status": "unsubmitted"
+        }):
+            SyncWindow.update_detail_sync_ui(mock_win, "testpkg")
+            markup = mock_win.stable_pool_lbl.set_markup.call_args[0][0]
+            self.assertIn("Ahead of Gitea Pool by 2 commits", markup)
+            mock_win.submit_pool_btn.set_sensitive.assert_called_with(True)
 
 if __name__ == '__main__':
     unittest.main()

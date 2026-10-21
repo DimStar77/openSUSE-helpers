@@ -53,6 +53,12 @@ class TestCliArgs(unittest.TestCase):
             ["--jobs=8"],
             ["-j", "4"],
             ["gnome-shell", "--commit", "--no-edit"],
+            ["--check-pool"],
+            ["--pending-sr"],
+            ["--submit-pool"],
+            ["libnotify", "--submit-pool", "--dry-run"],
+            ["--submit-pool", "--all", "--yes"],
+            ["--submit-pool", "-m", "Update version"],
         ]
         for args in valid_cases:
             err = geckopit_cli.validate_cli_options(args)

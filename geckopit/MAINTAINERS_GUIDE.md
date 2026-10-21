@@ -362,7 +362,36 @@ geckopit-cli --merge-pr 24 --no-commit
 *   **Spec Collision Guard**: Detects duplicate patch declarations (e.g. conflicting `Patch2:`) in `.spec` files, leaving changes staged for maintainer review with `git commit -c FETCH_HEAD`.
 *   **Forwarded PR & Group Intelligence**: Automatically queries `_ObsPrj` to determine if a PR is forwarded individually or bundled into a multi-package release group (`pr-manage combine`).
 
-### 🔄 6. Legacy Script Compatibility
+### 📤 6. Central Pool Submissions & Pending Request Audit
+Audit and submit package changes to the central openSUSE pool (`openSUSE:Factory`) with automatic pending request detection and changelog extraction:
+
+```bash
+# Audit central pool submission status across the entire workspace
+geckopit-cli --check-pool
+
+# Audit submission status for a specific package
+geckopit-cli libnotify --check-pool
+
+# Submit package changes to openSUSE:Factory via osc sr (dry-run preview)
+geckopit-cli libnotify --submit-pool --dry-run
+
+# Submit package changes to openSUSE:Factory with auto-extracted .changes description
+geckopit-cli libnotify --submit-pool
+
+# Submit with a custom description
+geckopit-cli libnotify --submit-pool -m "Update to version 0.8.9"
+
+# Interactively submit all unsubmitted packages across the workspace
+geckopit-cli --submit-pool --all
+```
+
+*   **Pending Request Guard**: Automatically queries OBS submit requests targeting `openSUSE:Factory`. If an SR is already pending in review, Geckopit blocks duplicate submissions and displays the active request ID (`⏳ Pending SR #1385454 (review)`).
+*   **Sync Gap Intelligence**: Detects requests that were already accepted in OBS but have not yet finished mirroring into the Gitea pool (`src.opensuse.org/pool/<pkg>.git`), preventing false alarms.
+*   **Git-Managed Pool Guard**: Inspects target project meta for `<scmsync>` tags, ensuring that when Factory transitions to Git, Geckopit cleanly routes to Gitea Pull Requests instead of `osc sr`.
+*   **Automatic Changelog Extraction**: Extracts added `.changes` entries since `refs/pool/factory`, stripping redundant date headers and whitespace noise to prefill the submit description message.
+*   **Interactive Cockpit Button & Badges**: The Stable Pipeline card in the GUI illuminates a dedicated **`📤 Submit Pool`** action button when unsubmitted changes exist, launching the submission workflow in the console drawer, while pending requests are decorated with prominent `SR #<ID>` badges in the package sidebar.
+
+### 🔄 7. Legacy Script Compatibility
 Existing maintainer scripts (`gc.sh`, `gnome-audit.sh`, `gnome-catchup.sh`, `gnome-promote.sh`, `gnome-pool-audit.sh`, and `obs_scm-update.sh`) automatically delegate to `geckopit-cli` when installed in `$PATH`, maintaining muscle memory while using the modern Python backend.
 
 ---

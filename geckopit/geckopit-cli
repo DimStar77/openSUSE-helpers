@@ -29,6 +29,7 @@ from upgrade import get_upgrade_helper, list_upgrade_helpers
 import meson_drift
 import pr_helper
 import patch_checker
+import pool_submit
 
 
 def render_single_package_dashboard(data):
@@ -102,7 +103,20 @@ def render_single_package_dashboard(data):
             pool_str = f"{sb.YELLOW}📥 Behind central pool by {pool_behind} commit{b_s} (Pull needed){sb.RESET}"
         elif pool_ahead > 0:
             a_s = 's' if pool_ahead != 1 else ''
-            pool_str = f"{sb.CYAN}📤 Ahead of central pool by {pool_ahead} commit{a_s} (Submit needed){sb.RESET}"
+            pool_sub = pool_submit.get_package_pool_submission_status(
+                repo,
+                target_project="openSUSE:Factory",
+                pkg_dir=data.get('pkg_dir'),
+                stable_branch=data.get('stable_branch', 'factory')
+            )
+            if pool_sub["status"] == "pending":
+                req = pool_sub["request"]
+                pool_str = f"{sb.YELLOW}⏳ Pending SR #{req['id']} ({req['state']} from {req.get('source_project')}){sb.RESET}"
+            elif pool_sub["status"] == "accepted_pending_sync":
+                req = pool_sub["request"]
+                pool_str = f"{sb.GREEN}⏳ SR #{req['id']} accepted (awaiting central pool sync){sb.RESET}"
+            else:
+                pool_str = f"{sb.CYAN}📤 Ahead of central pool by {pool_ahead} commit{a_s} (Submit needed){sb.RESET}"
         elif pool_status == 'Not in Pool':
             pool_str = f"{sb.YELLOW}❓ Not in Pool{sb.RESET}"
         elif pool_status in ('Fetch failed', 'Error', 'unknown'):
@@ -227,7 +241,20 @@ def render_single_package_dashboard(data):
         if pool_behind > 0:
             actions.append(f"📥 Pull upstream changes from Pool: {sb.BOLD}git fetch https://src.opensuse.org/pool/{repo}.git factory && git merge FETCH_HEAD{sb.RESET}")
         if pool_ahead > 0:
-            actions.append(f"📤 Submit changes to central pool (openSUSE:Factory)")
+            pool_sub = pool_submit.get_package_pool_submission_status(
+                repo,
+                target_project="openSUSE:Factory",
+                pkg_dir=data.get('pkg_dir'),
+                stable_branch=data.get('stable_branch', 'factory')
+            )
+            if pool_sub["status"] == "pending":
+                req = pool_sub["request"]
+                actions.append(f"⏳ Wait for pending SR #{req['id']} ({req['state']}) to merge in openSUSE:Factory")
+            elif pool_sub["status"] == "accepted_pending_sync":
+                req = pool_sub["request"]
+                actions.append(f"⏳ Wait for accepted SR #{req['id']} to sync into central pool")
+            else:
+                actions.append(f"📤 Submit changes to central pool (openSUSE:Factory): {sb.BOLD}geckopit-cli --submit-pool{sb.RESET}")
         if next_behind > 0:
             actions.append(f"🔀 Catch-up merge from {st_branch}: {sb.BOLD}git merge origin/{st_branch}{sb.RESET}")
         # Only recommend PR if commits are actually on remote (ahead == 0) and not in active PR
@@ -641,6 +668,9 @@ def run_sync_check(repos, include_not_in_pool=False):
     has_next_count = sum(1 for r, d in results.items() if d.get("status") == "success" and d.get("next_status") != "No next branch")
     not_in_pool_count = sum(1 for d in results.values() if d.get("status") == "success" and d.get("pool_status") == "Not in Pool")
 
+    pending_obs = pool_submit.get_pending_obs_requests("openSUSE:Factory")
+    accepted_obs = pool_submit.get_recently_accepted_obs_requests("openSUSE:Factory")
+
     rows = []
     for repo in sorted(results.keys()):
         data = results[repo]
@@ -648,12 +678,28 @@ def run_sync_check(repos, include_not_in_pool=False):
             continue
         is_actionable = data["needs_action"] or (include_not_in_pool and data.get("pool_status") == "Not in Pool")
         if is_actionable:
+            pool_sub = {"status": "none"}
+            if data["pool_ahead"] > 0:
+                pool_sub = pool_submit.get_package_pool_submission_status(
+                    repo,
+                    target_project="openSUSE:Factory",
+                    pending_requests=pending_obs,
+                    accepted_requests=accepted_obs,
+                    pkg_dir=data.get('pkg_dir'),
+                    stable_branch=data.get('stable_branch', 'factory')
+                )
+
             if data["pool_behind"] > 0 and data["pool_ahead"] > 0:
                 stage1_str = f"{sb.RED}❌ Diverged (Behind {data['pool_behind']}, Ahead {data['pool_ahead']}){sb.RESET}"
             elif data["pool_behind"] > 0:
                 stage1_str = f"{sb.RED}📥 **Behind by {data['pool_behind']}** (needs pull){sb.RESET}"
             elif data["pool_ahead"] > 0:
-                stage1_str = f"{sb.CYAN}📤 **Ahead by {data['pool_ahead']}** (needs submit){sb.RESET}"
+                if pool_sub["status"] == "pending":
+                    stage1_str = f"{sb.YELLOW}⏳ **SR #{pool_sub['request_id']}** ({pool_sub['state']}){sb.RESET}"
+                elif pool_sub["status"] == "accepted_pending_sync":
+                    stage1_str = f"{sb.GREEN}⏳ **SR #{pool_sub['request_id']}** (accepted){sb.RESET}"
+                else:
+                    stage1_str = f"{sb.CYAN}📤 **Ahead by {data['pool_ahead']}** (needs submit){sb.RESET}"
             elif data["pool_status"] == "Not in Pool":
                 stage1_str = f"{sb.YELLOW}❓ Not in Pool{sb.RESET}"
             elif data["pool_status"] in ("Fetch failed", "Error", "unknown"):
@@ -683,7 +729,12 @@ def run_sync_check(repos, include_not_in_pool=False):
             if data["pool_behind"] > 0:
                 actions.append("📥 Pull Pool")
             if data["pool_ahead"] > 0:
-                actions.append("📤 Submit Pool")
+                if pool_sub["status"] == "pending":
+                    actions.append(f"⏳ Wait for SR #{pool_sub['request_id']}")
+                elif pool_sub["status"] == "accepted_pending_sync":
+                    actions.append("⏳ Wait for sync")
+                else:
+                    actions.append("📤 Submit Pool")
             if data["next_behind"] > 0:
                 actions.append("🔀 Merge next")
             action_str = " and ".join(actions) if actions else "None"
@@ -1109,6 +1160,188 @@ def run_audit_deps_action(pkg_dir="."):
         return 0
 
 
+
+
+def resolve_pool_workspace_context(target_pkg_dir=None, workspace_path="."):
+    """
+    Detects if the user is operating within an unstable worktree (e.g. GNOME:Next on 'next').
+    Since submissions to openSUSE:Factory must track the stable branch ('factory' / GNOME:Factory),
+    this helper routes to the configured stable workspace checkout and notifies the user.
+    """
+    cfg = sb.load_geckopit_profile_config()
+    unstable_path = cfg.get("unstable_path")
+    stable_path = cfg.get("stable_path")
+    if not unstable_path or not stable_path:
+        return target_pkg_dir, workspace_path, False
+
+    u_abs = os.path.abspath(unstable_path)
+    s_abs = os.path.abspath(stable_path)
+
+    # 1. Package-specific context
+    if target_pkg_dir:
+        pkg_abs = os.path.abspath(target_pkg_dir)
+        try:
+            if os.path.commonpath([pkg_abs, u_abs]) == u_abs:
+                rel = os.path.relpath(pkg_abs, u_abs)
+                cand_stable = os.path.join(s_abs, rel)
+                if os.path.exists(cand_stable):
+                    return cand_stable, s_abs, True
+                else:
+                    return pkg_abs, s_abs, False
+        except Exception:
+            pass
+
+    # 2. Workspace-wide context
+    ws_abs = os.path.abspath(workspace_path)
+    try:
+        if os.path.commonpath([ws_abs, u_abs]) == u_abs:
+            return None, s_abs, True
+    except Exception:
+        pass
+
+    return target_pkg_dir, workspace_path, False
+
+
+def run_package_pool_submit(target_pkg_dir, message=None, dry_run=False, force=False):
+    effective_dir, _, crossed = resolve_pool_workspace_context(target_pkg_dir=target_pkg_dir)
+    pkg_name = os.path.basename(os.path.abspath(target_pkg_dir))
+    if crossed:
+        print(f"{sb.CYAN}ℹ️  Note: openSUSE:Factory submissions track the stable branch ('factory').{sb.RESET}", file=sys.stderr)
+        print(f"   Routing submission to stable checkout: {sb.BOLD}{effective_dir}{sb.RESET}", file=sys.stderr)
+        print("", file=sys.stderr)
+        target_pkg_dir = effective_dir
+
+    print(f"── {sb.BOLD}📤 Submitting {pkg_name} to openSUSE:Factory{sb.RESET} {'─'*35}")
+    ok, msg = pool_submit.submit_package_to_pool(
+        pkg_name,
+        target_pkg_dir,
+        target_project="openSUSE:Factory",
+        message=message,
+        dry_run=dry_run,
+        force=force
+    )
+    if ok:
+        print(f"{sb.GREEN}✅ {msg}{sb.RESET}")
+        return 0
+    else:
+        print(f"{sb.RED}[Error]{sb.RESET} {msg}", file=sys.stderr)
+        return 1
+
+
+def run_pool_audit_cli(workspace_path="."):
+    _, effective_ws, crossed = resolve_pool_workspace_context(workspace_path=workspace_path)
+    if crossed:
+        print(f"{sb.CYAN}ℹ️  Note: openSUSE:Factory submissions track the stable branch ('factory').{sb.RESET}", file=sys.stderr)
+        print(f"   Cross-referencing against configured stable workspace: {sb.BOLD}{effective_ws}{sb.RESET}", file=sys.stderr)
+        print("", file=sys.stderr)
+        workspace_path = effective_ws
+
+    print(f"── {sb.BOLD}🔍 Central Pool Submission Audit (openSUSE:Factory){sb.RESET} {'─'*25}")
+    print("Querying active submit requests against openSUSE:Factory...", file=sys.stderr)
+    res = pool_submit.audit_workspace_pool_submissions(workspace_path, target_project="openSUSE:Factory")
+
+
+    total = res["total_packages"]
+    ahead_total = len(res["ahead_packages"])
+    pending_total = len(res["pending_sr_packages"])
+    accepted_total = len(res["accepted_sync_packages"])
+    unsub_total = len(res["unsubmitted_packages"])
+
+    print("")
+    print(f"Total Workspace Packages: {sb.BOLD}{total}{sb.RESET}")
+    print(f"Packages Ahead of Pool:   {sb.BOLD}{ahead_total}{sb.RESET}")
+    print(f"  • Active Pending SRs:   {sb.YELLOW}{pending_total}{sb.RESET} (under review in Factory)")
+    print(f"  • Accepted (Syncing):   {sb.GREEN}{accepted_total}{sb.RESET} (landed in Factory, awaiting pool sync)")
+    print(f"  • Truly Unsubmitted:    {sb.CYAN}{unsub_total}{sb.RESET} (action required)")
+    print("")
+
+    if unsub_total > 0:
+        print(f"### 📦 Packages Requiring Submission ({sb.BOLD}{unsub_total}{sb.RESET})")
+        print("")
+        headers = ["Package", "Ahead", "Action", "Latest Changes Summary"]
+        rows = []
+        for u in res["unsubmitted_packages"]:
+            rows.append((
+                u["package"],
+                str(u["pool_ahead"]),
+                "📤 Submit Pool",
+                u.get("summary", "")[:50]
+            ))
+        w1 = max(sb.visual_len(headers[0]), max(sb.visual_len(r[0]) for r in rows) if rows else 0)
+        w2 = max(sb.visual_len(headers[1]), max(sb.visual_len(r[1]) for r in rows) if rows else 0)
+        w3 = max(sb.visual_len(headers[2]), max(sb.visual_len(r[2]) for r in rows) if rows else 0)
+        w4 = max(sb.visual_len(headers[3]), max(sb.visual_len(r[3]) for r in rows) if rows else 0)
+
+        print(f"| {sb.pad_left(headers[0], w1)} | {sb.pad_left(headers[1], w2)} | {sb.pad_left(headers[2], w3)} | {sb.pad_left(headers[3], w4)} |")
+        print(f"| {'-'*w1} | {'-'*w2} | {'-'*w3} | {'-'*w4} |")
+        for r in rows:
+            print(f"| {sb.pad_left(r[0], w1)} | {sb.pad_left(r[1], w2)} | {sb.pad_left(r[2], w3)} | {sb.pad_left(r[3], w4)} |")
+
+        print("")
+        print(f"💡 {sb.BOLD}To submit an individual package:{sb.RESET}")
+        print(f"   geckopit-cli <pkg> --submit-pool")
+        print("")
+        print(f"💡 {sb.BOLD}To submit all unsubmitted packages:{sb.RESET}")
+        print(f"   geckopit-cli --submit-pool --all (or with '--dry-run' to preview)")
+    else:
+        print(f"{sb.GREEN}✅ All packages ahead of pool already have active submit requests or are syncing!{sb.RESET}")
+
+    return 0
+
+
+def run_all_pool_submit_cli(workspace_path=".", dry_run=False, yes=False, force=False):
+    _, effective_ws, crossed = resolve_pool_workspace_context(workspace_path=workspace_path)
+    if crossed:
+        print(f"{sb.CYAN}ℹ️  Note: openSUSE:Factory submissions track the stable branch ('factory').{sb.RESET}", file=sys.stderr)
+        print(f"   Submitting from configured stable workspace: {sb.BOLD}{effective_ws}{sb.RESET}", file=sys.stderr)
+        print("", file=sys.stderr)
+        workspace_path = effective_ws
+    print("Auditing unsubmitted packages across workspace...", file=sys.stderr)
+    res = pool_submit.audit_workspace_pool_submissions(workspace_path, target_project="openSUSE:Factory")
+    unsubmitted = res["unsubmitted_packages"]
+    if not unsubmitted:
+        print(f"{sb.GREEN}✅ No packages require submission to openSUSE:Factory.{sb.RESET}")
+        return 0
+
+    print("")
+    print(f"Found {len(unsubmitted)} package(s) requiring submission to openSUSE:Factory:")
+    for u in unsubmitted:
+        print(f"  • {u['package']} (ahead by {u['pool_ahead']}): {u.get('summary', '')[:60]}")
+
+    if not dry_run and not yes:
+        try:
+            resp = input(f"Submit all {len(unsubmitted)} packages to openSUSE:Factory? [y/N]: ").strip().lower()
+            if resp not in ("y", "yes"):
+                print("Aborted.")
+                return 1
+        except (KeyboardInterrupt, EOFError):
+            print("Aborted.")
+            return 1
+
+    success_count = 0
+    for u in unsubmitted:
+        pkg = u["package"]
+        pkg_dir = u["pkg_dir"]
+        print("")
+        print(f"Submitting {pkg}...")
+        ok, msg = pool_submit.submit_package_to_pool(
+            pkg,
+            pkg_dir,
+            target_project="openSUSE:Factory",
+            dry_run=dry_run,
+            force=force
+        )
+        if ok:
+            print(f"  {sb.GREEN}✓ {msg}{sb.RESET}")
+            success_count += 1
+        else:
+            print(f"  {sb.RED}✗ Failed: {msg}{sb.RESET}")
+
+    print("")
+    print(f"Completed: {success_count}/{len(unsubmitted)} packages submitted successfully.")
+    return 0 if success_count == len(unsubmitted) else 1
+
+
 KNOWN_OPTIONS = {
     "--sync", "-s", "--fetch", "--force", "-f",
     "--forward",
@@ -1121,6 +1354,8 @@ KNOWN_OPTIONS = {
     "--commit", "-c", "--no-edit",
     "--audit-deps", "-d", "--fix-deps",
     "--list-prs", "--merge-pr", "--squash", "--no-commit",
+    "--submit-pool", "--check-pool", "--pending-sr", "--pending-requests",
+    "--message", "-m", "--all", "-a", "--yes", "-y",
     "--check-setup", "--setup",
     "--guide", "--docs",
     "--bash-completion",
@@ -1149,7 +1384,7 @@ def validate_cli_options(args):
                     if len(prefix_candidates) == 1:
                         hint = f" Did you mean '{prefix_candidates[0]}'?"
                     else:
-                        opts_str = " or ".join(f"'{c}'" for c in prefix_candidates[:3])
+                        opts_str = " or ".join(f"'{c}'" for c in prefix_candidates[:5])
                         hint = f" Did you mean {opts_str}?"
                 else:
                     close = difflib.get_close_matches(base_opt, list(KNOWN_OPTIONS), n=1, cutoff=0.5)
@@ -1172,6 +1407,8 @@ def print_help():
     print(f"  {sb.BOLD}-f, --forward{sb.RESET}      Identifies forwardable unstable/next branches.")
     print(f"  {sb.BOLD}-v, --version [b]{sb.RESET}  Compares package versions against release-monitoring.org.")
     print(f"  {sb.BOLD}--not-in-pool{sb.RESET}      Dedicated audit mode: lists packages not in central Gitea pool.")
+    print(f"  {sb.BOLD}--check-pool{sb.RESET}       Audits workspace or package for pending Factory submit requests.")
+    print(f"  {sb.BOLD}--submit-pool [p]{sb.RESET}  Submits package changes to central pool (openSUSE:Factory) via osc sr.")
     print(f"  {sb.BOLD}--todo{sb.RESET}             Alias for default sync checking mode.")
     print(f"\n{sb.BOLD}Package Upgrades & Spec Tools:{sb.RESET}")
     print(f"  {sb.BOLD}-u, --upgrade [REV]{sb.RESET}")
@@ -1194,7 +1431,9 @@ def print_help():
     print(f"  {sb.BOLD}--squash{sb.RESET}            Used with --merge-pr to squash multiple PR commits into a single commit.")
     print(f"  {sb.BOLD}--no-commit{sb.RESET}         Used with --merge-pr to stage changes without committing.")
     print(f"  {sb.BOLD}--no-edit{sb.RESET}          Used with --commit to commit without opening an interactive editor.")
-    print(f"  {sb.BOLD}-n, --dry-run{sb.RESET}      Used with --upgrade to simulate steps without modifying files.")
+    print(f"  {sb.BOLD}-m, --message <m>{sb.RESET}  Custom submission description message with --submit-pool.")
+    print(f"  {sb.BOLD}-a, --all{sb.RESET}          With --submit-pool, submits all unsubmitted workspace packages.")
+    print(f"  {sb.BOLD}-n, --dry-run{sb.RESET}      Used with --upgrade or --submit-pool to simulate without modifying.")
     print(f"  {sb.BOLD}-p, --pr{sb.RESET}           Include Gitea pull request pending status in forwarding mode.")
     print(f"  {sb.BOLD}--no-pr{sb.RESET}            In forwarding mode, only show packages without a pending pull request.")
     print(f"  {sb.BOLD}-b, --branch <b>{sb.RESET}   Limit checks to a specific branch ('factory' or 'next').")
@@ -1346,6 +1585,68 @@ def main():
         shell_mode = "--shell" in sys.argv
         sle_mode = "--sle" in sys.argv
         sys.exit(0 if patch_checker.rebase_patch_cli(target_pkg_dir, patch_name=patch_arg, shell_mode=shell_mode, sle_mode=sle_mode) else 1)
+
+    # Parse pool submission options
+    custom_message = None
+    for idx, arg in enumerate(sys.argv):
+        if arg in ("-m", "--message"):
+            if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("-"):
+                custom_message = sys.argv[idx + 1]
+        elif arg.startswith("--message="):
+            custom_message = arg.split("=", 1)[1]
+
+    all_submit = "--all" in sys.argv or "-a" in sys.argv
+    yes_arg = "--yes" in sys.argv or "-y" in sys.argv or "--no-edit" in sys.argv
+
+    # Execute check-pool / pending-sr audit mode
+    if any(arg in sys.argv for arg in ("--check-pool", "--pending-sr", "--pending-requests")):
+        if target_pkg_dir:
+            effective_dir, _, crossed = resolve_pool_workspace_context(target_pkg_dir=target_pkg_dir)
+            if crossed:
+                print(f"{sb.CYAN}ℹ️  Note: openSUSE:Factory submissions track the stable branch ('factory').{sb.RESET}", file=sys.stderr)
+                print(f"   Inspecting stable checkout: {sb.BOLD}{effective_dir}{sb.RESET}", file=sys.stderr)
+                print("", file=sys.stderr)
+                target_pkg_dir = effective_dir
+            pkg_name = os.path.basename(os.path.abspath(target_pkg_dir))
+            st = pool_submit.get_package_pool_submission_status(pkg_name, target_project="openSUSE:Factory", pkg_dir=target_pkg_dir)
+            print(f"── {sb.BOLD}🔍 Central Pool Status: {pkg_name}{sb.RESET} {'─'*35}")
+            if st["status"] == "pending":
+                r = st["request"]
+                print(f"  Status:         {sb.YELLOW}⏳ Pending Submit Request #{r['id']}{sb.RESET}")
+                print(f"  State:          {r['state']} (by @{r['creator']})")
+                print(f"  Source:         {r['source_project']}/{r['source_package']}")
+                print(f"  Target:         {r['target_project']}/{r['target_package']}")
+                print(f"  Description:    {r.get('description', '')}")
+            elif st["status"] == "accepted_pending_sync":
+                r = st["request"]
+                print(f"  Status:         {sb.GREEN}⏳ Request #{r['id']} Accepted{sb.RESET}")
+                print(f"  State:          accepted on {r.get('state_when', 'recently')}")
+                print(f"  Target:         {r['target_project']} (awaiting sync to central pool)")
+            else:
+                print(f"  Status:         {sb.CYAN}📤 Unsubmitted{sb.RESET} (Ready for 'geckopit-cli --submit-pool')")
+            sys.exit(0)
+        else:
+            sys.exit(run_pool_audit_cli(workspace_path=os.getcwd()))
+
+    # Execute submit-pool mode
+    if "--submit-pool" in sys.argv:
+        if target_pkg_dir:
+            sys.exit(run_package_pool_submit(
+                target_pkg_dir,
+                message=custom_message,
+                dry_run=dry_run,
+                force=force_sync
+            ))
+        else:
+            if all_submit:
+                sys.exit(run_all_pool_submit_cli(
+                    workspace_path=os.getcwd(),
+                    dry_run=dry_run,
+                    yes=yes_arg,
+                    force=force_sync
+                ))
+            else:
+                sys.exit(run_pool_audit_cli(workspace_path=os.getcwd()))
 
     # Execute list-prs mode
     if "--list-prs" in sys.argv:
