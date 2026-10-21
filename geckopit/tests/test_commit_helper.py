@@ -135,9 +135,10 @@ Wed Sep 23 16:00:00 UTC 2026 - User <user@example.com>
     def test_stage_package_files_obscpio_buildtime(self, mock_run):
         with tempfile.TemporaryDirectory() as tmpdir:
             service_path = os.path.join(tmpdir, "_service")
+            # Test mode before name: mode="buildtime" name="tar"
             with open(service_path, "w") as f:
                 f.write('''<services>
-  <service name="tar" mode="buildtime" />
+  <service mode="buildtime" name="tar" />
 </services>''')
             obscpio_path = os.path.join(tmpdir, "pkg-1.0.obscpio")
             with open(obscpio_path, "w") as f:
@@ -153,6 +154,31 @@ Wed Sep 23 16:00:00 UTC 2026 - User <user@example.com>
             self.assertTrue(ok)
             calls = [c[0][0] for c in mock_run.call_args_list]
             self.assertIn(["git", "-C", tmpdir, "add", "-f", "pkg-1.0.obscpio"], calls)
+
+    @mock.patch("subprocess.run")
+    def test_stage_package_files_obscpio_manual_not_staged(self, mock_run):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service_path = os.path.join(tmpdir, "_service")
+            # When tar mode is manual (regardless of attribute order), obscpio must NOT be staged
+            with open(service_path, "w") as f:
+                f.write('''<services>
+  <service mode="manual" name="obs_scm"/>
+  <service mode="manual" name="tar"/>
+</services>''')
+            obscpio_path = os.path.join(tmpdir, "feedbackd-0.8.10.obscpio")
+            with open(obscpio_path, "w") as f:
+                f.write("obscpio content")
+
+            mock_proc = mock.MagicMock()
+            mock_proc.returncode = 0
+            mock_proc.stdout = ""
+            mock_run.return_value = mock_proc
+
+            logs = []
+            ok, msg = ch.stage_package_files(tmpdir, on_log=logs.append)
+            self.assertTrue(ok)
+            calls = [c[0][0] for c in mock_run.call_args_list]
+            self.assertFalse(any("feedbackd-0.8.10.obscpio" in str(c) for c in calls))
 
 if __name__ == '__main__':
     unittest.main()

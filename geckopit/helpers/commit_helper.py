@@ -26,6 +26,44 @@ TEXT_FILE_EXTENSIONS = (
     ".sh",
 )
 
+try:
+    from upgrade.obs_scm import get_service_mode
+except ImportError:
+    try:
+        from .upgrade.obs_scm import get_service_mode
+    except ImportError:
+        try:
+            from helpers.upgrade.obs_scm import get_service_mode
+        except ImportError:
+            def get_service_mode(package_dir_or_file: str, service_name: str = "tar") -> Optional[str]:
+                if os.path.isdir(package_dir_or_file):
+                    service_file = os.path.join(package_dir_or_file, "_service")
+                else:
+                    service_file = package_dir_or_file
+                if not os.path.isfile(service_file):
+                    return None
+                import xml.etree.ElementTree as ET
+                try:
+                    tree = ET.parse(service_file)
+                    root = tree.getroot()
+                    for s in root.findall(".//service"):
+                        if s.get("name") == service_name:
+                            mode = s.get("mode")
+                            return mode.strip().lower() if mode else ""
+                except Exception:
+                    pass
+                try:
+                    with open(service_file, "r", encoding="utf-8", errors="replace") as f:
+                        s_c = f.read()
+                    pattern = r'''<service\b(?=[^>]*\bname=["']''' + re.escape(service_name) + r'''["'])(?=[^>]*\bmode=["']([^"'>]+)["'])?[^>]*>'''
+                    m = re.search(pattern, s_c, re.IGNORECASE)
+                    if m:
+                        mode_val = m.group(1)
+                        return mode_val.strip().lower() if mode_val else ""
+                except Exception:
+                    pass
+                return None
+
 
 def get_modified_and_untracked_files(package_dir: str) -> List[str]:
     """Returns relative paths of files that have local modifications or are untracked."""
@@ -127,9 +165,18 @@ def stage_package_files(package_dir: str, on_log: Optional[Callable[[str], None]
     service_file = os.path.join(package_dir, "_service")
     if os.path.isfile(service_file):
         try:
-            with open(service_file, "r", encoding="utf-8", errors="replace") as f:
-                s_content = f.read()
-            if re.search(r'["\']tar["\'].*["\']buildtime["\']', s_content) or re.search(r'name=["\']tar["\']\s+mode=["\']buildtime["\']', s_content):
+            tar_mode = get_service_mode(package_dir, "tar")
+            should_stage_obscpio = False
+            if tar_mode == "buildtime" or tar_mode == "":
+                should_stage_obscpio = True
+            elif tar_mode is None:
+                scm_mode = get_service_mode(package_dir, "obs_scm")
+                if scm_mode is None:
+                    scm_mode = get_service_mode(package_dir, "tar_scm")
+                if scm_mode is not None:
+                    should_stage_obscpio = True
+
+            if should_stage_obscpio:
                 for obscpio_path in glob.glob(os.path.join(package_dir, "*.obscpio")):
                     rel_obs = os.path.basename(obscpio_path)
                     res = subprocess.run(["git", "-C", package_dir, "add", "-f", rel_obs], capture_output=True, check=False)

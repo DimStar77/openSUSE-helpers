@@ -6,7 +6,7 @@ Provides registry, strategy dispatch, and changelog formatting for packaging pip
 
 from typing import Optional, List, Type
 from .base import BaseUpgradeHelper, UpgradeResult
-from .obs_scm import ObsScmUpgradeHelper
+from .obs_scm import ObsScmUpgradeHelper, get_service_mode
 from .tarball import TarballUpgradeHelper
 from .changelog import (
     CHANGELOG_WRAP_WIDTH,
@@ -50,6 +50,7 @@ __all__ = [
     "BaseUpgradeHelper",
     "UpgradeResult",
     "ObsScmUpgradeHelper",
+    "get_service_mode",
     "TarballUpgradeHelper",
     "register_upgrade_helper",
     "list_upgrade_helpers",

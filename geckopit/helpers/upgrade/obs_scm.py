@@ -25,6 +25,48 @@ from .changelog import (
     APPSTREAM_XML_REGEX
 )
 
+def get_service_mode(package_dir_or_file: str, service_name: str = "tar") -> Optional[str]:
+    """
+    Parses _service to find the mode of a specific service element (e.g. 'tar', 'obs_scm').
+    Handles arbitrary XML attribute order (e.g. mode before name or name before mode).
+    Returns the lowercase mode attribute (e.g. 'manual', 'local', 'buildtime'),
+    '' if the service element exists but has no mode attribute (defaults to buildtime in OBS),
+    or None if the service is not defined in _service.
+    """
+    if os.path.isdir(package_dir_or_file):
+        service_file = os.path.join(package_dir_or_file, "_service")
+    else:
+        service_file = package_dir_or_file
+
+    if not os.path.isfile(service_file):
+        return None
+
+    # XML parsing first
+    import xml.etree.ElementTree as ET
+    try:
+        tree = ET.parse(service_file)
+        root = tree.getroot()
+        for s in root.findall(".//service"):
+            if s.get("name") == service_name:
+                mode = s.get("mode")
+                return mode.strip().lower() if mode else ""
+    except Exception:
+        pass
+
+    # Regex fallback (order-independent across attributes within the same <service> tag)
+    try:
+        with open(service_file, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+        pattern = r'''<service\b(?=[^>]*\bname=["']''' + re.escape(service_name) + r'''["'])(?=[^>]*\bmode=["']([^"'>]+)["'])?[^>]*>'''
+        m = re.search(pattern, content, re.IGNORECASE)
+        if m:
+            mode_val = m.group(1)
+            return mode_val.strip().lower() if mode_val else ""
+    except Exception:
+        pass
+    return None
+
+
 class ObsScmUpgradeHelper(BaseUpgradeHelper):
     """
     Upgrade helper for packages managed with OBS source service (_service)
@@ -318,23 +360,26 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         except Exception:
             return False
 
+    @classmethod
+    def get_service_mode(cls, package_dir: str, service_name: str = "tar") -> Optional[str]:
+        """Class method wrapper for get_service_mode."""
+        return get_service_mode(package_dir, service_name)
+
     def uses_obscpio(self) -> bool:
         """Returns True if the package is configured to produce or track .obscpio archives."""
         service_file = os.path.join(self.package_dir, "_service")
         if os.path.isfile(service_file):
-            try:
-                with open(service_file, "r", encoding="utf-8", errors="replace") as f:
-                    content = f.read()
-                is_manual_tar = bool(re.search(r'["\']tar["\'].*["\']manual["\']', content) or re.search(r'name=["\']tar["\']\s+mode=["\']manual["\']', content))
-                is_local_tar = bool(re.search(r'["\']tar["\'].*["\']local["\']', content) or re.search(r'name=["\']tar["\']\s+mode=["\']local["\']', content))
-                if is_manual_tar or is_local_tar:
-                    return False
-                if re.search(r'["\']tar["\'].*["\']buildtime["\']', content) or re.search(r'name=["\']tar["\']\s+mode=["\']buildtime["\']', content):
-                    return True
-            except OSError:
-                pass
+            tar_mode = get_service_mode(self.package_dir, "tar")
+            if tar_mode in ("manual", "local"):
+                return False
+            if tar_mode == "buildtime" or tar_mode == "":
+                return True
+            scm_mode = get_service_mode(self.package_dir, "obs_scm")
+            if scm_mode is None:
+                scm_mode = get_service_mode(self.package_dir, "tar_scm")
+            if scm_mode is not None:
+                return True
         return bool(glob.glob(os.path.join(self.package_dir, "*.obscpio")))
-
     def clean_stale_archives(self, on_log: Optional[Callable[[str], None]] = None) -> List[str]:
         """Removes *.obscpio and *.tar.xz archives prior to running service."""
         removed = []
@@ -374,15 +419,13 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         return False
 
     def clean_duplicate_obscpio_if_manual(self, on_log: Optional[Callable[[str], None]] = None) -> List[str]:
-        """If tar mode='manual', delete *.obscpio so only *.tar.xz is checked into repo."""
+        """If tar mode='manual' or 'local', delete *.obscpio so only *.tar.xz is checked into repo."""
         service_file = os.path.join(self.package_dir, "_service")
         if not os.path.isfile(service_file):
             return []
 
-        with open(service_file, "r", encoding="utf-8", errors="replace") as f:
-            content = f.read()
-
-        if re.search(r'["\']tar["\'].*["\']manual["\']', content) or re.search(r'name=["\']tar["\']\s+mode=["\']manual["\']', content):
+        tar_mode = get_service_mode(self.package_dir, "tar")
+        if tar_mode in ("manual", "local"):
             removed = []
             for fpath in glob.glob(os.path.join(self.package_dir, "*.obscpio")):
                 try:
@@ -391,10 +434,9 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
                 except OSError:
                     pass
             if removed and on_log:
-                on_log(f"Cleaned intermediate obscpio (tar is manual): {', '.join(removed)}")
+                on_log(f"Cleaned intermediate obscpio (tar is {tar_mode}): {', '.join(removed)}")
             return removed
         return []
-
     def find_upstream_changelog_target(
         self,
         upstream_repo: str,

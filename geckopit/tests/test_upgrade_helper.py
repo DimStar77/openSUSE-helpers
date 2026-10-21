@@ -137,6 +137,26 @@ class TestUpgradeHelperArchitecture(unittest.TestCase):
             self.assertEqual(removed, ["pkg.obscpio"])
             self.assertFalse(os.path.exists(obscpio))
 
+            # Also verify when mode="manual" is declared before name="tar"
+            with open(service_path, "w") as f:
+                f.write('''<services>
+  <service mode="manual" name="tar"/>
+</services>''')
+            with open(obscpio, "w") as f: f.write("dummy")
+            removed = helper.clean_duplicate_obscpio_if_manual()
+            self.assertEqual(removed, ["pkg.obscpio"])
+            self.assertFalse(os.path.exists(obscpio))
+
+            # Also verify mode="local"
+            with open(service_path, "w") as f:
+                f.write('''<services>
+  <service mode="local" name="tar"/>
+</services>''')
+            with open(obscpio, "w") as f: f.write("dummy")
+            removed = helper.clean_duplicate_obscpio_if_manual()
+            self.assertEqual(removed, ["pkg.obscpio"])
+            self.assertFalse(os.path.exists(obscpio))
+
     def test_remove_patch_from_spec(self):
         spec_content = '''Name: gnome-shell
 Version: 50.0
@@ -489,6 +509,54 @@ commit: 22cc7bade6a0d63b5ebeb3ab58f57f71ce1a26a1
   <service name="tar" mode="manual" />
 </services>''')
             self.assertFalse(helper.uses_obscpio())
+
+            # Service with manual tar (mode before name, e.g. feedbackd)
+            with open(service_path, "w") as f:
+                f.write('''<services>
+  <service mode="manual" name="obs_scm">
+    <param name="url">https://github.com/agx/feedbackd.git</param>
+    <param name="revision">v0.8.9</param>
+  </service>
+  <service mode="manual" name="tar"/>
+  <service mode="manual" name="recompress"/>
+</services>''')
+            self.assertFalse(helper.uses_obscpio())
+
+            # Service with buildtime tar (mode before name)
+            with open(service_path, "w") as f:
+                f.write('''<services>
+  <service mode="buildtime" name="tar" />
+</services>''')
+            self.assertTrue(helper.uses_obscpio())
+
+    def test_get_service_mode_attribute_order_and_fallback(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service_path = os.path.join(tmpdir, "_service")
+            helper = ObsScmUpgradeHelper(tmpdir)
+
+            test_cases = [
+                ('<service mode="manual" name="tar"/>', "tar", "manual"),
+                ('<service name="tar" mode="manual"/>', "tar", "manual"),
+                ('<service mode="local" name="tar"/>', "tar", "local"),
+                ('<service name="tar" mode="local"/>', "tar", "local"),
+                ('<service mode="buildtime" name="tar"/>', "tar", "buildtime"),
+                ('<service name="tar" mode="buildtime"/>', "tar", "buildtime"),
+                ('<service name="tar"/>', "tar", ""),
+                ('<service mode=\'manual\' name=\'tar\'/>', "tar", "manual"),
+                ('<service\n  mode="manual"\n  name="tar"\n/>', "tar", "manual"),
+                ('<service mode="manual" name="obs_scm"/>', "obs_scm", "manual"),
+                ('<service mode="manual" name="obs_scm"/>', "tar", None),
+            ]
+            for xml_elem, s_name, expected in test_cases:
+                # 1. Valid XML
+                with open(service_path, "w") as f:
+                    f.write(f'<services>\n{xml_elem}\n</services>')
+                self.assertEqual(helper.get_service_mode(tmpdir, s_name), expected)
+
+                # 2. Malformed XML (forces regex fallback)
+                with open(service_path, "w") as f:
+                    f.write(f'<services>\n{xml_elem}\n<unclosed_tag>')
+                self.assertEqual(helper.get_service_mode(tmpdir, s_name), expected)
 
     def test_get_referenced_files_librpm(self):
         with tempfile.TemporaryDirectory() as tmpdir:
