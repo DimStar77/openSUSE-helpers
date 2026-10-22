@@ -274,15 +274,29 @@ class PackageRow(Gtk.ListBoxRow):
             if pool_behind > 0 or pool_ahead > 0:
                 subtitle_parts.append(f"Pool: B:{pool_behind}/A:{pool_ahead}")
                 sr_info = sync_data.get("pool_sr") if pool_ahead > 0 else None
-                if sr_info and sr_info.get("status") == "pending":
+                short_name = self.package_name.split("/")[-1]
+                if sr_info and sr_info.get("status") == "pending_outdated":
+                    req_id = sr_info.get("request_id")
+                    st = sr_info.get("state", "review")
+                    src = sr_info.get("source_project", "GNOME:Factory")
+                    tt = (
+                        f"<b>Central Pool Status</b>\n"
+                        f"• Pending Submit Request: <b>#{req_id}</b> (Outdated - {st})\n"
+                        f"• Devel Project: {src} has newer changes\n"
+                        f"• Action: Ready to supersede via osc sr\n"
+                        f"• Target: openSUSE:Factory/{short_name}\n"
+                        f"• Remote: https://src.opensuse.org/pool/{short_name}.git"
+                    )
+                    self.badges_box.append(self.create_badge(f"SR #{req_id} (outdated)", "blue", tooltip=tt))
+                elif sr_info and sr_info.get("status") == "pending":
                     req_id = sr_info.get("request_id")
                     st = sr_info.get("state", "review")
                     src = sr_info.get("source_project", "GNOME:Factory")
                     tt = (
                         f"<b>Central Pool Status</b>\n"
                         f"• Pending Submit Request: <b>#{req_id}</b> ({st} from {src})\n"
-                        f"• Target: openSUSE:Factory/{self.package_name}\n"
-                        f"• Remote: https://src.opensuse.org/pool/{self.package_name}.git"
+                        f"• Target: openSUSE:Factory/{short_name}\n"
+                        f"• Remote: https://src.opensuse.org/pool/{short_name}.git"
                     )
                     self.badges_box.append(self.create_badge(f"SR #{req_id}", "blue", tooltip=tt))
                 elif sr_info and sr_info.get("status") == "accepted_pending_sync":
@@ -2469,6 +2483,229 @@ class SyncWindow(Adw.ApplicationWindow):
 
             self.sync_timeout_id = GLib.timeout_add(6000, check_sync_timeout)
 
+    @staticmethod
+    def get_git_head_file(package_dir):
+        if not package_dir:
+            return None
+        git_path = os.path.join(package_dir, ".git")
+        if not os.path.exists(git_path):
+            return None
+        if os.path.isdir(git_path):
+            return os.path.join(git_path, "HEAD")
+        if os.path.isfile(git_path):
+            try:
+                with open(git_path, "r", encoding="utf-8") as f:
+                    line = f.read().strip()
+                if line.startswith("gitdir:"):
+                    target = line.split("gitdir:", 1)[1].strip()
+                    if not os.path.isabs(target):
+                        target = os.path.abspath(os.path.join(package_dir, target))
+                    return os.path.join(target, "HEAD")
+            except Exception:
+                pass
+        return None
+
+    @staticmethod
+    def read_git_branch_from_head_file(head_file):
+        if not head_file:
+            return None
+        try:
+            with open(head_file, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read().strip()
+            if content.startswith("ref: refs/heads/"):
+                return content.split("ref: refs/heads/", 1)[1].strip()
+            elif content:
+                return content[:8]
+        except Exception:
+            pass
+        return None
+
+    def on_terminal_head_changed(self, monitor, f1, f2, event_type, tab_state):
+        """Triggered instantly via Linux inotify when git checkout writes .git/HEAD."""
+        head_file = tab_state.get("head_file")
+        if not head_file:
+            return
+        new_br = SyncWindow.read_git_branch_from_head_file(head_file)
+        if not new_br:
+            return
+        current_br = tab_state.get("active_branch")
+        if new_br == current_br:
+            return
+
+        tab_state["active_branch"] = new_br
+        pkg_name = tab_state.get("pkg_name")
+        suffix = tab_state.get("suffix", "")
+        new_label = f"{pkg_name} ({new_br}){suffix}"
+        tab_state["base_label"] = new_label
+
+        if tab_state.get("tab_label"):
+            GLib.idle_add(tab_state["tab_label"].set_text, new_label)
+
+        if getattr(self, "current_selected_package", None) == pkg_name:
+            GLib.idle_add(self.update_detail_worktree_ui, pkg_name)
+            GLib.idle_add(self.update_detail_sync_ui, pkg_name)
+            GLib.idle_add(self.update_detail_pr_ui, pkg_name)
+            GLib.idle_add(self.refresh_active_diff)
+
+    @staticmethod
+    def get_repo_branches(repo_path):
+        branches = []
+        seen = set()
+        try:
+            res = subprocess.run(
+                ["git", "-C", repo_path, "branch", "-a", "--format=%(refname:short)"],
+                capture_output=True, text=True, timeout=5
+            )
+            if res.returncode == 0:
+                for line in res.stdout.splitlines():
+                    b = line.strip()
+                    if not b or "HEAD" in b or b == "origin":
+                        continue
+                    if b.startswith("origin/"):
+                        b = b.split("origin/", 1)[1]
+                    if b not in seen:
+                        seen.add(b)
+                        branches.append(b)
+        except Exception:
+            pass
+        return sorted(branches)
+
+    def setup_active_package_head_monitor(self, package_name):
+        if getattr(self, "active_pkg_head_monitor", None):
+            try:
+                self.active_pkg_head_monitor.cancel()
+            except Exception:
+                pass
+            self.active_pkg_head_monitor = None
+
+        repo_path = self.get_mapped_worktree_path(package_name, "factory")
+        head_file = SyncWindow.get_git_head_file(repo_path)
+        if head_file and os.path.exists(head_file):
+            try:
+                gfile = Gio.File.new_for_path(head_file)
+                monitor = gfile.monitor_file(Gio.FileMonitorFlags.NONE, None)
+                monitor.connect("changed", self.on_active_package_head_changed, package_name, head_file)
+                self.active_pkg_head_monitor = monitor
+            except Exception:
+                pass
+
+    def on_active_package_head_changed(self, monitor, f1, f2, event_type, package_name, head_file):
+        """Triggered via Linux kernel inotify whenever .git/HEAD of the currently selected package changes on disk."""
+        if getattr(self, "current_selected_package", None) != package_name:
+            return
+        GLib.idle_add(self.update_detail_worktree_ui, package_name)
+        GLib.idle_add(self.update_detail_sync_ui, package_name)
+        GLib.idle_add(self.update_detail_pr_ui, package_name)
+        GLib.idle_add(self.refresh_single_package_priority, package_name)
+        GLib.idle_add(self.refresh_active_diff)
+
+    def on_branch_switch_btn_clicked(self, btn):
+        if not getattr(self, "current_selected_package", None):
+            return
+        pkg_name = self.current_selected_package
+        repo_path = self.get_mapped_worktree_path(pkg_name, "factory")
+        if not repo_path or not os.path.exists(repo_path):
+            return
+
+        head_file = SyncWindow.get_git_head_file(repo_path)
+        active_br = SyncWindow.read_git_branch_from_head_file(head_file) if head_file else "factory"
+        branches = SyncWindow.get_repo_branches(repo_path)
+        # In dual-stream workspaces, the Unstable Pipeline card already owns self.unstable_b (e.g. 'next').
+        # Exclude self.unstable_b from the stable card switcher to avoid pipeline role collision.
+        if getattr(self, "unstable_b", None):
+            branches = [b for b in branches if b != self.unstable_b]
+        if not branches:
+            return
+
+        popover = Gtk.Popover()
+        popover.set_parent(btn)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        box.set_margin_top(6)
+        box.set_margin_bottom(6)
+        box.set_margin_start(8)
+        box.set_margin_end(8)
+
+        hdr = Gtk.Label(halign=Gtk.Align.START)
+        hdr.set_markup("<span size='small' weight='bold' foreground='gray'>SWITCH BRANCH</span>")
+        box.append(hdr)
+
+        for br in branches:
+            is_active = (br == active_br)
+            b_btn = Gtk.Button()
+            b_btn.add_css_class("flat")
+            b_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+
+            if is_active:
+                check_icon = Gtk.Image.new_from_icon_name("emblem-ok-symbolic")
+                b_box.append(check_icon)
+            else:
+                spacer = Gtk.Box()
+                spacer.set_size_request(16, 16)
+                b_box.append(spacer)
+
+            lbl = Gtk.Label(label=br, halign=Gtk.Align.START)
+            lbl.set_hexpand(True)
+            if is_active:
+                lbl.add_css_class("heading")
+            b_box.append(lbl)
+
+            b_btn.set_child(b_box)
+            if not is_active:
+                b_btn.connect("clicked", lambda b, target_br=br, pop=popover: self.switch_to_branch(repo_path, target_br, pop))
+            else:
+                b_btn.set_sensitive(False)
+            box.append(b_btn)
+
+        popover.set_child(box)
+        popover.popup()
+
+    def switch_to_branch(self, repo_path, target_branch, popover):
+        popover.popdown()
+
+        # 1. Pre-Flight Cleanliness Guard: verify working tree cleanliness
+        wt_info = sb.check_worktree_status(repo_path)
+        if wt_info.get("dirty") or wt_info.get("has_conflict"):
+            toast = Adw.Toast.new(f"⚠️ Cannot switch to '{target_branch}': Working directory has uncommitted modifications.")
+            self.toast_overlay.add_toast(toast)
+            return
+
+        # 2. Execute git checkout in background thread to protect UI responsiveness
+        def do_checkout():
+            try:
+                res = subprocess.run(
+                    ["git", "-C", repo_path, "checkout", target_branch],
+                    capture_output=True, text=True, timeout=15
+                )
+                if res.returncode == 0:
+                    def on_success():
+                        toast = Adw.Toast.new(f"Switched to branch '{target_branch}'")
+                        self.toast_overlay.add_toast(toast)
+                        pkg = getattr(self, "current_selected_package", None)
+                        if pkg:
+                            self.update_detail_worktree_ui(pkg)
+                            self.update_detail_sync_ui(pkg)
+                            self.update_detail_pr_ui(pkg)
+                            self.refresh_single_package_priority(pkg)
+                            self.refresh_active_diff()
+                        return False
+                    GLib.idle_add(on_success)
+                else:
+                    err = res.stderr.strip() or res.stdout.strip()
+                    def on_fail():
+                        toast = Adw.Toast.new(f"Git checkout failed: {err}")
+                        self.toast_overlay.add_toast(toast)
+                        return False
+                    GLib.idle_add(on_fail)
+            except Exception as e:
+                def on_exc():
+                    toast = Adw.Toast.new(f"Error switching branch: {str(e)}")
+                    self.toast_overlay.add_toast(toast)
+                    return False
+                GLib.idle_add(on_exc)
+
+        threading.Thread(target=do_checkout, daemon=True).start()
+
     def allocate_terminal(self, pkg_name, target_branch, command=None):
         """Deduplicates terminal tabs."""
         self.terminal_drawer.set_visible(True)
@@ -2496,12 +2733,19 @@ class SyncWindow(Adw.ApplicationWindow):
 
     def show_terminal(self, pkg_name, target_branch, command=None, suffix="", custom_dir=None, is_hidden_sync=False):
         """Spawns a new VTE terminal tab inside the Gtk.Notebook drawer."""
+        head_file = None
+        active_br = target_branch
         if custom_dir:
             resolved_dir = custom_dir
             label_text = f"{pkg_name}{suffix}"
         else:
             resolved_dir = self.get_mapped_worktree_path(pkg_name, target_branch)
-            label_text = f"{pkg_name} ({target_branch}){suffix}"
+            head_file = self.get_git_head_file(resolved_dir)
+            if head_file:
+                detected_br = self.read_git_branch_from_head_file(head_file)
+                if detected_br:
+                    active_br = detected_br
+            label_text = f"{pkg_name} ({active_br}){suffix}"
 
         terminal = Vte.Terminal()
         terminal.set_font(Pango.FontDescription.from_string(self.monospace_font))
@@ -2543,7 +2787,11 @@ class SyncWindow(Adw.ApplicationWindow):
             "terminal": terminal,
             "pkg_name": pkg_name,
             "target_branch": target_branch,
-            "base_label": f"{pkg_name} ({target_branch}){suffix}",
+            "active_branch": active_br,
+            "head_file": head_file,
+            "head_monitor": None,
+            "suffix": suffix,
+            "base_label": label_text,
             "tab_label": tab_label,
             "key_controller": key_controller,
             "shell_pid": None,
@@ -2555,6 +2803,15 @@ class SyncWindow(Adw.ApplicationWindow):
             "updating_programmatically": False
         }
         self.terminal_tabs.append(tab_state)
+
+        if head_file and os.path.exists(head_file):
+            try:
+                gfile = Gio.File.new_for_path(head_file)
+                monitor = gfile.monitor_file(Gio.FileMonitorFlags.NONE, None)
+                monitor.connect("changed", self.on_terminal_head_changed, tab_state)
+                tab_state["head_monitor"] = monitor
+            except Exception:
+                pass
 
         # Wire vertical adjustment locking when auto-scroll is paused
         def on_tab_vadj_changed(adj, state=tab_state):
@@ -2823,6 +3080,13 @@ class SyncWindow(Adw.ApplicationWindow):
                     if terminal and hasattr(terminal, "destroy"):
                         terminal.destroy()
 
+                    if tab.get("head_monitor"):
+                        try:
+                            tab["head_monitor"].cancel()
+                        except Exception:
+                            pass
+                        tab["head_monitor"] = None
+
                     tab["terminal"] = None
                     tab["scroll_widget"].set_child(None)
                 except Exception:
@@ -2848,6 +3112,7 @@ class SyncWindow(Adw.ApplicationWindow):
         # 2. Asynchronously refresh package state with defensive error isolation
         if closed_pkg and closed_pkg != "Workspace Sync":
             try:
+                pool_submit.invalidate_obs_requests_cache()
                 self.refresh_single_package_priority(closed_pkg)
                 if getattr(self, "current_selected_package", None) == closed_pkg:
                     self.load_package_detail(closed_pkg)
@@ -2983,7 +3248,7 @@ class SyncWindow(Adw.ApplicationWindow):
         )
         return wt
 
-    def run_bg_sync_single(self, repo, gen=None):
+    def run_bg_sync_single(self, repo, gen=None, force_refresh=False):
         if gen is not None and gen != getattr(self, "scan_generation", 0):
             return
         kwargs = {
@@ -2995,6 +3260,16 @@ class SyncWindow(Adw.ApplicationWindow):
         if isinstance(known_nip, (set, list)):
             kwargs["known_not_in_pool"] = known_nip
 
+        if force_refresh:
+            short_repo = repo.split("/")[-1]
+            try:
+                live_reqs = pool_submit.get_package_pending_obs_requests(repo, target_project="openSUSE:Factory")
+                if hasattr(self, "obs_pending_requests") and isinstance(self.obs_pending_requests, dict):
+                    self.obs_pending_requests[short_repo] = live_reqs
+                    self.obs_pending_requests[repo] = live_reqs
+            except Exception:
+                pass
+
         name, data = sb.check_repo_sync(repo, **kwargs)
         if data.get("pool_ahead", 0) > 0:
             repo_path = os.path.join(self.stable_p, repo) if getattr(self, "stable_p", None) else None
@@ -3004,7 +3279,8 @@ class SyncWindow(Adw.ApplicationWindow):
                 pending_requests=getattr(self, "obs_pending_requests", None),
                 accepted_requests=getattr(self, "obs_accepted_requests", None),
                 pkg_dir=repo_path,
-                stable_branch=self.stable_b
+                stable_branch=self.stable_b,
+                force_refresh=force_refresh
             )
         wt_data = self.check_worktrees_for_repo(repo)
         # Always check PRs on priority single-package refresh
@@ -3663,6 +3939,15 @@ class SyncWindow(Adw.ApplicationWindow):
         self.stable_card_title_lbl = Gtk.Label()
         self.stable_card_title_lbl.set_markup("<span weight='bold' size='medium' foreground='#2ec27e'>🟢 PACKAGE PIPELINE</span>")
         title_box.append(self.stable_card_title_lbl)
+
+        # Small arrow-down button for safe branch switching
+        self.branch_switch_btn = Gtk.Button.new_from_icon_name("pan-down-symbolic")
+        self.branch_switch_btn.add_css_class("flat")
+        self.branch_switch_btn.add_css_class("circular")
+        self.branch_switch_btn.set_tooltip_text("Switch Git branch")
+        self.branch_switch_btn.connect("clicked", self.on_branch_switch_btn_clicked)
+        title_box.append(self.branch_switch_btn)
+
         box.append(title_box)
 
         # Info Grid
@@ -4074,11 +4359,15 @@ class SyncWindow(Adw.ApplicationWindow):
         lbl_diff.set_markup("<span weight='bold'>🔍 DIFF REVIEW:</span>")
         diff_header.append(lbl_diff)
 
-        # DropDown selector (using modern, non-deprecated Gtk.DropDown in GTK4!)
+        # DropDown selector for dual-stream workspaces
         self.diff_selector = Gtk.DropDown.new_from_strings(["Next vs. Factory (PR Prep)", "Factory vs. Gitea Pool"])
         self.diff_selector.set_selected(0)
         self.diff_selector.connect("notify::selected", self.on_diff_selector_changed)
         diff_header.append(self.diff_selector)
+
+        # Perspective label for single-stream / flat portfolio workspaces
+        self.diff_perspective_lbl = Gtk.Label(halign=Gtk.Align.START)
+        diff_header.append(self.diff_perspective_lbl)
 
         # Spacer
         spacer = Gtk.Label()
@@ -4449,6 +4738,13 @@ class SyncWindow(Adw.ApplicationWindow):
         perspective = "next_factory" if active_idx == 0 else "factory_pool"
         self.diff_buffer.set_text("Loading diff...")
 
+        repo_path = self.get_mapped_worktree_path(package_name, "factory")
+        if repo_path and hasattr(self, "diff_perspective_lbl") and not self.unstable_b:
+            head_file = SyncWindow.get_git_head_file(repo_path)
+            active_br = SyncWindow.read_git_branch_from_head_file(head_file) if head_file else getattr(self, "stable_b", "factory")
+            target_br = active_br or getattr(self, "stable_b", "factory") or "factory"
+            self.diff_perspective_lbl.set_markup(f"<span weight='bold' foreground='#3584e4'>{target_br} vs. Central Pool</span>")
+
         diff_timer = getattr(self, "diff_debounce_id", 0)
         if isinstance(diff_timer, int) and diff_timer != 0:
             GLib.Source.remove(diff_timer)
@@ -4464,8 +4760,10 @@ class SyncWindow(Adw.ApplicationWindow):
         return False
 
     def run_bg_diff_perspective(self, package_name, perspective):
-        repo_path = self.get_mapped_worktree_path(package_name, "factory")
-        is_osc = os.path.isdir(os.path.join(repo_path, ".osc")) and not os.path.exists(os.path.join(repo_path, ".git"))
+        repo_path = self.get_mapped_worktree_path(package_name, "factory") if hasattr(self, "get_mapped_worktree_path") else None
+        if not isinstance(repo_path, str) or not repo_path:
+            repo_path = ""
+        is_osc = bool(repo_path and os.path.isdir(os.path.join(repo_path, ".osc")) and not os.path.exists(os.path.join(repo_path, ".git")))
 
         if is_osc:
             try:
@@ -4514,7 +4812,11 @@ class SyncWindow(Adw.ApplicationWindow):
             GLib.idle_add(self.update_diff_text, package_name, diff_text)
             return
 
-        if perspective == "next_factory":
+        head_file = SyncWindow.get_git_head_file(repo_path)
+        active_br = SyncWindow.read_git_branch_from_head_file(head_file) if head_file else getattr(self, "stable_b", "factory")
+        target_br = active_br or getattr(self, "stable_b", "factory") or "factory"
+
+        if perspective == "next_factory" and self.unstable_b:
             diff_text = sb.get_git_diff(package_name, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
         else:
             diff_text = ""
@@ -4522,23 +4824,31 @@ class SyncWindow(Adw.ApplicationWindow):
                 gitea_name = sb.get_gitea_repo_name(repo_path, package_name)
                 pool_url = f"https://src.opensuse.org/pool/{gitea_name}.git"
 
-                # Bypasses slow, redundant network fetches if the package was already refreshed in the current session!
-                was_fetched = package_name in getattr(self, "refreshed_sync_packages", set())
-                if not was_fetched:
+                try:
                     sb.run_tracked(
-                        ['git', '-C', repo_path, 'fetch', '--quiet', pool_url, f'+refs/heads/{self.stable_b}:refs/pool/{self.stable_b}'],
+                        ['git', '-C', repo_path, 'fetch', '--quiet', pool_url, f'+refs/heads/{target_br}:refs/pool/{target_br}'],
                         check=True, capture_output=True
                     )
+                except Exception:
+                    pass
 
-                res = sb.run_tracked(
-                    ['git', '-C', repo_path, 'diff', f'refs/pool/{self.stable_b}...origin/{self.stable_b}'],
-                    check=True, capture_output=True, text=True
-                )
-                diff_text = res.stdout
-                if not diff_text.strip():
-                    diff_text = f"No differences in spec files or sources detected between local Stable ({self.stable_b}) and remote Pool."
+                has_pool_ref = sb.has_git_ref(repo_path, f"refs/pool/{target_br}")
+                if has_pool_ref:
+                    res = subprocess.run(
+                        ['git', '-C', repo_path, 'diff', '--no-ext-diff', f'refs/pool/{target_br}...origin/{target_br}'],
+                        capture_output=True, text=True, timeout=15
+                    )
+                    diff_text = res.stdout
+                    if not diff_text.strip():
+                        diff_text = f"No differences in spec files or sources detected between branch '{target_br}' and remote Central Pool."
+                else:
+                    res = subprocess.run(
+                        ['git', '-C', repo_path, 'diff', '--no-ext-diff', f'origin/{target_br}...HEAD'],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    diff_text = res.stdout or f"No remote pool ref found for branch '{target_br}'."
             except Exception as e:
-                diff_text = f"Error performing git diff (Factory vs Pool): {str(e)}"
+                diff_text = f"Error performing git diff for branch '{target_br}': {str(e)}"
 
         GLib.idle_add(self.update_diff_text, package_name, diff_text)
 
@@ -4909,7 +5219,7 @@ class SyncWindow(Adw.ApplicationWindow):
             return
 
         # Start direct priority daemon threads to bypass executor queues!
-        threading.Thread(target=self.run_bg_sync_single, args=(pkg_name,), daemon=True).start()
+        threading.Thread(target=self.run_bg_sync_single, args=(pkg_name,), kwargs={"force_refresh": True}, daemon=True).start()
         threading.Thread(target=self.run_bg_version_single, args=(pkg_name,), daemon=True).start()
 
     def update_detail_title(self, package_name):
@@ -4968,6 +5278,10 @@ class SyncWindow(Adw.ApplicationWindow):
             else:
                 esc_st = GLib.markup_escape_text(self.stable_b)
                 self.stable_card_title_lbl.set_markup(f"<span weight='bold' size='medium' foreground='#2ec27e'>🟢 STABLE PIPELINE ({esc_st})</span>")
+
+        is_git = bool(not is_osc and stable_repo_p and os.path.exists(os.path.join(stable_repo_p, ".git")))
+        if hasattr(self, "branch_switch_btn"):
+            self.branch_switch_btn.set_visible(is_git)
 
         if is_osc and hasattr(self, "osc_ci_btn"):
             is_dirty = bool(stable_wt.get("dirty", False) or stable_wt.get("untracked", False))
@@ -5086,7 +5400,58 @@ class SyncWindow(Adw.ApplicationWindow):
         else:
             b_s = 's' if pool_behind != 1 else ''
             a_s = 's' if pool_ahead != 1 else ''
-            if pool_behind > 0 and pool_ahead > 0:
+
+            repo_path = self.get_mapped_worktree_path(package_name, "factory") if hasattr(self, "get_mapped_worktree_path") else None
+            if not isinstance(repo_path, str):
+                repo_path = None
+            head_file = SyncWindow.get_git_head_file(repo_path) if repo_path else None
+            active_br = SyncWindow.read_git_branch_from_head_file(head_file) if head_file else getattr(self, "stable_b", "factory")
+            if not isinstance(active_br, str):
+                active_br = getattr(self, "stable_b", "factory")
+            if not isinstance(active_br, str):
+                active_br = "factory"
+            short_name = package_name.split("/")[-1]
+
+            # 1. Check if currently checked out on a non-default stream branch (e.g. leap-16.1)
+            matching_stream_pr = None
+            if active_br and active_br != self.stable_b:
+                for p in pr.get("prs", []):
+                    if p.get("base") == active_br:
+                        matching_stream_pr = p
+                        break
+
+            if matching_stream_pr:
+                p_num = matching_stream_pr.get("number")
+                p1_text = f"📬 <span weight='bold' foreground='#3584e4'>Pending Pull Request #{p_num}</span> (open on pool/{short_name} for {active_br})"
+                self.pull_pool_btn.set_sensitive(False)
+                if hasattr(self, "submit_pool_btn"):
+                    self.submit_pool_btn.set_sensitive(False)
+                    self.submit_pool_btn.set_label("PR Pending")
+                    self.submit_pool_btn.set_tooltip_text(f"Pull Request #{p_num} is already pending on pool/{short_name} for branch '{active_br}'")
+            elif active_br and active_br != self.stable_b and repo_path and hasattr(pool_submit, "check_pool_stream_sync"):
+                stream_info = pool_submit.check_pool_stream_sync(repo_path, branch=active_br, pkg_name=short_name, skip_fetch=True)
+                str_ahead = stream_info.get("ahead", 0)
+                str_behind = stream_info.get("behind", 0)
+                if str_ahead > 0:
+                    c_s = 's' if str_ahead != 1 else ''
+                    p1_text = f"📤 <span weight='bold' foreground='#3584e4'>Ahead of Central Pool ({active_br}) by {str_ahead} commit{c_s}</span> (PR needed)"
+                    self.pull_pool_btn.set_sensitive(False)
+                    if hasattr(self, "submit_pool_btn"):
+                        self.submit_pool_btn.set_sensitive(True)
+                        self.submit_pool_btn.set_label("📤 Submit Pool")
+                        self.submit_pool_btn.set_tooltip_text(f"Submit package changes to pool/{short_name}:{active_br} via Gitea Pull Request")
+                elif str_behind > 0:
+                    c_s = 's' if str_behind != 1 else ''
+                    p1_text = f"<span weight='bold' foreground='orange'>Behind Central Pool ({active_br}) by {str_behind} commit{c_s}</span> (Pull needed)"
+                    self.pull_pool_btn.set_sensitive(True)
+                    if hasattr(self, "submit_pool_btn"):
+                        self.submit_pool_btn.set_sensitive(False)
+                else:
+                    p1_text = f"<span foreground='green'>Fully In Sync with Central Pool ({active_br})</span>"
+                    self.pull_pool_btn.set_sensitive(False)
+                    if hasattr(self, "submit_pool_btn"):
+                        self.submit_pool_btn.set_sensitive(False)
+            elif pool_behind > 0 and pool_ahead > 0:
                 p1_text = f"<span weight='bold' foreground='red'>Diverged</span> (Behind Pool: {pool_behind} commit{b_s} / Ahead Pool: {pool_ahead} commit{a_s})"
                 self.pull_pool_btn.set_sensitive(True)
                 if hasattr(self, "submit_pool_btn"):
@@ -5098,21 +5463,31 @@ class SyncWindow(Adw.ApplicationWindow):
                     self.submit_pool_btn.set_sensitive(False)
             elif pool_ahead > 0:
                 self.pull_pool_btn.set_sensitive(False)
-                repo_path = self.get_mapped_worktree_path(package_name, "factory") if hasattr(self, "get_mapped_worktree_path") else None
                 sr_status = pool_submit.get_package_pool_submission_status(
                     package_name,
                     target_project="openSUSE:Factory",
                     pending_requests=getattr(self, "obs_pending_requests", None),
                     accepted_requests=getattr(self, "obs_accepted_requests", None),
                     pkg_dir=repo_path,
-                    stable_branch=getattr(self, "stable_b", "factory")
+                    stable_branch=getattr(self, "stable_b", "factory"),
+                    check_srcmd5=False
                 )
                 if package_name in self.package_data and "sync" in self.package_data[package_name]:
                     self.package_data[package_name]["sync"]["pool_sr"] = sr_status
                     if hasattr(self, "update_row_ui"):
                         self.update_row_ui(package_name)
 
-                if sr_status.get("status") == "pending":
+                if sr_status.get("status") == "pending_outdated":
+                    req = sr_status.get("request", {})
+                    req_id = req.get("id")
+                    st = req.get("state", "review")
+                    src = req.get("source_project", "GNOME:Factory")
+                    p1_text = f"📤 <span weight='bold' foreground='#3584e4'>Pending SR #{req_id} Outdated</span> ({st} in Factory, newer changes in {src})"
+                    if hasattr(self, "submit_pool_btn"):
+                        self.submit_pool_btn.set_sensitive(True)
+                        self.submit_pool_btn.set_label("📤 Supersede SR")
+                        self.submit_pool_btn.set_tooltip_text(f"Submit Request #{req_id} has outdated sources. Click to supersede #{req_id} with latest sources via osc sr")
+                elif sr_status.get("status") == "pending":
                     req = sr_status.get("request", {})
                     req_id = req.get("id")
                     st = req.get("state", "review")
@@ -5120,18 +5495,21 @@ class SyncWindow(Adw.ApplicationWindow):
                     p1_text = f"⏳ <span weight='bold' foreground='#e5a50a'>Pending Submit Request #{req_id}</span> ({st} from {src})"
                     if hasattr(self, "submit_pool_btn"):
                         self.submit_pool_btn.set_sensitive(False)
-                        self.submit_pool_btn.set_tooltip_text(f"Submit Request #{req_id} ({st}) is already pending in openSUSE:Factory")
+                        self.submit_pool_btn.set_label("📤 Submit Pool")
+                        self.submit_pool_btn.set_tooltip_text(f"Submit Request #{req_id} ({st}) is already pending in openSUSE:Factory and up-to-date")
                 elif sr_status.get("status") == "accepted_pending_sync":
                     req = sr_status.get("request", {})
                     req_id = req.get("id")
                     p1_text = f"⏳ <span weight='bold' foreground='#2ec27e'>Submit Request #{req_id} Accepted</span> (awaiting central pool sync)"
                     if hasattr(self, "submit_pool_btn"):
                         self.submit_pool_btn.set_sensitive(False)
+                        self.submit_pool_btn.set_label("📤 Submit Pool")
                         self.submit_pool_btn.set_tooltip_text(f"Submit Request #{req_id} was already accepted; awaiting backend mirror to central pool")
                 else:
                     p1_text = f"📤 <span weight='bold' foreground='#3584e4'>Ahead of Gitea Pool by {pool_ahead} commit{a_s}</span> (Submit needed)"
                     if hasattr(self, "submit_pool_btn"):
                         self.submit_pool_btn.set_sensitive(True)
+                        self.submit_pool_btn.set_label("📤 Submit Pool")
                         self.submit_pool_btn.set_tooltip_text("Submit package changes to openSUSE:Factory via osc sr")
             elif pool_status == "OSC Managed":
                 osc_prj = sync.get("osc_project") or "OBS"
@@ -5243,7 +5621,7 @@ class SyncWindow(Adw.ApplicationWindow):
 
         sync_data = pkg_data.get("sync") or {}
         sr_info = sync_data.get("pool_sr")
-        has_sr = bool(sr_info and sr_info.get("status") in ("pending", "accepted_pending_sync"))
+        has_sr = bool(sr_info and sr_info.get("status") in ("pending", "pending_outdated", "accepted_pending_sync"))
 
         if not has_pr and not has_sr:
             if hasattr(self, "pr_card_revealer"):
@@ -5309,15 +5687,23 @@ class SyncWindow(Adw.ApplicationWindow):
                 title_box.append(c_title)
 
                 sr_pill = Gtk.Label()
+                is_outdated = sr_info.get("status") == "pending_outdated"
                 if is_accepted:
                     sr_pill.set_markup("<span size='smaller' weight='bold' foreground='#2ec27e'>[Accepted - OBS SR]</span>")
+                elif is_outdated:
+                    sr_pill.set_markup("<span size='smaller' weight='bold' foreground='#3584e4'>[Outdated - Supersede Ready]</span>")
                 else:
                     sr_pill.set_markup(f"<span size='smaller' weight='bold' foreground='#e5a50a'>[{html.escape(st.title())} - OBS SR]</span>")
                 title_box.append(sr_pill)
                 text_box.append(title_box)
 
                 # Line 2: Creator, target, source, and state
-                status_desc = "awaiting pool sync" if is_accepted else f"State: <b>{html.escape(st)}</b>"
+                if is_accepted:
+                    status_desc = "awaiting pool sync"
+                elif is_outdated:
+                    status_desc = f"State: <b>{html.escape(st)}</b> (Newer changes in {src_prj}; supersede ready)"
+                else:
+                    status_desc = f"State: <b>{html.escape(st)}</b>"
                 meta_lbl = Gtk.Label(halign=Gtk.Align.START)
                 meta_lbl.set_markup(f"<span size='small' foreground='gray'>👤 @{creator}  |  🎯 Target: <b>{t_prj}</b> (from {src_prj})  |  {status_desc}</span>")
                 text_box.append(meta_lbl)
@@ -5450,6 +5836,7 @@ class SyncWindow(Adw.ApplicationWindow):
         self.current_selected_package = package_name
         self.detail_stack.set_visible_child_name("detail")
 
+        self.setup_active_package_head_monitor(package_name)
         self.update_detail_title(package_name)
         self.update_detail_worktree_ui(package_name)
         self.update_detail_version_ui(package_name)
@@ -5459,7 +5846,10 @@ class SyncWindow(Adw.ApplicationWindow):
 
         repo_path = self.get_mapped_worktree_path(package_name, "factory")
         is_osc = os.path.isdir(os.path.join(repo_path, ".osc")) and not os.path.exists(os.path.join(repo_path, ".git"))
-        self.diff_selector.set_visible(bool(self.unstable_b and not is_osc))
+        has_dual = bool(self.unstable_b and not is_osc)
+        self.diff_selector.set_visible(has_dual)
+        if hasattr(self, "diff_perspective_lbl"):
+            self.diff_perspective_lbl.set_visible(bool(not has_dual and not is_osc))
 
         # -------------------------------------------------------------
         # POPULATE DIFF REVIEW (only on package switch or explicit request)

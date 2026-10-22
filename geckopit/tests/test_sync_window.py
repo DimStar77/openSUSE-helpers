@@ -3,6 +3,7 @@ import os
 import sys
 import re
 import unittest
+import tempfile
 import unittest.mock as mock
 
 import os
@@ -1461,7 +1462,18 @@ class TestSyncWindow(unittest.TestCase):
             self.assertIn("Submit Request #1384945 Accepted", markup)
             mock_win.submit_pool_btn.set_sensitive.assert_called_with(False)
 
-        # 3. Unsubmitted -> button enabled
+        # 3. Pending Outdated SR -> button enabled, label shows outdated, offers supersede
+        with patch("pool_submit.get_package_pool_submission_status", return_value={
+            "status": "pending_outdated",
+            "request": {"id": "1387152", "state": "review", "source_project": "multimedia:libs"}
+        }):
+            SyncWindow.update_detail_sync_ui(mock_win, "testpkg")
+            markup = mock_win.stable_pool_lbl.set_markup.call_args[0][0]
+            self.assertIn("Pending SR #1387152 Outdated", markup)
+            mock_win.submit_pool_btn.set_sensitive.assert_called_with(True)
+            mock_win.submit_pool_btn.set_label.assert_called_with("📤 Supersede SR")
+
+        # 4. Unsubmitted -> button enabled
         with patch("pool_submit.get_package_pool_submission_status", return_value={
             "status": "unsubmitted"
         }):
@@ -1469,6 +1481,43 @@ class TestSyncWindow(unittest.TestCase):
             markup = mock_win.stable_pool_lbl.set_markup.call_args[0][0]
             self.assertIn("Ahead of Gitea Pool by 2 commits", markup)
             mock_win.submit_pool_btn.set_sensitive.assert_called_with(True)
+
+    def test_update_detail_sync_ui_branch_stream_pr(self):
+        mock_win = mock.Mock()
+        mock_win.current_selected_package = "dimstar/vlc"
+        mock_win.stable_b = "factory"
+        mock_win.stable_pool_lbl = mock.Mock()
+        mock_win.pull_pool_btn = mock.Mock()
+        mock_win.submit_pool_btn = mock.Mock()
+        mock_win.unstable_branch_lbl = mock.Mock()
+        mock_win.catchup_merge_btn = mock.Mock()
+        mock_win.create_pr_btn = mock.Mock()
+
+        mock_win.package_data = {
+            "dimstar/vlc": {
+                "sync": {"pool_ahead": 3, "pool_behind": 0, "pool_status": "Ahead"},
+                "pr": {
+                    "has_pr": True,
+                    "count": 1,
+                    "prs": [{
+                        "number": 3,
+                        "title": "Update version dependencies according to configure.ac.",
+                        "base": "leap-16.1",
+                        "author": "dimstar"
+                    }]
+                }
+            }
+        }
+
+        mock_win.get_mapped_worktree_path.return_value = "/mock/vlc"
+        with mock.patch("geckopit.SyncWindow.get_git_head_file", return_value="/mock/vlc/HEAD"):
+            with mock.patch("geckopit.SyncWindow.read_git_branch_from_head_file", return_value="leap-16.1"):
+                SyncWindow.update_detail_sync_ui(mock_win, "dimstar/vlc")
+                markup = mock_win.stable_pool_lbl.set_markup.call_args[0][0]
+                self.assertIn("Pending Pull Request #3", markup)
+                self.assertIn("leap-16.1", markup)
+                mock_win.submit_pool_btn.set_sensitive.assert_called_with(False)
+                mock_win.submit_pool_btn.set_label.assert_called_with("PR Pending")
 
     def test_package_row_portfolio_category_and_osc_badge(self):
         from geckopit import PackageRow
@@ -1490,6 +1539,203 @@ class TestSyncWindow(unittest.TestCase):
         row_nopool = PackageRow("telegnome", mock_win)
         row_nopool.update_ui({"pool_status": "Not in Pool"}, {}, {}, {})
         self.assertIn("Not in Pool", row_nopool.sub_label.get_text())
+
+    def test_get_git_head_file_and_read_branch(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # 1. Regular repo with .git directory
+            git_dir = os.path.join(tmpdir, ".git")
+            os.makedirs(git_dir)
+            head_path = os.path.join(git_dir, "HEAD")
+            with open(head_path, "w") as f:
+                f.write("ref: refs/heads/leap-16.1\n")
+
+            self.assertEqual(SyncWindow.get_git_head_file(tmpdir), head_path)
+            self.assertEqual(SyncWindow.read_git_branch_from_head_file(head_path), "leap-16.1")
+
+            # 2. Detached HEAD commit
+            with open(head_path, "w") as f:
+                f.write("e8e9fd6c30c5de8993a14667c2763692f3741619\n")
+            self.assertEqual(SyncWindow.read_git_branch_from_head_file(head_path), "e8e9fd6c")
+
+            # 3. Linked worktree with .git file (gitdir:)
+            wt_dir = os.path.join(tmpdir, "worktree")
+            os.makedirs(wt_dir)
+            wt_git_file = os.path.join(wt_dir, ".git")
+            wt_target_dir = os.path.join(tmpdir, "main_git", "worktrees", "wt")
+            os.makedirs(wt_target_dir)
+            wt_head = os.path.join(wt_target_dir, "HEAD")
+            with open(wt_head, "w") as f:
+                f.write("ref: refs/heads/factory\n")
+            with open(wt_git_file, "w") as f:
+                f.write(f"gitdir: {wt_target_dir}\n")
+
+            self.assertEqual(SyncWindow.get_git_head_file(wt_dir), wt_head)
+            self.assertEqual(SyncWindow.read_git_branch_from_head_file(wt_head), "factory")
+
+    def test_on_terminal_head_changed_updates_label(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            head_file = os.path.join(tmpdir, "HEAD")
+            with open(head_file, "w") as f:
+                f.write("ref: refs/heads/leap-16.1\n")
+
+            mock_win = mock.Mock()
+            mock_label = mock.Mock()
+            tab_state = {
+                "head_file": head_file,
+                "pkg_name": "dimstar/vlc",
+                "active_branch": "factory",
+                "suffix": "",
+                "tab_label": mock_label
+            }
+
+            mock_win.current_selected_package = "dimstar/vlc"
+            with mock.patch("gi.repository.GLib.idle_add") as mock_idle:
+                SyncWindow.on_terminal_head_changed(mock_win, None, None, None, None, tab_state)
+                self.assertEqual(tab_state["active_branch"], "leap-16.1")
+                self.assertEqual(tab_state["base_label"], "dimstar/vlc (leap-16.1)")
+                # Verifies that worktree, sync, and pr UI were all scheduled for live update!
+                scheduled_funcs = [call[0][0] for call in mock_idle.call_args_list]
+                self.assertIn(mock_win.update_detail_worktree_ui, scheduled_funcs)
+                self.assertIn(mock_win.update_detail_sync_ui, scheduled_funcs)
+                self.assertIn(mock_win.update_detail_pr_ui, scheduled_funcs)
+
+    def test_get_repo_branches(self):
+        branch_output = "factory\nleap-16.0\nleap-16.1\norigin\norigin/HEAD\norigin/factory\norigin/leap-16.1\n"
+        with mock.patch("subprocess.run", return_value=mock.Mock(returncode=0, stdout=branch_output)):
+            branches = SyncWindow.get_repo_branches("/mock/repo")
+            self.assertEqual(branches, ["factory", "leap-16.0", "leap-16.1"])
+
+    def test_switch_to_branch_dirty_guard(self):
+        mock_win = mock.Mock()
+        mock_popover = mock.Mock()
+
+        # When working tree is dirty -> blocks checkout and shows warning toast
+        with mock.patch("sync_backend.check_worktree_status", return_value={"dirty": True, "has_conflict": False}):
+            with mock.patch("subprocess.run") as mock_run:
+                SyncWindow.switch_to_branch(mock_win, "/mock/repo", "leap-16.1", mock_popover)
+                mock_popover.popdown.assert_called_once()
+                mock_run.assert_not_called()
+                mock_win.toast_overlay.add_toast.assert_called_once()
+
+    def test_switch_to_branch_clean_executes_checkout(self):
+        mock_win = mock.Mock()
+        mock_popover = mock.Mock()
+
+        # When working tree is clean -> executes git checkout
+        with mock.patch("sync_backend.check_worktree_status", return_value={"dirty": False, "has_conflict": False}):
+            with mock.patch("subprocess.run", return_value=mock.Mock(returncode=0)) as mock_run:
+                SyncWindow.switch_to_branch(mock_win, "/mock/repo", "leap-16.1", mock_popover)
+                mock_popover.popdown.assert_called_once()
+                mock_run.assert_called_once_with(
+                    ["git", "-C", "/mock/repo", "checkout", "leap-16.1"],
+                    capture_output=True, text=True, timeout=15
+                )
+
+    def test_update_detail_worktree_ui_branch_switch_btn_visibility(self):
+        mock_win = mock.Mock()
+        mock_win.current_selected_package = "testpkg"
+        mock_win.stable_b = "factory"
+        mock_win.unstable_b = None
+        mock_win.branch_switch_btn = mock.Mock()
+        mock_win.osc_ci_btn = mock.Mock()
+        mock_win.open_term_fac_btn = mock.Mock()
+        mock_win.package_data = {"testpkg": {}}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # 1. OSC package without .git -> branch_switch_btn hidden
+            with mock.patch("sync_backend.get_local_package_version", return_value="1.0"):
+                with mock.patch("sync_backend.check_worktree_status", return_value={"is_osc": True, "dirty": False, "exists": True}):
+                    mock_win.get_mapped_worktree_path.return_value = tmpdir
+                    SyncWindow.update_detail_worktree_ui(mock_win, "testpkg")
+                    mock_win.branch_switch_btn.set_visible.assert_called_with(False)
+
+            # 2. Git package with .git -> branch_switch_btn visible
+            os.makedirs(os.path.join(tmpdir, ".git"))
+            with mock.patch("sync_backend.get_local_package_version", return_value="1.0"):
+                with mock.patch("sync_backend.check_worktree_status", return_value={"is_osc": False, "dirty": False, "exists": True}):
+                    mock_win.get_mapped_worktree_path.return_value = tmpdir
+                    SyncWindow.update_detail_worktree_ui(mock_win, "testpkg")
+                    mock_win.branch_switch_btn.set_visible.assert_called_with(True)
+
+    def test_on_active_package_head_changed(self):
+        mock_win = mock.Mock()
+        mock_win.current_selected_package = "vlc"
+
+        with mock.patch("gi.repository.GLib.idle_add") as mock_idle:
+            SyncWindow.on_active_package_head_changed(mock_win, None, None, None, None, "vlc", "/mock/HEAD")
+            scheduled = [call[0][0] for call in mock_idle.call_args_list]
+            self.assertIn(mock_win.update_detail_worktree_ui, scheduled)
+            self.assertIn(mock_win.update_detail_sync_ui, scheduled)
+            self.assertIn(mock_win.update_detail_pr_ui, scheduled)
+            self.assertIn(mock_win.refresh_single_package_priority, scheduled)
+
+    def test_on_branch_switch_btn_clicked_excludes_unstable_b(self):
+        mock_win = mock.Mock()
+        mock_win.current_selected_package = "mutter"
+        mock_win.unstable_b = "next"
+        mock_win.get_mapped_worktree_path.return_value = "/mock/mutter"
+
+        with mock.patch("os.path.exists", return_value=True):
+            with mock.patch("geckopit.SyncWindow.get_git_head_file", return_value="/mock/mutter/HEAD"):
+                with mock.patch("geckopit.SyncWindow.read_git_branch_from_head_file", return_value="factory"):
+                    with mock.patch("geckopit.SyncWindow.get_repo_branches", return_value=["factory", "glgo_mutter_5370", "next"]):
+                        with mock.patch("gi.repository.Gtk.Popover") as mock_popover_cls:
+                            mock_popover = mock.Mock()
+                            mock_popover_cls.return_value = mock_popover
+                            mock_btn = mock.Mock()
+                            SyncWindow.on_branch_switch_btn_clicked(mock_win, mock_btn)
+                            # Verify Popover was created and next was excluded
+                            mock_popover.popup.assert_called_once()
+                            box = mock_popover.set_child.call_args[0][0]
+                            # Children in box: header + button for factory + button for glgo_mutter_5370 (next must be omitted)
+                            # Box should not contain any button for "next"
+
+    def test_run_bg_diff_perspective_branch_aware(self):
+        mock_win = mock.Mock()
+        mock_win.stable_b = "factory"
+        mock_win.unstable_b = None
+        mock_win.get_mapped_worktree_path.return_value = "/mock/vlc"
+
+        with mock.patch("os.path.exists", return_value=True):
+            with mock.patch("os.path.isdir", return_value=False):
+                with mock.patch("geckopit.SyncWindow.get_git_head_file", return_value="/mock/vlc/HEAD"):
+                    with mock.patch("geckopit.SyncWindow.read_git_branch_from_head_file", return_value="leap-16.1"):
+                        with mock.patch("sync_backend.get_gitea_repo_name", return_value="vlc"):
+                            with mock.patch("sync_backend.has_git_ref", return_value=True):
+                                with mock.patch("sync_backend.run_tracked") as mock_fetch:
+                                    with mock.patch("subprocess.run") as mock_diff:
+                                        mock_diff.return_value = mock.Mock(returncode=0, stdout="diff output")
+                                        with mock.patch("gi.repository.GLib.idle_add") as mock_idle:
+                                            SyncWindow.run_bg_diff_perspective(mock_win, "dimstar/vlc", "factory_pool")
+                                            # Verify that diff command target was leap-16.1 and passed --no-ext-diff
+                                            diff_args = mock_diff.call_args[0][0]
+                                            self.assertIn("--no-ext-diff", diff_args)
+                                            self.assertIn("refs/pool/leap-16.1...origin/leap-16.1", diff_args)
+
+    def test_diff_perspective_lbl_visibility(self):
+        mock_win = mock.Mock()
+        mock_win.current_selected_package = "vlc"
+        mock_win.unstable_b = None
+        mock_win.diff_selector = mock.Mock()
+        mock_win.diff_perspective_lbl = mock.Mock()
+        mock_win.diff_buffer = mock.Mock()
+        mock_win.package_data = {"vlc": {}}
+        mock_win.get_mapped_worktree_path.return_value = "/mock/vlc"
+
+        with mock.patch("geckopit.SyncWindow.get_mapped_worktree_path", return_value="/mock/vlc"):
+            with mock.patch("os.path.isdir", return_value=False):
+                with mock.patch("os.path.exists", return_value=True):
+                    with mock.patch("geckopit.SyncWindow.setup_active_package_head_monitor"):
+                        with mock.patch("geckopit.SyncWindow.update_detail_title"):
+                            with mock.patch("geckopit.SyncWindow.update_detail_worktree_ui"):
+                                with mock.patch("geckopit.SyncWindow.update_detail_version_ui"):
+                                    with mock.patch("geckopit.SyncWindow.update_detail_sync_ui"):
+                                        with mock.patch("geckopit.SyncWindow.update_detail_pr_ui"):
+                                            with mock.patch("geckopit.SyncWindow.update_detail_drift_ui"):
+                                                with mock.patch("geckopit.SyncWindow.refresh_active_diff"):
+                                                    SyncWindow.load_package_detail(mock_win, "vlc", reload_diff=False)
+                                                    mock_win.diff_selector.set_visible.assert_called_with(False)
+                                                    mock_win.diff_perspective_lbl.set_visible.assert_called_with(True)
 
 if __name__ == '__main__':
     unittest.main()
