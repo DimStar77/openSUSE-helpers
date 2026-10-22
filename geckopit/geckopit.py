@@ -5310,10 +5310,20 @@ class SyncWindow(Adw.ApplicationWindow):
         factory_ver = ver.get("factory_ver", "N/A")
         upstream_stable = ver.get("upstream_stable", "N/A")
 
+        stable_repo_p = self.get_mapped_worktree_path(package_name, "factory")
+        head_file = SyncWindow.get_git_head_file(stable_repo_p) if stable_repo_p else None
+        active_br = SyncWindow.read_git_branch_from_head_file(head_file) if head_file else getattr(self, "stable_b", "factory")
+        target_br = active_br or getattr(self, "stable_b", "factory") or "factory"
+
         pr_data = self.package_data.get(package_name, {}).get("pr") or {}
         pr_hint = ""
-        if pr_data.get("has_pr"):
-            p_num = pr_data.get("number")
+        matching_pr = None
+        for p in pr_data.get("prs", []):
+            if p.get("base") == target_br:
+                matching_pr = p
+                break
+        if matching_pr:
+            p_num = matching_pr.get("number")
             pr_hint = f" <span size='small' foreground='#3584e4'>[PR #{p_num} pending]</span>"
 
         if not ver:
@@ -5329,7 +5339,10 @@ class SyncWindow(Adw.ApplicationWindow):
                 self.stable_ver_lbl.set_markup(f"<span weight='bold' foreground='red'>{factory_ver}</span> ➔ <span weight='bold' foreground='green'>{upstream_stable} (Update Available)</span>{pr_hint}")
                 self.update_factory_btn.set_sensitive(True)
                 if is_osc or not self.unstable_b:
-                    self.update_factory_btn.set_label(f"Update Package to {upstream_stable}")
+                    if target_br and target_br != self.stable_b:
+                        self.update_factory_btn.set_label(f"Update {target_br} to {upstream_stable}")
+                    else:
+                        self.update_factory_btn.set_label(f"Update Package to {upstream_stable}")
                 else:
                     self.update_factory_btn.set_label(f"Update {self.stable_b.capitalize()} to {upstream_stable}")
             else:

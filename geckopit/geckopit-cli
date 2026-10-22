@@ -238,11 +238,24 @@ def render_single_package_dashboard(data):
     n_ver = ver.get('next_ver', '—')
     u_latest = ver.get('upstream_latest', '—')
 
-    if sb.is_version_newer(u_stable, f_ver, repo):
-        f_status = f"{sb.YELLOW}🔺 Update available: {f_ver} ➔ {u_stable}{sb.RESET}"
+    head = wt.get('head') or branch
+    if head not in (st_branch, unst_branch):
+        lbl = f"Release ({head}):"
+        if sb.is_version_newer(u_stable, f_ver, repo):
+            matching_pr = next((p for p in pr.get('prs', []) if p.get('base') == head), None)
+            pr_annot = f" {sb.CYAN}[PR #{matching_pr['number']} pending]{sb.RESET}" if matching_pr else ""
+            status = f"{sb.YELLOW}🔺 Update available: {f_ver} ➔ {u_stable}{sb.RESET}{pr_annot}"
+        else:
+            status = f"{sb.GREEN}✅ Up-to-date ({f_ver}){sb.RESET}"
+        print(f"  {lbl:<15} {status}")
     else:
-        f_status = f"{sb.GREEN}✅ Up-to-date ({f_ver}){sb.RESET}"
-    print(f"  Stable:        {f_status}")
+        if sb.is_version_newer(u_stable, f_ver, repo):
+            matching_pr = next((p for p in pr.get('prs', []) if p.get('base') == st_branch), None)
+            pr_annot = f" {sb.CYAN}[PR #{matching_pr['number']} pending]{sb.RESET}" if matching_pr else ""
+            f_status = f"{sb.YELLOW}🔺 Update available: {f_ver} ➔ {u_stable}{sb.RESET}{pr_annot}"
+        else:
+            f_status = f"{sb.GREEN}✅ Up-to-date ({f_ver}){sb.RESET}"
+        print(f"  Stable:        {f_status}")
 
     if n_ver != '—':
         if sb.is_version_newer(u_latest, n_ver, repo):
@@ -330,7 +343,7 @@ def render_single_package_dashboard(data):
                     target_v = guessed
             # Highlight existing PRs from contributors for this upgrade
             if pr.get('has_pr'):
-                matching_prs = [p for p in pr.get('prs', []) if not p.get('is_forward')]
+                matching_prs = [p for p in pr.get('prs', []) if not p.get('is_forward') and p.get('base') == head]
                 if matching_prs:
                     for p in matching_prs:
                         p_title = p.get("title", "")

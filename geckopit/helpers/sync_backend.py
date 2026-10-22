@@ -1815,16 +1815,17 @@ def check_single_package_full(pkg_dir=".", stable_branch=None, unstable_branch=N
 
     # Resolve local on-disk version and re-evaluate needs_update against upstream
     local_ver = get_local_package_version(pkg_dir)
-    if local_ver and active_branch == unst_branch:
-        ver["next_ver"] = local_ver
-        u_latest = ver.get("upstream_latest", "—")
-        if u_latest and u_latest != "—":
-            ver["needs_update"] = is_version_newer(u_latest, local_ver, repo_name)
-    elif local_ver and active_branch == st_branch:
-        ver["factory_ver"] = local_ver
-        u_stable = ver.get("upstream_stable", "N/A")
-        if u_stable and u_stable != "N/A":
-            ver["needs_update"] = is_version_newer(u_stable, local_ver, repo_name)
+    if local_ver:
+        if active_branch == unst_branch:
+            ver["next_ver"] = local_ver
+            u_latest = ver.get("upstream_latest", "—")
+            if u_latest and u_latest != "—":
+                ver["needs_update"] = is_version_newer(u_latest, local_ver, repo_name)
+        else:
+            ver["factory_ver"] = local_ver
+            u_stable = ver.get("upstream_stable", "N/A")
+            if u_stable and u_stable != "N/A":
+                ver["needs_update"] = is_version_newer(u_stable, local_ver, repo_name)
 
     # Check local commits ahead of factory if checked out on unstable branch
     if active_branch == unst_branch:

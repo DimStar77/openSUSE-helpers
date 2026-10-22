@@ -1519,6 +1519,43 @@ class TestSyncWindow(unittest.TestCase):
                 mock_win.submit_pool_btn.set_sensitive.assert_called_with(False)
                 mock_win.submit_pool_btn.set_label.assert_called_with("PR Pending")
 
+    def test_update_detail_version_ui_pr_hint_branch_matching(self):
+        mock_win = mock.Mock()
+        mock_win.current_selected_package = "dimstar/vlc"
+        mock_win.stable_b = "factory"
+        mock_win.unstable_b = None
+        mock_win.stable_ver_lbl = mock.Mock()
+        mock_win.update_factory_btn = mock.Mock()
+        mock_win.detail_web_btn = mock.Mock()
+        mock_win.get_mapped_worktree_path.return_value = "/mock/vlc"
+
+        mock_win.package_data = {
+            "dimstar/vlc": {
+                "version": {"factory_ver": "3.0.23", "upstream_stable": "3.0.24"},
+                "sync": {"is_osc": False},
+                "pr": {
+                    "has_pr": True,
+                    "prs": [{"number": 3, "base": "leap-16.1", "author": "dimstar"}]
+                }
+            }
+        }
+
+        with mock.patch("geckopit.SyncWindow.get_git_head_file", return_value="/mock/vlc/HEAD"):
+            # 1. On leap-16.0: PR #3 (base: leap-16.1) MUST NOT be annotated!
+            with mock.patch("geckopit.SyncWindow.read_git_branch_from_head_file", return_value="leap-16.0"):
+                SyncWindow.update_detail_version_ui(mock_win, "dimstar/vlc")
+                markup_16_0 = mock_win.stable_ver_lbl.set_markup.call_args[0][0]
+                self.assertIn("3.0.23", markup_16_0)
+                self.assertIn("3.0.24", markup_16_0)
+                self.assertNotIn("[PR #3 pending]", markup_16_0)
+                mock_win.update_factory_btn.set_label.assert_called_with("Update leap-16.0 to 3.0.24")
+
+            # 2. On leap-16.1: PR #3 matches active branch -> MUST be annotated!
+            with mock.patch("geckopit.SyncWindow.read_git_branch_from_head_file", return_value="leap-16.1"):
+                SyncWindow.update_detail_version_ui(mock_win, "dimstar/vlc")
+                markup_16_1 = mock_win.stable_ver_lbl.set_markup.call_args[0][0]
+                self.assertIn("[PR #3 pending]", markup_16_1)
+
     def test_package_row_portfolio_category_and_osc_badge(self):
         from geckopit import PackageRow
         mock_win = mock.Mock()
