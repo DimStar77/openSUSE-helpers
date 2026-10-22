@@ -338,6 +338,74 @@ def get_gitea_token():
             pass
     return None
 
+_GITEA_PARENT_CACHE = {}
+
+def get_upstream_gitea_target(repo_path, owner, repo_name):
+    """
+    Dynamically resolves the upstream parent repository (upstream_owner, upstream_repo) for a fork.
+    Checks in order:
+    1. Local git remote 'upstream' in .git/config (0ms, local authority).
+    2. Gitea API /repos/{owner}/{repo_name} 'parent' field (handles any Gitea organization fork: GNOME, KDE, multimedia, pool, etc.).
+    3. Fallback to ('pool', repo_name) if owner != 'pool'.
+    """
+    cache_key = (owner, repo_name)
+    if cache_key in _GITEA_PARENT_CACHE:
+        return _GITEA_PARENT_CACHE[cache_key]
+
+    # 1. Check local .git/config for remote 'upstream'
+    if repo_path and os.path.exists(repo_path):
+        try:
+            git_path = os.path.join(repo_path, '.git')
+            config_path = os.path.join(git_path, 'config') if os.path.isdir(git_path) else None
+            if os.path.isfile(git_path):
+                with open(git_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    l = f.read().strip()
+                if l.startswith('gitdir:'):
+                    t = l.split(':', 1)[1].strip()
+                    if not os.path.isabs(t):
+                        t = os.path.abspath(os.path.join(repo_path, t))
+                    config_path = os.path.join(t, 'config')
+            if config_path and os.path.exists(config_path):
+                cp = configparser.ConfigParser()
+                cp.read(config_path)
+                if 'remote "upstream"' in cp and 'url' in cp['remote "upstream"']:
+                    u = cp['remote "upstream"']['url'].strip()
+                    if u.endswith('.git'): u = u[:-4]
+                    if u.endswith('/'): u = u[:-1]
+                    parts = [p for p in u.replace(':', '/').split('/') if p]
+                    if len(parts) >= 2:
+                        res = (parts[-2], parts[-1])
+                        _GITEA_PARENT_CACHE[cache_key] = res
+                        return res
+        except Exception:
+            pass
+
+    # 2. Check Gitea API for parent repository
+    if owner:
+        try:
+            url = f"https://src.opensuse.org/api/v1/repos/{owner}/{repo_name}"
+            headers = {'User-Agent': 'curl/8.0.1'}
+            tok = get_gitea_token()
+            if tok: headers['Authorization'] = f"token {tok}"
+            resp = get_http_session().get(url, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get('fork') and data.get('parent'):
+                    parent_full = data['parent'].get('full_name', '')
+                    if '/' in parent_full:
+                        p_owner, p_name = parent_full.split('/', 1)
+                        res = (p_owner, p_name)
+                        _GITEA_PARENT_CACHE[cache_key] = res
+                        return res
+        except Exception:
+            pass
+
+    # 3. Fallback to ('pool', repo_name) if owner != 'pool'
+    fallback = ('pool', repo_name) if (owner and owner.lower() != 'pool') else None
+    _GITEA_PARENT_CACHE[cache_key] = fallback
+    return fallback
+
+
 def check_repo_pr(repo_name, stable_branch="factory", unstable_branch="next", workspace_path="."):
     """
     Queries Gitea API to retrieve open pull requests for the repository.
@@ -353,46 +421,63 @@ def check_repo_pr(repo_name, stable_branch="factory", unstable_branch="next", wo
     repo_path = os.path.join(workspace_path, repo_name)
     owner, gitea_name = get_gitea_owner_and_repo(repo_path, repo_name)
 
-    url = f"https://src.opensuse.org/api/v1/repos/{owner}/{gitea_name}/pulls?state=open"
     headers = {'User-Agent': 'curl/8.0.1'}
     token = get_gitea_token()
     if token:
         headers['Authorization'] = f'token {token}'
 
     prs = []
+    seen_pr_ids = set()
     forward_pr = None
-    try:
-        response = get_http_session().get(url, headers=headers, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            if isinstance(data, list):
-                for pr in data:
-                    num = pr.get("number")
-                    title = pr.get("title") or ""
-                    html_url = pr.get("html_url") or ""
-                    author = pr.get("user", {}).get("username") or pr.get("user", {}).get("login") or "unknown"
-                    base_ref = pr.get("base", {}).get("ref") or ""
-                    head_ref = pr.get("head", {}).get("ref") or pr.get("head", {}).get("label") or ""
-                    head_repo = pr.get("head", {}).get("repo", {}).get("full_name") or ""
-                    created_at = pr.get("created_at") or ""
-                    is_forward = (base_ref == stable_branch and head_ref == unstable_branch)
 
-                    pr_item = {
-                        "number": num,
-                        "title": title,
-                        "url": html_url,
-                        "author": author,
-                        "base": base_ref,
-                        "head": head_ref,
-                        "head_repo": head_repo,
-                        "is_forward": is_forward,
-                        "created_at": created_at,
-                    }
-                    prs.append(pr_item)
-                    if is_forward and not forward_pr:
-                        forward_pr = pr_item
-    except Exception:
-        pass
+    # Check: 1. Local origin repo, 2. Dynamic upstream parent repo (GNOME, KDE, multimedia, pool, etc.), 3. Central pool fallback
+    targets_to_check = [(owner, gitea_name)]
+    upstream_target = get_upstream_gitea_target(repo_path, owner, gitea_name)
+    if upstream_target and upstream_target not in targets_to_check:
+        targets_to_check.append(upstream_target)
+
+    if owner and owner.lower() != "pool" and (not upstream_target or upstream_target[0].lower() != "pool"):
+        targets_to_check.append(("pool", gitea_name))
+
+    for o, r in targets_to_check:
+        url = f"https://src.opensuse.org/api/v1/repos/{o}/{r}/pulls?state=open"
+        try:
+            response = get_http_session().get(url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if isinstance(data, list):
+                    for pr in data:
+                        num = pr.get("number")
+                        if num in seen_pr_ids:
+                            continue
+                        seen_pr_ids.add(num)
+
+                        title = pr.get("title") or ""
+                        html_url = pr.get("html_url") or ""
+                        author = pr.get("user", {}).get("username") or pr.get("user", {}).get("login") or "unknown"
+                        base_ref = pr.get("base", {}).get("ref") or ""
+                        head_ref = pr.get("head", {}).get("ref") or pr.get("head", {}).get("label") or ""
+                        head_repo = pr.get("head", {}).get("repo", {}).get("full_name") or ""
+                        created_at = pr.get("created_at") or ""
+                        is_forward = (base_ref == stable_branch and head_ref == unstable_branch)
+
+                        pr_item = {
+                            "number": num,
+                            "title": title,
+                            "url": html_url,
+                            "author": author,
+                            "base": base_ref,
+                            "head": head_ref,
+                            "head_repo": head_repo,
+                            "is_forward": is_forward,
+                            "created_at": created_at,
+                            "target_repo": f"{o}/{r}"
+                        }
+                        prs.append(pr_item)
+                        if is_forward and not forward_pr:
+                            forward_pr = pr_item
+        except Exception:
+            pass
 
     primary = forward_pr or (prs[0] if prs else None)
     return repo_name, {

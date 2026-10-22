@@ -2,6 +2,7 @@
 import os
 import sys
 import unittest
+import tempfile
 import unittest.mock as mock
 
 import os
@@ -398,6 +399,42 @@ class TestSyncBackend(unittest.TestCase):
             self.assertIsNotNone(res_wt)
             self.assertEqual(res_wt["stable_path"], main_repo)
             self.assertEqual(res_wt["unstable_path"], wt_repo)
+
+    def test_get_upstream_gitea_target(self):
+        import sync_backend as sb
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # 1. Local .git/config has remote upstream pointing to GNOME/baobab.git
+            git_dir = os.path.join(tmpdir, ".git")
+            os.makedirs(git_dir)
+            with open(os.path.join(git_dir, "config"), "w") as f:
+                f.write("[remote \"upstream\"]\n\turl = git@src.opensuse.org:GNOME/baobab.git\n")
+
+            sb._GITEA_PARENT_CACHE.clear()
+            target = sb.get_upstream_gitea_target(tmpdir, "bob", "baobab")
+            self.assertEqual(target, ("GNOME", "baobab"))
+
+        # 2. Gitea API fork parent (e.g. KDE/dolphin)
+        sb._GITEA_PARENT_CACHE.clear()
+        mock_resp = mock.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "fork": True,
+            "parent": {"full_name": "KDE/dolphin"}
+        }
+        with mock.patch("sync_backend.get_http_session") as mock_sess:
+            mock_sess.return_value.get.return_value = mock_resp
+            target = sb.get_upstream_gitea_target("/nonexistent", "alice", "dolphin")
+            self.assertEqual(target, ("KDE", "dolphin"))
+
+        # 3. Fallback to pool/pkg when not a fork
+        sb._GITEA_PARENT_CACHE.clear()
+        mock_resp_nofork = mock.Mock()
+        mock_resp_nofork.status_code = 200
+        mock_resp_nofork.json.return_value = {"fork": False}
+        with mock.patch("sync_backend.get_http_session") as mock_sess:
+            mock_sess.return_value.get.return_value = mock_resp_nofork
+            target = sb.get_upstream_gitea_target("/nonexistent", "someone", "mypkg")
+            self.assertEqual(target, ("pool", "mypkg"))
 
 if __name__ == '__main__':
     unittest.main()
