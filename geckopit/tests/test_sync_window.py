@@ -1181,7 +1181,7 @@ class TestSyncWindow(unittest.TestCase):
         SyncWindow.update_detail_pr_ui(mock_win, "mypkg")
 
         mock_win.pr_card_revealer.set_reveal_child.assert_called_with(True)
-        self.assertIn("ACTIVE PULL REQUESTS (1)", mock_win.pr_card_title_lbl.set_markup.call_args[0][0])
+        self.assertIn("ACTIVE REQUESTS: ⚠️ 1 Contributor PR", mock_win.pr_card_title_lbl.set_markup.call_args[0][0])
         mock_win.pr_card_items_box.append.assert_called()
 
         # Verify card tooltip markup is valid Pango markup (no invalid tags like <code>)
@@ -1255,7 +1255,7 @@ class TestSyncWindow(unittest.TestCase):
         # 1. Render card with single OBS SR
         SyncWindow.update_detail_pr_ui(mock_win, "srpkg")
         mock_win.pr_card_revealer.set_reveal_child.assert_called_with(True)
-        self.assertIn("ACTIVE SUBMIT REQUEST (1)", mock_win.pr_card_title_lbl.set_markup.call_args[0][0])
+        self.assertIn("ACTIVE REQUESTS (1 Outgoing in-flight)", mock_win.pr_card_title_lbl.set_markup.call_args[0][0])
         mock_win.pr_card_items_box.append.assert_called()
 
         appended_card = mock_win.pr_card_items_box.append.call_args[0][0]
@@ -1270,7 +1270,7 @@ class TestSyncWindow(unittest.TestCase):
             "prs": [{"number": 101, "title": "Patch fix", "author": "alice", "url": "https://src.o.o/pr/101"}]
         }
         SyncWindow.update_detail_pr_ui(mock_win, "srpkg")
-        self.assertIn("ACTIVE REQUESTS (2)", mock_win.pr_card_title_lbl.set_markup.call_args[0][0])
+        self.assertIn("ACTIVE REQUESTS: ⚠️ 1 Contributor PR (1 outgoing in-flight)", mock_win.pr_card_title_lbl.set_markup.call_args[0][0])
 
     def test_update_sync_row_single_pr_propagation(self):
         from geckopit import SyncWindow
@@ -1773,6 +1773,44 @@ class TestSyncWindow(unittest.TestCase):
                                                     SyncWindow.load_package_detail(mock_win, "vlc", reload_diff=False)
                                                     mock_win.diff_selector.set_visible.assert_called_with(False)
                                                     mock_win.diff_perspective_lbl.set_visible.assert_called_with(True)
+
+    def test_update_detail_pr_ui_forward_and_contributor_header(self):
+        mock_win = mock.Mock()
+        mock_win.current_selected_package = "baobab"
+        mock_win.stable_b = "factory"
+        mock_win.unstable_b = "next"
+        mock_win.pr_card_revealer = mock.Mock()
+        mock_win.pr_card_inner_revealer = mock.Mock()
+        mock_win.pr_card_chevron = mock.Mock()
+        mock_win.pr_card_title_lbl = mock.Mock()
+        mock_win.pr_card_items_box = mock.Mock()
+        mock_win.pr_card_items_box.get_first_child.return_value = None
+        mock_win.pr_card_folded = False
+        mock_win.sync_pr_card_folded_state = lambda: None
+        mock_win.get_mapped_worktree_path.return_value = "/mock/baobab"
+
+        # 1. Only forward PR active
+        mock_win.package_data = {
+            "baobab": {
+                "sync": {},
+                "pr": {
+                    "has_pr": True,
+                    "prs": [{"number": 5, "title": "Promote next", "author": "dimstar", "is_forward": True, "base": "factory"}]
+                }
+            }
+        }
+        SyncWindow.update_detail_pr_ui(mock_win, "baobab")
+        hdr_1 = mock_win.pr_card_title_lbl.set_markup.call_args[0][0]
+        self.assertIn("🔀 ACTIVE REQUESTS: 🔀 1 Forward PR", hdr_1)
+
+        # 2. Both contributor PR and forward PR active
+        mock_win.package_data["baobab"]["pr"]["prs"].append(
+            {"number": 9, "title": "Fix riscv", "author": "schwab", "is_forward": False, "base": "factory"}
+        )
+        SyncWindow.update_detail_pr_ui(mock_win, "baobab")
+        hdr_2 = mock_win.pr_card_title_lbl.set_markup.call_args[0][0]
+        self.assertIn("⚠️ 1 Contributor PR", hdr_2)
+        self.assertIn("🔀 1 Forward PR", hdr_2)
 
 if __name__ == '__main__':
     unittest.main()

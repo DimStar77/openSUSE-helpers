@@ -5641,16 +5641,138 @@ class SyncWindow(Adw.ApplicationWindow):
                 self.pr_card_revealer.set_reveal_child(False)
             return
 
-        total_pr_count = pr_data.get("count", len(prs)) or len(prs) if has_pr else 0
-        total_sr_count = 1 if has_sr else 0
-        total_count = total_pr_count + total_sr_count
+        repo_path = self.get_mapped_worktree_path(package_name, "factory") if hasattr(self, "get_mapped_worktree_path") else None
+        if not isinstance(repo_path, str) or not repo_path:
+            repo_path = None
+        head_file = SyncWindow.get_git_head_file(repo_path) if repo_path else None
+        active_branch = SyncWindow.read_git_branch_from_head_file(head_file) if head_file else getattr(self, "stable_b", "factory")
+        if not isinstance(active_branch, str):
+            active_branch = "factory"
 
-        if has_pr and has_sr:
-            hdr_text = f"<span weight='bold' size='medium' foreground='#3584e4'>📥 ACTIVE REQUESTS ({total_count})</span>"
-        elif has_sr:
-            hdr_text = f"<span weight='bold' size='medium' foreground='#3584e4'>📥 ACTIVE SUBMIT REQUEST ({total_sr_count})</span>"
+        owner, gitea_name = sb.get_gitea_owner_and_repo(repo_path, package_name) if repo_path else (None, package_name)
+
+        # Collect and classify all active request items into a unified collection
+        items = []
+
+        # 1. Collect OBS Submit Request
+        if has_sr and sr_info:
+            req = sr_info.get("request") or {}
+            req_id = req.get("id") or sr_info.get("request_id")
+            st = req.get("state") or sr_info.get("state", "review")
+            creator = str(req.get("creator") or "maintainer")
+            src_prj = str(req.get("source_project") or "GNOME:Factory")
+            t_prj = str(req.get("target_project") or "openSUSE:Factory")
+            desc_text = req.get("description", "").strip()
+            first_line = desc_text.splitlines()[0] if desc_text else "Submit Request"
+            sr_url = f"https://build.opensuse.org/request/show/{req_id}" if req_id else "https://build.opensuse.org"
+            is_accepted = sr_info.get("status") == "accepted_pending_sync"
+            is_outdated = sr_info.get("status") == "pending_outdated"
+
+            is_incoming = (t_prj != "openSUSE:Factory")
+            items.append({
+                "type": "SR",
+                "id": req_id,
+                "title": first_line,
+                "url": sr_url,
+                "author": creator,
+                "source": src_prj,
+                "target": t_prj,
+                "target_branch": "factory",
+                "kind": "incoming" if is_incoming else "outgoing",
+                "state": st,
+                "is_accepted": is_accepted,
+                "is_outdated": is_outdated
+            })
+
+        # 2. Collect Gitea Pull Requests
+        if has_pr:
+            display_prs = prs if prs else [{
+                "number": pr_data.get("number"),
+                "title": pr_data.get("title") or "Pull Request",
+                "url": pr_data.get("url"),
+                "author": "contributor",
+                "base": self.stable_b,
+                "head": "",
+                "is_forward": pr_data.get("has_forward_pr", False),
+                "target_repo": ""
+            }]
+
+            for pr in display_prs:
+                p_num = pr.get("number")
+                p_title = pr.get("title") or "Pull Request"
+                p_author = pr.get("author") or "unknown"
+                p_base = pr.get("base") or self.stable_b
+                p_head = pr.get("head") or ""
+                p_url = pr.get("url") or "https://src.opensuse.org"
+                p_fwd = pr.get("is_forward", False)
+                p_tgt = pr.get("target_repo") or ""
+
+                if p_fwd:
+                    p_kind = "forward"
+                elif p_tgt.startswith("pool/") or (owner and p_author == owner and not p_tgt.endswith(f"/{gitea_name}")):
+                    p_kind = "outgoing"
+                else:
+                    p_kind = "incoming"
+
+                items.append({
+                    "type": "PR",
+                    "id": p_num,
+                    "title": p_title,
+                    "url": p_url,
+                    "author": p_author,
+                    "source": p_head,
+                    "target": p_tgt or p_base,
+                    "target_branch": p_base,
+                    "kind": p_kind,
+                    "state": "open",
+                    "is_accepted": False,
+                    "is_outdated": False
+                })
+
+        # Priority Sorting:
+        # Rank 0: Incoming requests from 3rd party (top priority! Work on branch could invalidate)
+        # Rank 1: Internal branch forwards (directly next to incoming for promotion)
+        # Rank 2: Outgoing requests matching currently checked out branch
+        # Rank 3: Outgoing requests on other branches
+        def sort_request_item(it):
+            k = it["kind"]
+            matches_active = (it.get("target_branch") == active_branch)
+            if k == "incoming":
+                rank = 0
+            elif k == "forward":
+                rank = 1
+            elif matches_active:
+                rank = 2
+            else:
+                rank = 3
+            return (rank, str(it.get("id")))
+
+        items = sorted(items, key=sort_request_item)
+
+        inc_count = sum(1 for i in items if i["kind"] == "incoming")
+        fwd_count = sum(1 for i in items if i["kind"] == "forward")
+        out_count = sum(1 for i in items if i["kind"] == "outgoing")
+        total_count = len(items)
+
+        # Dynamic, high-signal Card Header
+        action_parts = []
+        if inc_count > 0:
+            c_s = "s" if inc_count > 1 else ""
+            action_parts.append(f"⚠️ {inc_count} Contributor PR{c_s}")
+        if fwd_count > 0:
+            f_s = "s" if fwd_count > 1 else ""
+            action_parts.append(f"🔀 {fwd_count} Forward PR{f_s}")
+
+        extra = f" ({out_count} outgoing in-flight)" if out_count > 0 else ""
+
+        if inc_count > 0:
+            hdr_text = f"<span weight='bold' size='medium' foreground='#e5a50a'>📥 ACTIVE REQUESTS: {', '.join(action_parts)}{extra}</span>"
+        elif fwd_count > 0:
+            hdr_text = f"<span weight='bold' size='medium' foreground='#2ec27e'>🔀 ACTIVE REQUESTS: {', '.join(action_parts)}{extra}</span>"
+        elif out_count > 0:
+            hdr_text = f"<span weight='bold' size='medium' foreground='#3584e4'>📤 ACTIVE REQUESTS ({out_count} Outgoing in-flight)</span>"
         else:
-            hdr_text = f"<span weight='bold' size='medium' foreground='#3584e4'>📥 ACTIVE PULL REQUESTS ({total_pr_count or 1})</span>"
+            hdr_text = f"<span weight='bold' size='medium' foreground='#3584e4'>📥 ACTIVE REQUESTS ({total_count})</span>"
 
         if hasattr(self, "pr_card_title_lbl"):
             self.pr_card_title_lbl.set_markup(hdr_text)
@@ -5664,19 +5786,16 @@ class SyncWindow(Adw.ApplicationWindow):
                     break
                 self.pr_card_items_box.remove(child)
 
-            # 1. Render OBS Submit Request card item if active
-            if has_sr and sr_info:
-                req = sr_info.get("request") or {}
-                req_id = req.get("id") or sr_info.get("request_id")
-                st = req.get("state") or sr_info.get("state", "review")
-                creator = html.escape(str(req.get("creator") or "maintainer"))
-                src_prj = html.escape(str(req.get("source_project") or "GNOME:Factory"))
-                t_prj = html.escape(str(req.get("target_project") or "openSUSE:Factory"))
-                desc_text = req.get("description", "").strip()
-                first_line = desc_text.splitlines()[0] if desc_text else "Submit Request"
-                sr_desc = html.escape(first_line)
-                sr_url = f"https://build.opensuse.org/request/show/{req_id}" if req_id else "https://build.opensuse.org"
-                is_accepted = sr_info.get("status") == "accepted_pending_sync"
+            for item in items:
+                req_id = item["id"]
+                req_title = html.escape(str(item["title"] or ""))
+                author = html.escape(str(item["author"] or "unknown"))
+                target = html.escape(str(item["target"] or ""))
+                target_branch = item.get("target_branch") or self.stable_b
+                source = html.escape(str(item.get("source") or ""))
+                state = html.escape(str(item.get("state") or "open"))
+                req_url = item.get("url") or "https://src.opensuse.org"
+                kind = item["kind"]
 
                 card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
                 card.add_css_class("card")
@@ -5690,132 +5809,79 @@ class SyncWindow(Adw.ApplicationWindow):
                 text_box.set_margin_bottom(6)
                 text_box.set_hexpand(True)
 
-                # Line 1: SR ID, description, and status pill
+                # Line 1: Identifier, title, and directional pill
                 title_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
                 c_title = Gtk.Label(halign=Gtk.Align.START)
-                c_title.set_markup(f"<b>SR #{req_id}:</b> {sr_desc}")
+                prefix = f"SR #{req_id}" if item["type"] == "SR" else f"#{req_id}"
+                c_title.set_markup(f"<b>{prefix}:</b> {req_title}")
                 c_title.set_wrap(True)
                 c_title.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
                 c_title.set_hexpand(True)
                 title_box.append(c_title)
 
-                sr_pill = Gtk.Label()
-                is_outdated = sr_info.get("status") == "pending_outdated"
-                if is_accepted:
-                    sr_pill.set_markup("<span size='smaller' weight='bold' foreground='#2ec27e'>[Accepted - OBS SR]</span>")
-                elif is_outdated:
-                    sr_pill.set_markup("<span size='smaller' weight='bold' foreground='#3584e4'>[Outdated - Supersede Ready]</span>")
-                else:
-                    sr_pill.set_markup(f"<span size='smaller' weight='bold' foreground='#e5a50a'>[{html.escape(st.title())} - OBS SR]</span>")
-                title_box.append(sr_pill)
+                pill = Gtk.Label()
+                if kind == "incoming":
+                    pill.set_markup("<span size='smaller' weight='bold' foreground='#e5a50a'>[📥 Contributor PR]</span>")
+                elif kind == "forward":
+                    pill.set_markup("<span size='smaller' weight='bold' foreground='#2ec27e'>[🔀 Branch Forward]</span>")
+                else: # outgoing
+                    if item["type"] == "SR":
+                        if item.get("is_accepted"):
+                            pill.set_markup("<span size='smaller' weight='bold' foreground='#2ec27e'>[Accepted - OBS SR]</span>")
+                        elif item.get("is_outdated"):
+                            pill.set_markup("<span size='smaller' weight='bold' foreground='#3584e4'>[📤 Outdated SR - Supersede Ready]</span>")
+                        else:
+                            pill.set_markup(f"<span size='smaller' weight='bold' foreground='#3584e4'>[📤 Outgoing Factory SR]</span>")
+                    else:
+                        pill.set_markup("<span size='smaller' weight='bold' foreground='#3584e4'>[📤 Outgoing Pool PR]</span>")
+                title_box.append(pill)
                 text_box.append(title_box)
 
-                # Line 2: Creator, target, source, and state
-                if is_accepted:
-                    status_desc = "awaiting pool sync"
-                elif is_outdated:
-                    status_desc = f"State: <b>{html.escape(st)}</b> (Newer changes in {src_prj}; supersede ready)"
+                # Line 2: Author, branch context, target, and status
+                if target_branch == active_branch:
+                    branch_desc = f"<span weight='bold' foreground='#2ec27e'>🎯 Active: {html.escape(target_branch)}</span>"
                 else:
-                    status_desc = f"State: <b>{html.escape(st)}</b>"
+                    branch_desc = f"<span foreground='gray'>Target branch: {html.escape(target_branch)}</span>"
+
+                if kind == "incoming":
+                    status_desc = "<span foreground='#e5a50a' weight='bold'>⚠️ Needs maintainer review</span>"
+                    meta_markup = f"<span size='small' foreground='gray'>👤 @{author}  |  {branch_desc}  |  {status_desc}</span>"
+                elif kind == "forward":
+                    status_desc = f"Ready to promote {html.escape(self.unstable_b or 'next')} ➔ {html.escape(self.stable_b or 'factory')}"
+                    meta_markup = f"<span size='small' foreground='gray'>👤 @{author}  |  {branch_desc}  |  {status_desc}</span>"
+                else:
+                    if item["type"] == "SR":
+                        st_str = "awaiting pool sync" if item.get("is_accepted") else (f"State: <b>{html.escape(state)}</b> (supersede ready)" if item.get("is_outdated") else f"State: <b>{html.escape(state)}</b>")
+                        meta_markup = f"<span size='small' foreground='gray'>👤 @{author}  |  {branch_desc} (to {html.escape(target)})  |  {st_str}</span>"
+                    else:
+                        source_str = f" (from <i>{source}</i>)" if source else ""
+                        meta_markup = f"<span size='small' foreground='gray'>👤 @{author}  |  {branch_desc} (to {html.escape(target)}){source_str}  |  State: <b>{html.escape(state)}</b></span>"
+
                 meta_lbl = Gtk.Label(halign=Gtk.Align.START)
-                meta_lbl.set_markup(f"<span size='small' foreground='gray'>👤 @{creator}  |  🎯 Target: <b>{t_prj}</b> (from {src_prj})  |  {status_desc}</span>")
+                meta_lbl.set_markup(meta_markup)
                 text_box.append(meta_lbl)
                 card.append(text_box)
 
-                # Trailing web browser icon as subtle visual cue
+                # Trailing browser icon
                 web_icon = Gtk.Image.new_from_icon_name("web-browser-symbolic")
                 web_icon.add_css_class("dim-label")
                 web_icon.set_margin_end(12)
                 card.append(web_icon)
 
-                # Action-focused micro-tooltip (non-obtrusive, no duplicate metadata)
-                card.set_tooltip_markup(
-                    f"<i>Double-click to open on Open Build Service</i>\n"
-                    f"<i>Review:</i> <tt>osc request show {req_id}</tt>"
-                )
+                # Action-focused micro-tooltip
+                if kind == "incoming":
+                    card.set_tooltip_markup(f"<i>Double-click to open on Gitea</i>\n<i>Merge:</i> <tt>geckopit-cli --merge-pr {req_id}</tt>")
+                elif item["type"] == "SR":
+                    card.set_tooltip_markup(f"<i>Double-click to open on Open Build Service</i>\n<i>Review:</i> <tt>osc request show {req_id}</tt>")
+                else:
+                    card.set_tooltip_markup(f"<i>Double-click to open on Gitea</i>\n<i>Inspect:</i> <tt>tea pulls show {req_id} --repo {target}</tt>")
 
                 gesture = Gtk.GestureClick.new()
                 gesture.set_button(1)
-                gesture.connect("released", self.on_pr_card_clicked, sr_url, req_id, "SR")
+                gesture.connect("released", self.on_pr_card_clicked, req_url, req_id, item["type"])
                 card.add_controller(gesture)
 
                 self.pr_card_items_box.append(card)
-
-            # 2. Render Gitea Pull Request card items if active
-            if has_pr:
-                display_prs = prs if prs else [{
-                    "number": pr_data.get("number"),
-                    "title": pr_data.get("title") or "Pull Request",
-                    "url": pr_data.get("url"),
-                    "author": "contributor",
-                    "base": self.stable_b,
-                    "head": "",
-                    "is_forward": pr_data.get("has_forward_pr", False)
-                }]
-
-                for pr in display_prs:
-                    pr_num = pr.get("number")
-                    pr_title = html.escape(str(pr.get("title") or "Pull Request"))
-                    pr_author = html.escape(str(pr.get("author") or "unknown"))
-                    pr_base = html.escape(str(pr.get("base") or self.stable_b))
-                    pr_head = html.escape(str(pr.get("head") or ""))
-                    pr_url = pr.get("url") or "https://src.opensuse.org"
-                    is_forward = pr.get("is_forward", False)
-
-                    card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-                    card.add_css_class("card")
-                    card.set_margin_top(1)
-                    card.set_margin_bottom(1)
-                    card.set_cursor_from_name("pointer")
-
-                    text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-                    text_box.set_margin_start(10)
-                    text_box.set_margin_top(6)
-                    text_box.set_margin_bottom(6)
-                    text_box.set_hexpand(True)
-
-                    # Line 1: PR Number, Title, and optional [Branch Forward] badge
-                    title_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-                    c_title = Gtk.Label(halign=Gtk.Align.START)
-                    c_title.set_markup(f"<b>#{pr_num}:</b> {pr_title}")
-                    c_title.set_wrap(True)
-                    c_title.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-                    c_title.set_hexpand(True)
-                    title_box.append(c_title)
-
-                    if is_forward:
-                        fwd_pill = Gtk.Label()
-                        fwd_pill.set_markup("<span size='smaller' weight='bold' foreground='#2ec27e'>[Branch Forward]</span>")
-                        title_box.append(fwd_pill)
-
-                    text_box.append(title_box)
-
-                    # Line 2: Author and Target branch
-                    source_desc = f" (from <i>{pr_head}</i>)" if pr_head else ""
-                    meta_lbl = Gtk.Label(halign=Gtk.Align.START)
-                    meta_lbl.set_markup(f"<span size='small' foreground='gray'>👤 @{pr_author}  |  🎯 Target: <b>{pr_base}</b>{source_desc}</span>")
-                    text_box.append(meta_lbl)
-
-                    card.append(text_box)
-
-                    # Trailing web browser icon as subtle visual cue
-                    web_icon = Gtk.Image.new_from_icon_name("web-browser-symbolic")
-                    web_icon.add_css_class("dim-label")
-                    web_icon.set_margin_end(12)
-                    card.append(web_icon)
-
-                    # Action-focused micro-tooltip (non-obtrusive, no duplicate metadata)
-                    card.set_tooltip_markup(
-                        f"<i>Double-click to open on Gitea</i>\n"
-                        f"<i>Merge:</i> <tt>geckopit-cli --merge-pr {pr_num}</tt>"
-                    )
-
-                    gesture = Gtk.GestureClick.new()
-                    gesture.set_button(1)
-                    gesture.connect("released", self.on_pr_card_clicked, pr_url, pr_num, "PR")
-                    card.add_controller(gesture)
-
-                    self.pr_card_items_box.append(card)
 
             self.pr_card_revealer.set_reveal_child(True)
 
