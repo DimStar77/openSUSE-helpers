@@ -22,12 +22,15 @@ import json
 import datetime
 import subprocess
 import xml.etree.ElementTree as ET
+import urllib.parse
 from typing import Optional, Dict, Any, List, Tuple
 
 # Module-level caches with TTL
 _META_CACHE: Dict[str, Dict[str, Any]] = {}
 _PENDING_REQUESTS_CACHE: Dict[str, Any] = {"time": 0.0, "data": {}}
 _ACCEPTED_REQUESTS_CACHE: Dict[str, Any] = {"time": 0.0, "data": {}}
+_DEVEL_PROJECT_CACHE: Dict[Tuple[str, str], str] = {}
+_SCMSYNC_CACHE: Dict[Tuple[str, str], Optional[str]] = {}
 
 PENDING_CACHE_TTL = 60.0    # 1 minute
 ACCEPTED_CACHE_TTL = 120.0  # 2 minutes
@@ -51,18 +54,221 @@ def get_obs_env() -> Dict[str, str]:
     return env
 
 
-def is_project_git_managed(project: str = "openSUSE:Factory", timeout: int = 15, force_refresh: bool = False) -> Dict[str, Any]:
+
+
+def has_real_obs_diff(
+    source_project: str,
+    package_name: str,
+    target_project: str = "openSUSE:Factory"
+) -> Tuple[bool, str]:
     """
-    Checks if an OBS project is managed via Git by inspecting its project meta
-    for an <scmsync> declaration.
+    Runs osc rdiff between source_project and target_project for package_name.
+    Filters out internal scmbridge / service files (_scmsync.obsinfo, build.specials.obscpio).
+    Returns (has_meaningful_diff, diff_text).
+    """
+    pkg_base = package_name.split("/")[-1]
+    try:
+        res = subprocess.run(
+            ["osc", "rdiff", source_project, pkg_base, target_project],
+            env=get_obs_env(),
+            capture_output=True,
+            text=True,
+            timeout=15
+        )
+        if res.returncode != 0:
+            return False, (res.stderr or res.stdout).strip()
+        diff_text = res.stdout.strip()
+        if not diff_text:
+            return False, ""
+
+        has_meaningful = False
+        for line in diff_text.splitlines():
+            if line.startswith("Index: "):
+                filename = line.split("Index: ", 1)[1].strip()
+                if filename not in ("_scmsync.obsinfo", "build.specials.obscpio"):
+                    has_meaningful = True
+                    break
+        return has_meaningful, diff_text
+    except Exception as e:
+        return False, str(e)
+
+
+def parse_scmsync(scmsync_str: str) -> Tuple[str, str, Optional[str]]:
+    """
+    Parses an OBS <scmsync> URL into (host, repo_path, branch).
+    Examples:
+    - https://src.opensuse.org/dimstar/vlc#factory -> ('src.opensuse.org', 'dimstar/vlc', 'factory')
+    - https://src.opensuse.org/GNOME/mutter?trackingbranch=factory#5d125 -> ('src.opensuse.org', 'GNOME/mutter', 'factory')
+    """
+    parsed = urllib.parse.urlparse(scmsync_str.strip())
+    path = parsed.path.strip("/").removesuffix(".git")
+    query = urllib.parse.parse_qs(parsed.query)
+    branch = None
+    if "trackingbranch" in query and query["trackingbranch"]:
+        branch = query["trackingbranch"][0]
+    elif parsed.fragment and not re.match(r"^[0-9a-f]{40}$", parsed.fragment):
+        branch = parsed.fragment
+    return parsed.netloc.lower(), path, branch
+
+
+def parse_git_remote_url(remote_url: str) -> Tuple[str, str]:
+    """
+    Parses a git remote URL into (host, repo_path).
+    Examples:
+    - gitea@src.opensuse.org:dimstar/vlc.git -> ('src.opensuse.org', 'dimstar/vlc')
+    - https://src.opensuse.org/dimstar/vlc -> ('src.opensuse.org', 'dimstar/vlc')
+    """
+    url = remote_url.strip()
+    if "@" in url and ":" in url:
+        host_part, path_part = url.split("@", 1)[1].split(":", 1)
+        return host_part.lower(), path_part.strip("/").removesuffix(".git")
+    parsed = urllib.parse.urlparse(url)
+    return parsed.netloc.lower(), parsed.path.strip("/").removesuffix(".git")
+
+
+def get_obs_scmsync_commit(project: str, package: str) -> Optional[str]:
+    """
+    Extracts the latest Git commit SHA recorded in OBS for a scmsync-managed package.
+    Inspects osc log --limit 1 (for [info=<sha>]), with fallback to _scmsync.obsinfo.
+    """
+    pkg_base = package.split("/")[-1]
+    env = get_obs_env()
+    try:
+        res = subprocess.run(
+            ["osc", "log", "--limit", "1", project, pkg_base],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if res.returncode == 0:
+            m = re.search(r"\[info=([a-f0-9]{40,64})\]", res.stdout)
+            if m:
+                return m.group(1)
+    except Exception:
+        pass
+
+    try:
+        res2 = subprocess.run(
+            ["osc", "api", f"/source/{project}/{pkg_base}/_scmsync.obsinfo"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if res2.returncode == 0:
+            for line in res2.stdout.splitlines():
+                if line.startswith("commit:"):
+                    return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+
+    return None
+
+
+def verify_scmsync_provenance(
+    package_dir: str,
+    source_project: str,
+    package_name: str,
+    target_project: str = "openSUSE:Factory"
+) -> Tuple[bool, str]:
+    """
+    Verifies that the local git repository checkout matches the <scmsync> declaration
+    in source_project. If source_project does not track this repository/branch, aborts.
+    """
+    if not os.path.exists(os.path.join(package_dir, ".git")):
+        return True, "OSC checkout"
+
+    pkg_base = package_name.split("/")[-1]
+    env = get_obs_env()
+
+    cache_key = (source_project, pkg_base)
+    scmsync_url = None
+    if cache_key in _SCMSYNC_CACHE:
+        scmsync_url = _SCMSYNC_CACHE[cache_key]
+    else:
+        try:
+            res = subprocess.run(
+                ["osc", "meta", "pkg", source_project, pkg_base],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                try:
+                    root = ET.fromstring(res.stdout)
+                    elem = root.find("scmsync")
+                    if elem is not None and elem.text:
+                        scmsync_url = elem.text.strip()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        _SCMSYNC_CACHE[cache_key] = scmsync_url
+
+    if not scmsync_url:
+        return False, (
+            f"Cannot detect what to submit where: devel project '{source_project}' for '{pkg_base}' "
+            f"does not configure an <scmsync> Git target in OBS package metadata."
+        )
+
+    scm_host, scm_repo, scm_branch = parse_scmsync(scmsync_url)
+
+    try:
+        rem_res = subprocess.run(
+            ["git", "-C", package_dir, "remote", "get-url", "origin"],
+            capture_output=True, text=True, check=True
+        )
+        local_host, local_repo = parse_git_remote_url(rem_res.stdout.strip())
+    except Exception as e:
+        return False, f"Failed to determine git remote 'origin' for {package_dir}: {e}"
+
+    try:
+        br_res = subprocess.run(
+            ["git", "-C", package_dir, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, check=True
+        )
+        local_branch = br_res.stdout.strip()
+    except Exception:
+        local_branch = ""
+
+    if scm_host != local_host or scm_repo != local_repo:
+        return False, (
+            f"Cannot detect what to submit where: devel project '{source_project}' for '{pkg_base}' "
+            f"synchronizes from '{scm_repo}' ({scmsync_url}), which does not match current repository "
+            f"('{local_repo}' on origin)."
+        )
+
+    if scm_branch and local_branch and scm_branch != local_branch:
+        return False, (
+            f"Cannot detect what to submit where: devel project '{source_project}' for '{pkg_base}' "
+            f"synchronizes branch '{scm_branch}', which does not match current branch '{local_branch}'."
+        )
+
+    return True, "Provenance verified"
+
+def is_project_git_managed(
+    project: str = "openSUSE:Factory",
+    package_name: Optional[str] = None,
+    timeout: int = 15,
+    force_refresh: bool = False
+) -> Dict[str, Any]:
+    """
+    Checks if an OBS project or package is managed via Git by inspecting its
+    project metadata (and optionally package metadata) for an <scmsync> declaration.
+    When openSUSE:Factory acquires an scmsync attribute, it is considered migrated
+    to Git and submissions transition automatically from osc sr to Gitea PRs.
     Returns: {"is_git": bool, "scmsync_url": Optional[str]}
     """
     now = time.time()
-    if not force_refresh and project in _META_CACHE:
-        cached = _META_CACHE[project]
+    cache_key = f"{project}:{package_name or 'all'}"
+    if not force_refresh and cache_key in _META_CACHE:
+        cached = _META_CACHE[cache_key]
         if (now - cached.get("timestamp", 0)) < META_CACHE_TTL:
             return cached["result"]
 
+    # 1. Inspect project-level metadata
     cmd = ["osc", "api", f"/source/{project}/_meta"]
     try:
         res = subprocess.run(
@@ -77,13 +283,34 @@ def is_project_git_managed(project: str = "openSUSE:Factory", timeout: int = 15,
         scmsync_el = root.find("scmsync")
         if scmsync_el is not None and scmsync_el.text and scmsync_el.text.strip():
             result = {"is_git": True, "scmsync_url": scmsync_el.text.strip()}
-        else:
-            result = {"is_git": False, "scmsync_url": None}
+            _META_CACHE[cache_key] = {"timestamp": now, "result": result}
+            return result
     except Exception:
-        # If meta query fails (network / unauthorized), default to False for openSUSE:Factory
-        result = {"is_git": False, "scmsync_url": None}
+        pass
 
-    _META_CACHE[project] = {"timestamp": now, "result": result}
+    # 2. Inspect package-level metadata
+    if package_name:
+        pkg_base = package_name.split("/")[-1]
+        try:
+            res_pkg = subprocess.run(
+                ["osc", "api", f"/source/{project}/{pkg_base}/_meta"],
+                env=get_obs_env(),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=True
+            )
+            root_pkg = ET.fromstring(res_pkg.stdout)
+            scmsync_el = root_pkg.find("scmsync")
+            if scmsync_el is not None and scmsync_el.text and scmsync_el.text.strip():
+                result = {"is_git": True, "scmsync_url": scmsync_el.text.strip()}
+                _META_CACHE[cache_key] = {"timestamp": now, "result": result}
+                return result
+        except Exception:
+            pass
+
+    result = {"is_git": False, "scmsync_url": None}
+    _META_CACHE[cache_key] = {"timestamp": now, "result": result}
     return result
 
 
@@ -196,6 +423,47 @@ def get_pending_obs_requests(
     return parsed
 
 
+def invalidate_obs_requests_cache(project: Optional[str] = None) -> None:
+    """
+    Invalidates the module-level caches for pending and accepted OBS requests.
+    """
+    global _PENDING_REQUESTS_CACHE, _ACCEPTED_REQUESTS_CACHE, _META_CACHE
+    if project:
+        if "data" in _PENDING_REQUESTS_CACHE and project in _PENDING_REQUESTS_CACHE["data"]:
+            del _PENDING_REQUESTS_CACHE["data"][project]
+        if "data" in _ACCEPTED_REQUESTS_CACHE and project in _ACCEPTED_REQUESTS_CACHE["data"]:
+            del _ACCEPTED_REQUESTS_CACHE["data"][project]
+        if project in _META_CACHE:
+            del _META_CACHE[project]
+    else:
+        _PENDING_REQUESTS_CACHE = {"time": 0.0, "data": {}}
+        _ACCEPTED_REQUESTS_CACHE = {"time": 0.0, "data": {}}
+    _SRCMD5_CACHE.clear()
+    _STREAM_SYNC_CACHE.clear()
+
+
+def get_package_pending_obs_requests(
+    package_name: str,
+    target_project: str = "openSUSE:Factory",
+    timeout: int = 10
+) -> List[Dict[str, Any]]:
+    """
+    Directly queries OBS for active pending submit requests for a specific package.
+    Fast (~0.6s) and always returns authoritative live state.
+    """
+    pkg_base = package_name.split("/")[-1]
+    query = f"(state/@name='new' or state/@name='review') and action/target/@project='{target_project}' and action/target/@package='{pkg_base}'"
+    cmd = ["osc", "api", f"/search/request?match={query}"]
+    try:
+        res = subprocess.run(cmd, env=get_obs_env(), capture_output=True, text=True, timeout=timeout)
+        if res.returncode == 0 and res.stdout.strip():
+            parsed = parse_obs_requests_collection(res.stdout, target_project=target_project)
+            return parsed.get(pkg_base, [])
+    except Exception:
+        pass
+    return []
+
+
 def get_recently_accepted_obs_requests(
     target_project: str = "openSUSE:Factory",
     days: int = 7,
@@ -288,56 +556,56 @@ def ensure_origin_ref_fresh(pkg_dir: str, branch: str = "factory") -> bool:
 def is_accepted_sr_already_synced(
     pkg_dir: str,
     sr: Dict[str, Any],
-    stable_branch: str = "factory"
+    stable_branch: str = "factory",
+    target_project: str = "openSUSE:Factory"
 ) -> bool:
     """
-    Checks whether the changes described in an accepted submit request have
-    already landed in refs/pool/{stable_branch}.
-    If they are already present in the pool ref, the request has finished syncing,
-    and any remaining commits in origin/{stable_branch} are unsubmitted updates.
+    Checks whether a recently accepted submit request should be considered completed/synced,
+    meaning the package is ready for new submissions or has new unsubmitted changes.
+    Returns:
+    - True if real unsubmitted packaging differences exist in OBS (new changes ready to submit),
+      or if the changes in the accepted SR have already landed in refs/pool/{stable_branch}.
+    - False if there are no new differences between source and target in OBS (meaning it is
+      truly waiting for the central pool Git mirror to catch up to the accepted SR).
     """
-    desc = sr.get("description", "").strip()
-    if not desc or not os.path.isdir(pkg_dir):
+    if not os.path.isdir(pkg_dir):
         return False
 
-    ensure_pool_ref_fresh(pkg_dir, stable_branch=stable_branch)
-    pool_ref = f"refs/pool/{stable_branch}"
-    try:
-        # Extract first meaningful bullet or line
-        first_line = ""
-        for line in desc.splitlines():
-            line = line.strip()
-            if line.startswith("- "):
-                line = line[2:].strip()
-            elif line.startswith("* "):
-                line = line[2:].strip()
-            if line and not line.startswith("---") and not (re.match(r"^[A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d+", line) and "@" in line):
-                first_line = line
-                break
+    pkg_name = os.path.basename(os.path.abspath(pkg_dir)).split("/")[-1]
+    src_prj = sr.get("source_project") or resolve_source_obs_project(pkg_dir, default="", package_name=pkg_name, target_project=target_project)
 
-        if first_line:
-            # Check git log of pool_ref
-            res = subprocess.run(
-                ["git", "-C", pkg_dir, "log", pool_ref, "--grep=" + first_line[:50]],
-                capture_output=True, text=True
-            )
-            if res.returncode == 0 and res.stdout.strip():
-                return True
+    # 1. Primary check: check OBS ground truth differences
+    if src_prj:
+        has_diff, _ = has_real_obs_diff(src_prj, pkg_name, target_project=target_project)
+        if has_diff:
+            return True
 
-            # Also check .changes files at pool_ref
-            try:
-                changes_files = [f for f in os.listdir(pkg_dir) if f.endswith(".changes")]
-                for cf in changes_files:
-                    res_show = subprocess.run(
-                        ["git", "-C", pkg_dir, "show", f"{pool_ref}:{cf}"],
-                        capture_output=True, text=True
-                    )
-                    if res_show.returncode == 0 and first_line[:40] in res_show.stdout:
-                        return True
-            except Exception:
-                pass
-    except Exception:
-        pass
+    # 2. Secondary check: check if the SR description landed in pool git ref
+    desc = sr.get("description", "").strip()
+    if desc:
+        ensure_pool_ref_fresh(pkg_dir, stable_branch=stable_branch)
+        pool_ref = f"refs/pool/{stable_branch}"
+        try:
+            first_line = ""
+            for line in desc.splitlines():
+                line = line.strip()
+                if line.startswith("- "):
+                    line = line[2:].strip()
+                elif line.startswith("* "):
+                    line = line[2:].strip()
+                if line and not line.startswith("---") and not (re.match(r"^[A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d+", line) and "@" in line):
+                    first_line = line
+                    break
+
+            if first_line:
+                res = subprocess.run(
+                    ["git", "-C", pkg_dir, "log", pool_ref, "--grep=" + first_line[:50]],
+                    capture_output=True, text=True
+                )
+                if res.returncode == 0 and res.stdout.strip():
+                    return True
+        except Exception:
+            pass
 
     return False
 
@@ -348,46 +616,67 @@ def get_package_pool_submission_status(
     accepted_requests: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     allow_accepted_query: bool = True,
     pkg_dir: Optional[str] = None,
-    stable_branch: str = "factory"
+    stable_branch: str = "factory",
+    force_refresh: bool = False,
+    check_srcmd5: bool = True
 ) -> Dict[str, Any]:
     """
     Evaluates whether a package currently has an active pending or recently accepted
     submit request against target_project.
 
     Returns dict:
-    - status: "pending" | "accepted_pending_sync" | "unsubmitted"
+    - status: "pending" | "pending_outdated" | "accepted_pending_sync" | "unsubmitted"
     - request: Dict representing the matching request (if any)
     """
-    if not isinstance(pending_requests, dict):
-        pending_requests = get_pending_obs_requests(target_project=target_project)
+    pkg_base = package_name.split("/")[-1]
+    if force_refresh:
+        pending_list = get_package_pending_obs_requests(package_name, target_project=target_project)
+    else:
+        if not isinstance(pending_requests, dict):
+            pending_requests = get_pending_obs_requests(target_project=target_project)
+        pending_list = pending_requests.get(package_name) or pending_requests.get(pkg_base) or []
+
     if not isinstance(pkg_dir, str):
         pkg_dir = None
     if not isinstance(stable_branch, str):
         stable_branch = "factory"
 
-    if package_name in pending_requests and pending_requests[package_name]:
+    if pending_list:
         # Sort newest ID first
-        sorted_reqs = sorted(pending_requests[package_name], key=lambda r: int(r.get("id") or 0), reverse=True)
+        sorted_reqs = sorted(pending_list, key=lambda r: int(r.get("id") or 0), reverse=True)
         primary = sorted_reqs[0]
+        sr_rev = primary.get("source_rev")
+        src_prj = primary.get("source_project")
+
+        is_outdated = False
+        if check_srcmd5 and src_prj and sr_rev:
+            cur_md5 = get_source_package_srcmd5(src_prj, package_name, force_refresh=force_refresh)
+            if cur_md5 and cur_md5 != sr_rev:
+                is_outdated = True
+
         return {
-            "status": "pending",
+            "status": "pending_outdated" if is_outdated else "pending",
             "request": primary,
             "requests": sorted_reqs,
             "state": primary.get("state", "review"),
             "request_id": primary.get("id"),
-            "source_project": primary.get("source_project"),
+            "source_project": src_prj,
+            "source_rev": sr_rev,
+            "is_outdated": is_outdated,
         }
 
     if allow_accepted_query:
         if not isinstance(accepted_requests, dict):
             accepted_requests = get_recently_accepted_obs_requests(target_project=target_project)
 
-        if package_name in accepted_requests and accepted_requests[package_name]:
-            sorted_acc = sorted(accepted_requests[package_name], key=lambda r: int(r.get("id") or 0), reverse=True)
+        accepted_list = accepted_requests.get(package_name) or accepted_requests.get(pkg_base) or []
+
+        if accepted_list:
+            sorted_acc = sorted(accepted_list, key=lambda r: int(r.get("id") or 0), reverse=True)
             primary = sorted_acc[0]
 
-            # Verify if this accepted request has ALREADY synced to pool
-            if pkg_dir and is_accepted_sr_already_synced(pkg_dir, primary, stable_branch=stable_branch):
+            # Verify if this accepted request has ALREADY synced to pool or if new unsubmitted changes exist
+            if pkg_dir and is_accepted_sr_already_synced(pkg_dir, primary, stable_branch=stable_branch, target_project=target_project):
                 return {
                     "status": "unsubmitted",
                     "request": None,
@@ -417,13 +706,167 @@ def get_package_pool_submission_status(
     }
 
 
-def resolve_source_obs_project(package_dir: str, default: str = "GNOME:Factory") -> str:
+_STREAM_SYNC_CACHE: Dict[Tuple[str, str], Tuple[float, Dict[str, Any]]] = {}
+STREAM_SYNC_CACHE_TTL: float = 60.0
+
+def check_pool_stream_sync(
+    pkg_dir: str,
+    branch: str,
+    pkg_name: Optional[str] = None,
+    skip_fetch: bool = False,
+    force_refresh: bool = False
+) -> Dict[str, Any]:
+    """
+    Checks synchronization status between origin/<branch> and refs/pool/<branch>
+    for any pool stream (e.g. factory, leap-16.0, leap-16.1).
+    Cached for 60 seconds. skip_fetch=True compares existing local refs in ~2ms without network fetch.
+    Returns dict: {"exists": bool, "ahead": int, "behind": int}
+    """
+    if not os.path.isdir(pkg_dir):
+        return {"exists": False, "ahead": 0, "behind": 0}
+
+    cache_key = (os.path.abspath(pkg_dir), branch)
+    now = time.time()
+    if not force_refresh and cache_key in _STREAM_SYNC_CACHE:
+        ts, val = _STREAM_SYNC_CACHE[cache_key]
+        if (now - ts) < STREAM_SYNC_CACHE_TTL:
+            return val
+
+    name = pkg_name or os.path.basename(os.path.abspath(pkg_dir))
+    pool_url = f"https://src.opensuse.org/pool/{name}.git"
+
+    if not skip_fetch:
+        env = dict(os.environ)
+        env["GIT_TERMINAL_PROMPT"] = "0"
+        try:
+            fetch_res = subprocess.run(
+                ["git", "-C", pkg_dir, "fetch", "--quiet", pool_url, f"+refs/heads/{branch}:refs/pool/{branch}"],
+                env=env, capture_output=True, text=True, timeout=10
+            )
+            if fetch_res.returncode != 0:
+                res = {"exists": False, "ahead": 0, "behind": 0}
+                _STREAM_SYNC_CACHE[cache_key] = (now, res)
+                return res
+        except Exception:
+            res = {"exists": False, "ahead": 0, "behind": 0}
+            _STREAM_SYNC_CACHE[cache_key] = (now, res)
+            return res
+
+    ahead = 0
+    behind = 0
+    try:
+        cnt_a = subprocess.run(
+            ["git", "-C", pkg_dir, "rev-list", f"refs/pool/{branch}..origin/{branch}", "--count"],
+            capture_output=True, text=True
+        )
+        if cnt_a.returncode == 0:
+            ahead = int(cnt_a.stdout.strip() or "0")
+    except Exception:
+        pass
+
+    try:
+        cnt_b = subprocess.run(
+            ["git", "-C", pkg_dir, "rev-list", f"origin/{branch}..refs/pool/{branch}", "--count"],
+            capture_output=True, text=True
+        )
+        if cnt_b.returncode == 0:
+            behind = int(cnt_b.stdout.strip() or "0")
+    except Exception:
+        pass
+
+    res = {"exists": True, "ahead": ahead, "behind": behind}
+    _STREAM_SYNC_CACHE[cache_key] = (now, res)
+    return res
+
+
+_SRCMD5_CACHE: Dict[Tuple[str, str], Tuple[float, Optional[str]]] = {}
+SRCMD5_CACHE_TTL: float = 60.0
+
+def get_source_package_srcmd5(source_project: str, package_name: str, force_refresh: bool = False) -> Optional[str]:
+    """
+    Returns the current srcmd5 checksum of source_project/package_name in OBS.
+    Cached for 60 seconds to prevent blocking UI threads.
+    """
+    pkg_base = package_name.split("/")[-1]
+    cache_key = (source_project, pkg_base)
+    now = time.time()
+    if not force_refresh and cache_key in _SRCMD5_CACHE:
+        ts, val = _SRCMD5_CACHE[cache_key]
+        if (now - ts) < SRCMD5_CACHE_TTL:
+            return val
+
+    env = get_obs_env()
+    md5 = None
+    try:
+        res = subprocess.run(
+            ["osc", "api", f"/source/{source_project}/{pkg_base}"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            root = ET.fromstring(res.stdout)
+            md5 = root.get("srcmd5")
+    except Exception:
+        pass
+
+    _SRCMD5_CACHE[cache_key] = (now, md5)
+    return md5
+
+
+def get_git_obs_meta_project(package_dir: str, branch: Optional[str] = None) -> Optional[str]:
+    """
+    Reads the OBS project configured in .git/obs/<branch>/meta.json (if present).
+    This provides a cheap, local, zero-network lookup for Git checkouts configured via git-obs.
+    """
+    if not os.path.exists(os.path.join(package_dir, ".git")):
+        return None
+
+    active_br = branch
+    if not active_br:
+        try:
+            res = subprocess.run(
+                ["git", "-C", package_dir, "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True, text=True, timeout=5
+            )
+            if res.returncode == 0:
+                active_br = res.stdout.strip()
+        except Exception:
+            pass
+
+    if not active_br:
+        return None
+
+    meta_file = os.path.join(package_dir, ".git", "obs", active_br, "meta.json")
+    if os.path.isfile(meta_file):
+        try:
+            with open(meta_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            proj = data.get("project")
+            if proj and isinstance(proj, str) and proj.strip():
+                return proj.strip()
+        except Exception:
+            pass
+
+    return None
+
+
+def resolve_source_obs_project(
+    package_dir: str,
+    default: str = "GNOME:Factory",
+    package_name: Optional[str] = None,
+    target_project: str = "openSUSE:Factory",
+    branch: Optional[str] = None
+) -> str:
     """
     Determines the source OBS project to submit from.
     Inspects:
     1. staging.config in package_dir or parent directories (ObsProject key)
     2. .osc/_project
-    3. Fallback default
+    3. .git/obs/<branch>/meta.json (cheap local lookup from git-obs)
+    4. OBS develproject metadata for target_project / package_name
+    5. Fallback default
     """
     curr = os.path.abspath(package_dir)
     # Walk up to find staging.config
@@ -449,6 +892,35 @@ def resolve_source_obs_project(package_dir: str, default: str = "GNOME:Factory")
                 return content
         except Exception:
             pass
+
+    # Check .git/obs/<branch>/meta.json (cheap local lookup)
+    git_obs_prj = get_git_obs_meta_project(package_dir, branch=branch)
+    if git_obs_prj:
+        return git_obs_prj
+
+    # Interrogate OBS develproject metadata
+    pkg_name = package_name or os.path.basename(os.path.abspath(package_dir))
+    if pkg_name:
+        pkg_base = pkg_name.split("/")[-1]
+        cache_key = (target_project, pkg_base)
+        if cache_key in _DEVEL_PROJECT_CACHE:
+            cached_val = _DEVEL_PROJECT_CACHE[cache_key]
+            if cached_val:
+                return cached_val
+        else:
+            try:
+                res = subprocess.run(
+                    ["osc", "develproject", target_project, pkg_base],
+                    capture_output=True, text=True, timeout=10, env=get_obs_env()
+                )
+                if res.returncode == 0 and res.stdout.strip():
+                    dp = res.stdout.strip().split("/")[0].strip()
+                    if dp and not dp.lower().startswith("error"):
+                        _DEVEL_PROJECT_CACHE[cache_key] = dp
+                        return dp
+            except Exception:
+                pass
+            _DEVEL_PROJECT_CACHE[cache_key] = ""
 
     return default
 
@@ -574,6 +1046,86 @@ def discover_workspace_packages(workspace_path: str) -> List[str]:
         return sb.discover_workspace_packages(workspace_path)
 
 
+def create_gitea_pool_pr(
+    package_dir: str,
+    package_name: str,
+    target_project: str,
+    scmsync_url: str,
+    title: str,
+    description: str,
+    stable_branch: str = "factory",
+    dry_run: bool = False
+) -> Tuple[bool, str]:
+    """
+    Creates a Gitea Pull Request when target_project is Git-managed via <scmsync>.
+    Parses the target repository and branch from scmsync_url, verifies local
+    pushed status on origin, and submits via tea CLI or Gitea compare URL.
+    """
+    scm_host, scm_repo, scm_branch = parse_scmsync(scmsync_url)
+    target_branch = scm_branch or stable_branch
+    target_repo = scm_repo
+    if target_repo.endswith("/_ObsPrj"):
+        org_name = target_repo.split("/")[0]
+        target_repo = f"{org_name}/{package_name}"
+
+    try:
+        rem_res = subprocess.run(
+            ["git", "-C", package_dir, "remote", "get-url", "origin"],
+            capture_output=True, text=True, check=True
+        )
+        local_host, local_repo = parse_git_remote_url(rem_res.stdout.strip())
+    except Exception as e:
+        return False, f"Could not determine git origin for {package_dir}: {e}"
+
+    try:
+        br_res = subprocess.run(
+            ["git", "-C", package_dir, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, check=True
+        )
+        local_branch = br_res.stdout.strip()
+    except Exception:
+        local_branch = stable_branch
+
+    local_user = local_repo.split("/")[0] if "/" in local_repo else local_repo
+    compare_url = f"https://{scm_host or 'src.opensuse.org'}/{target_repo}/compare/{target_branch}...{local_user}:{local_branch}"
+
+    if dry_run:
+        return True, (
+            f"[DRY-RUN] Target {target_project} is Git-managed via <scmsync>.\n"
+            f"   Would create Gitea Pull Request from '{local_user}:{local_branch}' to '{target_repo}:{target_branch}':\n"
+            f"   Title:       {title}\n"
+            f"   Compare URL: {compare_url}\n"
+            f"   Description:\n{description}"
+        )
+
+    import shutil
+    tea_bin = shutil.which("tea")
+    if tea_bin:
+        cmd = [
+            tea_bin, "pulls", "create",
+            "--repo", target_repo,
+            "--head", f"{local_user}:{local_branch}",
+            "--base", target_branch,
+            "--title", title,
+            "--description", description
+        ]
+        try:
+            res = subprocess.run(cmd, cwd=package_dir, capture_output=True, text=True, timeout=30)
+            if res.returncode == 0:
+                out = res.stdout.strip()
+                return True, f"Successfully created Gitea Pull Request for {package_name} targeting {target_repo}:{target_branch}!\n{out}"
+            else:
+                err = (res.stderr or res.stdout).strip()
+                return False, f"Failed to create PR via tea ({err}). Submit manually at:\n   {compare_url}"
+        except Exception as e:
+            return False, f"Failed executing tea ({e}). Submit manually at:\n   {compare_url}"
+    return False, (
+        f"Target {target_project} is Git-managed via <scmsync>.\n"
+        f"   'tea' CLI is not installed to automate PR creation. Submit via Gitea Pull Request at:\n"
+        f"   {compare_url}"
+    )
+
+
 def submit_package_to_pool(
     package_name: str,
     package_dir: str,
@@ -603,8 +1155,8 @@ def submit_package_to_pool(
         except ImportError:
             from sync_backend import check_osc_worktree_fast
         dirty, untracked = check_osc_worktree_fast(package_dir)
-        if (dirty or untracked) and not force:
-            return False, f"Working tree for '{package_name}' has uncommitted changes. Run 'osc ci' before submitting."
+        if dirty:
+            print(f"ℹ️  Note: Working tree has uncommitted modifications ('osc status'). Submission will act on the remote state in {target_project}.", file=sys.stderr)
 
         source_project = resolve_source_obs_project(package_dir, default="")
         if not source_project:
@@ -622,9 +1174,13 @@ def submit_package_to_pool(
                 pass
 
         status_info = get_package_pool_submission_status(package_name, target_project=target_project)
-        if status_info["status"] == "pending" and not force:
+        supersede_id = None
+        if status_info["status"] == "pending_outdated":
+            supersede_id = status_info["request_id"]
+            print(f"ℹ️  Note: Source package in {source_project} has newer changes than pending SR #{supersede_id}. Superseding request #{supersede_id}...", file=sys.stderr)
+        elif status_info["status"] == "pending" and not force:
             req_id = status_info["request_id"]
-            return False, f"Active submit request #{req_id} is already pending against {target_project}."
+            return False, f"Active submit request #{req_id} is already pending against {target_project} and up-to-date with latest sources."
         if status_info["status"] == "accepted_pending_sync" and not force:
             req_id = status_info["request_id"]
             return False, f"Submit request #{req_id} was already accepted; awaiting backend sync to central pool."
@@ -632,11 +1188,16 @@ def submit_package_to_pool(
         if not message or not message.strip():
             message = extract_pool_changes(package_dir, stable_branch=stable_branch) or f"Update {package_name} from {source_project}"
 
+        cmd = ["osc", "sr"]
+        if supersede_id:
+            cmd.extend(["-s", str(supersede_id), "--yes"])
+        cmd.extend([source_project, package_name, target_project, "-m", message])
+
         if dry_run:
-            return True, f"[Dry-Run] Would execute: osc sr {source_project} {package_name} {target_project} -m '{message[:80]}...'"
+            act_note = f"Would supersede pending SR #{supersede_id}: " if supersede_id else "Would execute: "
+            return True, f"[DRY-RUN] {act_note}{' '.join(cmd)}"
 
         try:
-            cmd = ["osc", "sr", source_project, package_name, target_project, "-m", message]
             env = dict(os.environ)
             if "DBUS_SESSION_BUS_ADDRESS" not in env:
                 xdg_runtime = env.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
@@ -651,54 +1212,109 @@ def submit_package_to_pool(
             err = (e.stderr or e.stdout or str(e)).strip()
             return False, f"osc sr failed (code {e.returncode}): {err}"
 
-    # 0. Guarantee local refs match authoritative remotes on src.opensuse.org
+    # 0. Detect active branch for git checkouts
+    active_branch = stable_branch
+    if os.path.exists(os.path.join(package_dir, ".git")):
+        try:
+            br_res = subprocess.run(
+                ["git", "-C", package_dir, "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True, text=True, check=True
+            )
+            active_branch = br_res.stdout.strip() or stable_branch
+        except Exception:
+            pass
+
+    # 0b. If submitting to a central pool release stream (e.g. leap-16.1), route directly to Gitea PR pipeline!
+    is_pool_stream = target_project.startswith("pool/")
+    if not is_pool_stream and active_branch != "factory" and os.path.exists(os.path.join(package_dir, ".git")):
+        stream_info = check_pool_stream_sync(package_dir, branch=active_branch, pkg_name=package_name)
+        if stream_info.get("exists"):
+            is_pool_stream = True
+
+    if is_pool_stream:
+        ensure_pool_ref_fresh(package_dir, stable_branch=active_branch)
+
+        # Check unpushed commits on active stream branch
+        try:
+            ahead_res = subprocess.run(
+                ["git", "-C", package_dir, "rev-list", f"origin/{active_branch}..HEAD", "--count"],
+                capture_output=True, text=True, check=True
+            )
+            unpushed = int(ahead_res.stdout.strip() or "0")
+            if unpushed > 0:
+                print(f"ℹ️  Note: Local branch is ahead of origin/{active_branch} by {unpushed} unpushed commit('s' if unpushed != 1 else ''). Submission will act on the pushed state on origin.", file=sys.stderr)
+        except Exception:
+            pass
+
+        # Check pool ahead count against central pool stream
+        pool_ref = f"refs/pool/{active_branch}"
+        pool_ahead = 0
+        try:
+            cnt_res = subprocess.run(
+                ["git", "-C", package_dir, "rev-list", f"{pool_ref}..origin/{active_branch}", "--count"],
+                capture_output=True, text=True, check=True
+            )
+            pool_ahead = int(cnt_res.stdout.strip() or "0")
+        except Exception:
+            pass
+
+        if pool_ahead == 0 and not force:
+            return False, f"Package '{package_name}' on branch '{active_branch}' is already in sync with central pool ({pool_ahead} commits ahead)."
+
+        description = message or extract_pool_changes(package_dir, stable_branch=active_branch)
+        title = message.splitlines()[0] if message else ""
+        if not title:
+            if description and description.strip().startswith("- "):
+                title = description.strip().splitlines()[0][2:].strip()
+            else:
+                title = f"Sync {package_name} on {active_branch}"
+
+        return create_gitea_pool_pr(
+            package_dir=package_dir,
+            package_name=package_name,
+            target_project=f"pool/{package_name}",
+            scmsync_url=f"https://src.opensuse.org/pool/{package_name}#{active_branch}",
+            title=title,
+            description=description or "",
+            stable_branch=active_branch,
+            dry_run=dry_run
+        )
+
+    # 1. Guarantee local refs match authoritative remotes on src.opensuse.org
     ensure_origin_ref_fresh(package_dir, branch=stable_branch)
     ensure_pool_ref_fresh(package_dir, stable_branch=stable_branch)
 
-    # 1. Check working tree cleanliness
+    # 2. Check working tree cleanliness (inform user if tracked files are modified, do not block)
     try:
         st_res = subprocess.run(
             ["git", "-C", package_dir, "status", "--porcelain"],
             capture_output=True, text=True, check=True
         )
-        if st_res.stdout.strip() and not force:
-            return False, f"Working tree for '{package_name}' has uncommitted changes. Please commit or stash first."
-    except Exception as e:
-        return False, f"Git status check failed: {e}"
-
-    # 2. Check if local commits are unpushed to origin
-    try:
-        ahead_res = subprocess.run(
-            ["git", "-C", package_dir, "rev-list", f"origin/{stable_branch}..HEAD", "--count"],
-            capture_output=True, text=True, check=True
-        )
-        unpushed = int(ahead_res.stdout.strip() or "0")
-        if unpushed > 0 and not force:
-            return False, f"Local branch has {unpushed} unpushed commit(s) on '{stable_branch}'. Push to origin first."
+        tracked_changes = [
+            line for line in st_res.stdout.splitlines()
+            if not line.startswith("??") and not line.startswith("!!")
+        ]
+        if tracked_changes:
+            files_count = len(tracked_changes)
+            print(f"ℹ️  Note: Working tree has uncommitted modifications to {files_count} tracked file{'s' if files_count != 1 else ''}. Submission will act on the pushed state on origin.", file=sys.stderr)
     except Exception:
         pass
 
-    # 3. Check pool ahead count
-    pool_ref = f"refs/pool/{stable_branch}"
-    try:
-        cnt_res = subprocess.run(
-            ["git", "-C", package_dir, "rev-list", f"{pool_ref}..origin/{stable_branch}", "--count"],
-            capture_output=True, text=True, check=True
-        )
-        pool_ahead = int(cnt_res.stdout.strip() or "0")
-        if pool_ahead == 0 and not force:
-            return False, f"Package '{package_name}' is already in sync with {target_project} (pool_ahead is 0)."
-    except Exception:
-        pass
-
-    # 4. Check Pending and Recently Accepted Request Guards
+    # 9. Check Pending and Recently Accepted Request Guards
     status_info = get_package_pool_submission_status(package_name, target_project=target_project, pkg_dir=package_dir, stable_branch=stable_branch)
-    if status_info["status"] == "pending" and not force:
+    supersede_id = None
+    if status_info["status"] == "pending_outdated":
+        req = status_info["request"]
+        req_id = req.get("id")
+        src = req.get("source_project")
+        supersede_id = req_id
+        print(f"ℹ️  Note: Source package in {src} has newer changes than pending SR #{req_id}. Superseding request #{req_id}...", file=sys.stderr)
+    elif status_info["status"] == "pending" and not force:
         req = status_info["request"]
         req_id = req.get("id")
         st = req.get("state")
         src = req.get("source_project")
-        return False, f"Active submit request #{req_id} ({st} from {src}) is already pending against {target_project}."
+        return False, f"Active submit request #{req_id} ({st} from {src}) is already pending against {target_project} and up-to-date with latest sources."
 
     if status_info["status"] == "accepted_pending_sync" and not force:
         req = status_info["request"]
@@ -706,23 +1322,103 @@ def submit_package_to_pool(
         when = req.get("accepted_when", "recently")
         return False, f"Submit request #{req_id} was already accepted ({when}) and is currently pending backend sync to central pool."
 
-    # 5. Check if target is Git-managed (scmsync)
-    git_meta = is_project_git_managed(target_project)
+    # 2b. Check if target is Git-managed (<scmsync> attribute in project or package metadata)
+    # When openSUSE:Factory acquires an scmsync attribute, osc sr transitions automatically to Gitea PR!
+    git_meta = is_project_git_managed(target_project, package_name=package_name)
     if git_meta.get("is_git"):
-        sync_url = git_meta.get("scmsync_url")
-        return False, f"Target project {target_project} is Git-managed via {sync_url}. Submit via Gitea Pull Request instead of 'osc sr'."
+        if not message or not message.strip():
+            message = extract_pool_changes(package_dir, stable_branch=stable_branch)
+        title = message.splitlines()[0] if message else f"Update {package_name} in {target_project}"
+        return create_gitea_pool_pr(
+            package_dir=package_dir,
+            package_name=package_name,
+            target_project=target_project,
+            scmsync_url=git_meta.get("scmsync_url", ""),
+            title=title,
+            description=message or "",
+            stable_branch=stable_branch,
+            dry_run=dry_run
+        )
 
-    # 6. Resolve source project
-    source_project = resolve_source_obs_project(package_dir, default="GNOME:Factory")
+    # 3. If active branch is a release stream in central pool (e.g. leap-16.1), guide to PR instead of osc sr
+    if active_branch != stable_branch:
+        stream_info = check_pool_stream_sync(package_dir, branch=active_branch, pkg_name=package_name)
+        if stream_info.get("exists"):
+            return False, (
+                f"Central pool stream '{active_branch}' is Git-managed (pool/{package_name}#{active_branch}).\n"
+                f"   Submissions must be made via Gitea Pull Request rather than 'osc sr' to {target_project}.\n"
+                f"   Create PR at: https://src.opensuse.org/pool/{package_name}/pulls"
+            )
 
+    # 4. Resolve source OBS project
+    source_project = resolve_source_obs_project(package_dir, default="", package_name=package_name, target_project=target_project, branch=active_branch)
+    if not source_project:
+        return False, f"Could not determine source OBS project for '{package_name}' on branch '{active_branch}'."
+
+    # 4. Verify SCM-sync provenance & branch compatibility BEFORE rev-list counts!
+    ok_prov, prov_msg = verify_scmsync_provenance(package_dir, source_project, package_name, target_project=target_project)
+    if not ok_prov and not force:
+        return False, prov_msg
+
+    # 5. Check if local commits are unpushed to origin for active branch (inform user, do not block)
+    try:
+        ahead_res = subprocess.run(
+            ["git", "-C", package_dir, "rev-list", f"origin/{active_branch}..HEAD", "--count"],
+            capture_output=True, text=True, check=True
+        )
+        unpushed = int(ahead_res.stdout.strip() or "0")
+        if unpushed > 0:
+            print(f"ℹ️  Note: Local branch is ahead of origin/{active_branch} by {unpushed} unpushed commit('s' if unpushed != 1 else ''). Submission will act on the pushed state on origin.", file=sys.stderr)
+    except Exception:
+        pass
+
+    # 6. Check pool ahead count against target stable branch
+    pool_ref = f"refs/pool/{stable_branch}"
+    pool_ahead = 0
+    try:
+        cnt_res = subprocess.run(
+            ["git", "-C", package_dir, "rev-list", f"{pool_ref}..origin/{stable_branch}", "--count"],
+            capture_output=True, text=True, check=True
+        )
+        pool_ahead = int(cnt_res.stdout.strip() or "0")
+    except Exception:
+        pass
+
+    # 8. Verify SCM-bridge sync completion (for Git checkouts)
+    if os.path.exists(os.path.join(package_dir, ".git")):
+        try:
+            origin_commit = subprocess.run(
+                ["git", "-C", package_dir, "rev-parse", f"origin/{stable_branch}"],
+                capture_output=True, text=True, check=True
+            ).stdout.strip()
+            obs_commit = get_obs_scmsync_commit(source_project, package_name)
+            if obs_commit and origin_commit and obs_commit != origin_commit and not force:
+                return False, (
+                    f"OBS package {source_project}/{package_name} has not finished syncing latest commit.\n"
+                    f"   OBS synced commit: {obs_commit[:10]}\n"
+                    f"   Remote origin:     {origin_commit[:10]}\n"
+                    f"   Please wait for scmbridge to finish syncing to OBS before submitting."
+                )
+        except Exception:
+            pass
+
+    # 10. Verify real packaging differences in OBS
+    if not force:
+        has_diff, _ = has_real_obs_diff(source_project, package_name, target_project=target_project)
+        if not has_diff and pool_ahead == 0:
+            return False, f"Package '{package_name}' is already in sync with {target_project} (no differences between {source_project} and {target_project})."
     # 7. Extract message if not provided
     if not message or not message.strip():
         message = extract_pool_changes(package_dir, stable_branch=stable_branch)
 
-    cmd = ["osc", "sr", source_project, package_name, target_project, "-m", message]
+    cmd = ["osc", "sr"]
+    if supersede_id:
+        cmd.extend(["-s", str(supersede_id), "--yes"])
+    cmd.extend([source_project, package_name, target_project, "-m", message])
 
     if dry_run:
-        return True, f"[DRY-RUN] Would execute: osc sr {source_project} {package_name} {target_project} -m '{message}'"
+        act_note = f"Would supersede pending SR #{supersede_id}: " if supersede_id else "Would execute: "
+        return True, f"[DRY-RUN] {act_note}{' '.join(cmd)}"
 
     try:
         sr_res = subprocess.run(

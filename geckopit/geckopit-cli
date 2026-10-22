@@ -11,6 +11,7 @@ import sys
 import concurrent.futures
 import locale
 import difflib
+import subprocess
 
 # Gracefully handle container environments missing host regional locale files
 try:
@@ -91,73 +92,112 @@ def render_single_package_dashboard(data):
     # Section 2: Downstream SCM Sync (Gitea & Pool)
     if not is_osc:
         print(f"── {sb.BOLD}🔄 Downstream SCM Sync (Gitea & Pool){sb.RESET} {'─'*32}")
-        pool_behind = sync.get('pool_behind', 0)
-        pool_ahead = sync.get('pool_ahead', 0)
-        pool_status = sync.get('pool_status', 'unknown')
-        if pool_behind > 0 and pool_ahead > 0:
-            b_s = 's' if pool_behind != 1 else ''
-            a_s = 's' if pool_ahead != 1 else ''
-            pool_str = f"{sb.RED}❌ Diverged (Behind {pool_behind} commit{b_s}, Ahead {pool_ahead} commit{a_s}){sb.RESET}"
-        elif pool_behind > 0:
-            b_s = 's' if pool_behind != 1 else ''
-            pool_str = f"{sb.YELLOW}📥 Behind central pool by {pool_behind} commit{b_s} (Pull needed){sb.RESET}"
-        elif pool_ahead > 0:
-            a_s = 's' if pool_ahead != 1 else ''
-            pool_sub = pool_submit.get_package_pool_submission_status(
-                repo,
-                target_project="openSUSE:Factory",
-                pkg_dir=data.get('pkg_dir'),
-                stable_branch=data.get('stable_branch', 'factory')
-            )
-            if pool_sub["status"] == "pending":
-                req = pool_sub["request"]
-                pool_str = f"{sb.YELLOW}⏳ Pending SR #{req['id']} ({req['state']} from {req.get('source_project')}){sb.RESET}"
-            elif pool_sub["status"] == "accepted_pending_sync":
-                req = pool_sub["request"]
-                pool_str = f"{sb.GREEN}⏳ SR #{req['id']} accepted (awaiting central pool sync){sb.RESET}"
-            else:
-                pool_str = f"{sb.CYAN}📤 Ahead of central pool by {pool_ahead} commit{a_s} (Submit needed){sb.RESET}"
-        elif pool_status == 'Not in Pool':
-            pool_str = f"{sb.YELLOW}❓ Not in Pool{sb.RESET}"
-        elif pool_status in ('Fetch failed', 'Error', 'unknown'):
-            pool_str = f"{sb.RED}⚠️ Failed to fetch pool ({pool_status}){sb.RESET}"
-        elif pool_status == 'In Sync':
-            pool_str = f"{sb.GREEN}✅ In Sync with pool{sb.RESET}"
-        else:
-            pool_str = f"{sb.YELLOW}❓ {pool_status}{sb.RESET}"
-        print(f"  Gitea Pool:    {pool_str}")
-
+        st_branch = data.get('stable_branch', 'factory')
+        unst_branch = data.get('unstable_branch', 'next')
+        head = wt.get('head') or branch
         next_ahead = sync.get('next_ahead', 0)
         next_behind = sync.get('next_behind', 0)
         next_status = sync.get('next_status', 'unknown')
-        st_branch = data.get('stable_branch', 'factory')
-        unst_branch = data.get('unstable_branch', 'next')
-        if next_status == 'No next branch':
-            fwd_str = '— (No unstable branch configured)'
-        elif next_status in ('Comparison failed', 'Error', 'unknown'):
-            fwd_str = f"{sb.RED}⚠️ Branch comparison failed ({next_status}){sb.RESET}"
-        elif next_behind > 0 and next_ahead > 0:
-            b_s = 's' if next_behind != 1 else ''
-            a_s = 's' if next_ahead != 1 else ''
-            fwd_str = f"{sb.RED}❌ Diverged (Behind {next_behind} commit{b_s}, Ahead {next_ahead} commit{a_s}){sb.RESET}"
-        elif next_behind > 0:
-            b_s = 's' if next_behind != 1 else ''
-            fwd_str = f"{sb.YELLOW}⚠️ Behind {st_branch} by {next_behind} commit{b_s} (Catch-up merge needed){sb.RESET}"
-        elif next_ahead > 0:
-            a_s = 's' if next_ahead != 1 else ''
-            if pr.get('has_forward_pr'):
-                fwd_num = pr.get('number')
-                pr_ref = f"PR #{fwd_num} pending" if fwd_num else "PR pending"
-                fwd_str = f"{sb.GREEN}🔀 Ahead of {st_branch} by {next_ahead} commit{a_s} ({pr_ref}){sb.RESET}"
+
+        if head not in (st_branch, unst_branch):
+            stream_info = pool_submit.check_pool_stream_sync(data.get('pkg_dir', '.'), branch=head, pkg_name=repo)
+            if stream_info.get("exists"):
+                s_ahead = stream_info.get("ahead", 0)
+                s_behind = stream_info.get("behind", 0)
+                if s_ahead > 0 and s_behind > 0:
+                    b_s = 's' if s_behind != 1 else ''
+                    a_s = 's' if s_ahead != 1 else ''
+                    pool_str = f"{sb.RED}❌ Diverged from central pool ({head}) (Behind {s_behind}{b_s}, Ahead {s_ahead}{a_s}){sb.RESET}"
+                elif s_behind > 0:
+                    b_s = 's' if s_behind != 1 else ''
+                    pool_str = f"{sb.YELLOW}📥 Behind central pool ({head}) by {s_behind} commit{b_s} (Pull needed){sb.RESET}"
+                elif s_ahead > 0:
+                    a_s = 's' if s_ahead != 1 else ''
+                    pool_str = f"{sb.CYAN}📤 Ahead of central pool ({head}) by {s_ahead} commit{a_s} (PR needed){sb.RESET}"
+                else:
+                    pool_str = f"{sb.GREEN}✅ In Sync with central pool ({head}){sb.RESET}"
+                print(f"  Gitea Pool:    {pool_str}")
+                print(f"  Branch Sync:   — (Tracking release stream '{head}')")
+                print()
             else:
-                fwd_str = f"{sb.GREEN}🔀 Ahead of {st_branch} by {next_ahead} commit{a_s} (Ready for PR){sb.RESET}"
-        elif ahead > 0:
-            fwd_str = f"{sb.GREEN}✅ In Sync on remote{sb.RESET} {sb.CYAN}(local branch carries {ahead} unpushed commit{'s' if ahead > 1 else ''}){sb.RESET}"
-        elif next_status in ('In Sync', 'Ahead (ok)'):
-            fwd_str = f"{sb.GREEN}✅ In Sync{sb.RESET}"
+                cand_prj = pool_submit.get_git_obs_meta_project(data.get('pkg_dir'), branch=head)
+                if cand_prj:
+                    pool_str = f"{sb.CYAN}ℹ️ Configured for {cand_prj} via git-obs{sb.RESET}"
+                else:
+                    pool_str = f"{sb.YELLOW}⚠️ Checked out on '{head}' (not tracked in central pool){sb.RESET}"
+                print(f"  Gitea Pool:    {pool_str}")
+                print(f"  Branch Sync:   — (Central pool tracks '{st_branch}')")
+                print()
         else:
-            fwd_str = f"{sb.YELLOW}❓ {next_status}{sb.RESET}"
-        print(f"  Branch Sync:   {fwd_str}")
+            pool_behind = sync.get('pool_behind', 0)
+            pool_ahead = sync.get('pool_ahead', 0)
+            pool_status = sync.get('pool_status', 'unknown')
+            if pool_behind > 0 and pool_ahead > 0:
+                b_s = 's' if pool_behind != 1 else ''
+                a_s = 's' if pool_ahead != 1 else ''
+                pool_str = f"{sb.RED}❌ Diverged (Behind {pool_behind} commit{b_s}, Ahead {pool_ahead} commit{a_s}){sb.RESET}"
+            elif pool_behind > 0:
+                b_s = 's' if pool_behind != 1 else ''
+                pool_str = f"{sb.YELLOW}📥 Behind central pool by {pool_behind} commit{b_s} (Pull needed){sb.RESET}"
+            elif pool_ahead > 0:
+                a_s = 's' if pool_ahead != 1 else ''
+                pool_sub = pool_submit.get_package_pool_submission_status(
+                    repo,
+                    target_project="openSUSE:Factory",
+                    pkg_dir=data.get('pkg_dir'),
+                    stable_branch=data.get('stable_branch', 'factory')
+                )
+                if pool_sub["status"] == "pending_outdated":
+                    req = pool_sub["request"]
+                    pool_str = f"{sb.CYAN}📤 Pending SR #{req['id']} is outdated (Newer changes in {req.get('source_project')}; supersede ready){sb.RESET}"
+                elif pool_sub["status"] == "pending":
+                    req = pool_sub["request"]
+                    pool_str = f"{sb.YELLOW}⏳ Pending SR #{req['id']} ({req['state']} from {req.get('source_project')}){sb.RESET}"
+                elif pool_sub["status"] == "accepted_pending_sync":
+                    req = pool_sub["request"]
+                    pool_str = f"{sb.GREEN}⏳ SR #{req['id']} accepted (awaiting central pool sync){sb.RESET}"
+                else:
+                    pool_str = f"{sb.CYAN}📤 Ahead of central pool by {pool_ahead} commit{a_s} (Submit needed){sb.RESET}"
+            elif pool_status == 'Not in Pool':
+                pool_str = f"{sb.YELLOW}❓ Not in Pool{sb.RESET}"
+            elif pool_status in ('Fetch failed', 'Error', 'unknown'):
+                pool_str = f"{sb.RED}⚠️ Failed to fetch pool ({pool_status}){sb.RESET}"
+            elif pool_status == 'In Sync':
+                pool_str = f"{sb.GREEN}✅ In Sync with pool{sb.RESET}"
+            else:
+                pool_str = f"{sb.YELLOW}❓ {pool_status}{sb.RESET}"
+            print(f"  Gitea Pool:    {pool_str}")
+
+            next_ahead = sync.get('next_ahead', 0)
+            next_behind = sync.get('next_behind', 0)
+            next_status = sync.get('next_status', 'unknown')
+            if next_status == 'No next branch':
+                fwd_str = '— (No unstable branch configured)'
+            elif next_status in ('Comparison failed', 'Error', 'unknown'):
+                fwd_str = f"{sb.RED}⚠️ Branch comparison failed ({next_status}){sb.RESET}"
+            elif next_behind > 0 and next_ahead > 0:
+                b_s = 's' if next_behind != 1 else ''
+                a_s = 's' if next_ahead != 1 else ''
+                fwd_str = f"{sb.RED}❌ Diverged (Behind {next_behind} commit{b_s}, Ahead {next_ahead} commit{a_s}){sb.RESET}"
+            elif next_behind > 0:
+                b_s = 's' if next_behind != 1 else ''
+                fwd_str = f"{sb.YELLOW}⚠️ Behind {st_branch} by {next_behind} commit{b_s} (Catch-up merge needed){sb.RESET}"
+            elif next_ahead > 0:
+                a_s = 's' if next_ahead != 1 else ''
+                if pr.get('has_forward_pr'):
+                    fwd_num = pr.get('number')
+                    pr_ref = f"PR #{fwd_num} pending" if fwd_num else "PR pending"
+                    fwd_str = f"{sb.GREEN}🔀 Ahead of {st_branch} by {next_ahead} commit{a_s} ({pr_ref}){sb.RESET}"
+                else:
+                    fwd_str = f"{sb.GREEN}🔀 Ahead of {st_branch} by {next_ahead} commit{a_s} (Ready for PR){sb.RESET}"
+            elif ahead > 0:
+                fwd_str = f"{sb.GREEN}✅ In Sync on remote{sb.RESET} {sb.CYAN}(local branch carries {ahead} unpushed commit{'s' if ahead > 1 else ''}){sb.RESET}"
+            elif next_status in ('In Sync', 'Ahead (ok)'):
+                fwd_str = f"{sb.GREEN}✅ In Sync{sb.RESET}"
+            else:
+                fwd_str = f"{sb.YELLOW}❓ {next_status}{sb.RESET}"
+            print(f"  Branch Sync:   {fwd_str}")
+            print()
 
         if pr.get('has_pr', False):
             prs = pr.get('prs', [])
@@ -238,28 +278,47 @@ def render_single_package_dashboard(data):
             actions.append(f"⚠️  Resolve merge conflicts in working tree: {sb.BOLD}git status / git mergetool{sb.RESET}")
         elif behind > 0:
             actions.append(f"🔄 Fast-forward from remote: {sb.BOLD}geckopit-cli --sync{sb.RESET}")
-        if pool_behind > 0:
-            actions.append(f"📥 Pull upstream changes from Pool: {sb.BOLD}git fetch https://src.opensuse.org/pool/{repo}.git factory && git merge FETCH_HEAD{sb.RESET}")
-        if pool_ahead > 0:
-            pool_sub = pool_submit.get_package_pool_submission_status(
-                repo,
-                target_project="openSUSE:Factory",
-                pkg_dir=data.get('pkg_dir'),
-                stable_branch=data.get('stable_branch', 'factory')
-            )
-            if pool_sub["status"] == "pending":
-                req = pool_sub["request"]
-                actions.append(f"⏳ Wait for pending SR #{req['id']} ({req['state']}) to merge in openSUSE:Factory")
-            elif pool_sub["status"] == "accepted_pending_sync":
-                req = pool_sub["request"]
-                actions.append(f"⏳ Wait for accepted SR #{req['id']} to sync into central pool")
+        head = wt.get('head') or branch
+        if head not in (st_branch, unst_branch):
+            stream_info = pool_submit.check_pool_stream_sync(data.get('pkg_dir', '.'), branch=head, pkg_name=repo)
+            if stream_info.get("exists"):
+                s_ahead = stream_info.get("ahead", 0)
+                s_behind = stream_info.get("behind", 0)
+                if s_behind > 0:
+                    actions.append(f"📥 Pull upstream changes from central pool ({head}): {sb.BOLD}git pull https://src.opensuse.org/pool/{repo}.git {head}{sb.RESET}")
+                if s_ahead > 0:
+                    actions.append(f"📤 Create Gitea Pull Request to central pool ({head}): {sb.BOLD}https://src.opensuse.org/pool/{repo}/pulls{sb.RESET}")
             else:
-                actions.append(f"📤 Submit changes to central pool (openSUSE:Factory): {sb.BOLD}geckopit-cli --submit-pool{sb.RESET}")
-        if next_behind > 0:
-            actions.append(f"🔀 Catch-up merge from {st_branch}: {sb.BOLD}git merge origin/{st_branch}{sb.RESET}")
-        # Only recommend PR if commits are actually on remote (ahead == 0) and not in active PR
-        if ahead == 0 and next_ahead > 0 and not pr.get('has_forward_pr'):
-            actions.append(f"📤 Create Gitea Pull Request from {branch} to {st_branch}")
+                cand_prj = pool_submit.get_git_obs_meta_project(data.get('pkg_dir'), branch=head)
+                if not cand_prj:
+                    actions.append(f"ℹ️  Current branch '{head}' has no OBS submission target. Switch to '{st_branch}' to submit to openSUSE:Factory: {sb.BOLD}git checkout {st_branch}{sb.RESET}")
+        else:
+            if pool_behind > 0:
+                actions.append(f"📥 Pull upstream changes from Pool: {sb.BOLD}git fetch https://src.opensuse.org/pool/{repo}.git factory && git merge FETCH_HEAD{sb.RESET}")
+            if pool_ahead > 0:
+                pool_sub = pool_submit.get_package_pool_submission_status(
+                    repo,
+                    target_project="openSUSE:Factory",
+                    pkg_dir=data.get('pkg_dir'),
+                    stable_branch=data.get('stable_branch', 'factory')
+                )
+                if pool_sub["status"] == "pending_outdated":
+                    req = pool_sub["request"]
+                    actions.append(f"📤 Supersede pending SR #{req['id']} with latest sources: {sb.BOLD}geckopit-cli --submit-pool{sb.RESET}")
+                elif pool_sub["status"] == "pending":
+                    req = pool_sub["request"]
+                    actions.append(f"⏳ Wait for pending SR #{req['id']} ({req['state']}) to merge in openSUSE:Factory")
+                elif pool_sub["status"] == "accepted_pending_sync":
+                    req = pool_sub["request"]
+                    actions.append(f"⏳ Wait for accepted SR #{req['id']} to sync into central pool")
+                else:
+                    actions.append(f"📤 Submit changes to central pool (openSUSE:Factory): {sb.BOLD}geckopit-cli --submit-pool{sb.RESET}")
+        if head in (st_branch, unst_branch):
+            if next_behind > 0:
+                actions.append(f"🔀 Catch-up merge from {st_branch}: {sb.BOLD}git merge origin/{st_branch}{sb.RESET}")
+            # Only recommend PR if commits are actually on remote (ahead == 0) and not in active PR
+            if ahead == 0 and next_ahead > 0 and not pr.get('has_forward_pr'):
+                actions.append(f"📤 Create Gitea Pull Request from {branch} to {st_branch}")
         if ver.get('needs_update'):
             target_v = u_latest if branch == 'next' and u_latest != '—' else u_stable
             p_dir = data.get('pkg_dir', '.')
@@ -1233,6 +1292,7 @@ def resolve_pool_workspace_context(target_pkg_dir=None, workspace_path="."):
                     return pkg_abs, s_abs, False
         except Exception:
             pass
+        return target_pkg_dir, workspace_path, False
 
     # 2. Workspace-wide context
     ws_abs = os.path.abspath(workspace_path)
@@ -1254,11 +1314,29 @@ def run_package_pool_submit(target_pkg_dir, message=None, dry_run=False, force=F
         print("", file=sys.stderr)
         target_pkg_dir = effective_dir
 
-    print(f"── {sb.BOLD}📤 Submitting {pkg_name} to openSUSE:Factory{sb.RESET} {'─'*35}")
+    active_br = "factory"
+    if os.path.exists(os.path.join(target_pkg_dir, ".git")):
+        try:
+            res_br = subprocess.run(["git", "-C", target_pkg_dir, "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True)
+            if res_br.returncode == 0 and res_br.stdout.strip():
+                active_br = res_br.stdout.strip()
+        except Exception:
+            pass
+
+    target_prj = "openSUSE:Factory"
+    target_hdr = "openSUSE:Factory"
+    if active_br != "factory":
+        stream_info = pool_submit.check_pool_stream_sync(target_pkg_dir, branch=active_br, pkg_name=pkg_name)
+        if stream_info.get("exists"):
+            target_prj = f"pool/{pkg_name}"
+            target_hdr = f"central pool ({active_br})"
+
+    print(f"── {sb.BOLD}📤 Submitting {pkg_name} to {target_hdr}{sb.RESET} {'─'*35}")
     ok, msg = pool_submit.submit_package_to_pool(
-        pkg_name,
-        target_pkg_dir,
-        target_project="openSUSE:Factory",
+        package_name=pkg_name,
+        package_dir=target_pkg_dir,
+        target_project=target_prj,
+        stable_branch=active_br if target_prj.startswith("pool/") else "factory",
         message=message,
         dry_run=dry_run,
         force=force
@@ -1661,9 +1739,16 @@ def main():
             pkg_name = os.path.basename(os.path.abspath(target_pkg_dir))
             st = pool_submit.get_package_pool_submission_status(pkg_name, target_project="openSUSE:Factory", pkg_dir=target_pkg_dir)
             print(f"── {sb.BOLD}🔍 Central Pool Status: {pkg_name}{sb.RESET} {'─'*35}")
-            if st["status"] == "pending":
+            if st["status"] == "pending_outdated":
                 r = st["request"]
-                print(f"  Status:         {sb.YELLOW}⏳ Pending Submit Request #{r['id']}{sb.RESET}")
+                print(f"  Status:         {sb.CYAN}📤 Pending SR #{r['id']} Outdated{sb.RESET} (Newer changes detected in {r.get('source_project')}; ready to supersede)")
+                print(f"  State:          {r['state']} (by @{r['creator']})")
+                print(f"  Source:         {r['source_project']}/{r['source_package']}")
+                print(f"  Target:         {r['target_project']}/{r['target_package']}")
+                print(f"  Action:         Run 'geckopit-cli --submit-pool' to supersede with latest sources")
+            elif st["status"] == "pending":
+                r = st["request"]
+                print(f"  Status:         {sb.YELLOW}⏳ Pending Submit Request #{r['id']}{sb.RESET} (Up-to-date with latest sources)")
                 print(f"  State:          {r['state']} (by @{r['creator']})")
                 print(f"  Source:         {r['source_project']}/{r['source_package']}")
                 print(f"  Target:         {r['target_project']}/{r['target_package']}")
@@ -1690,18 +1775,45 @@ def main():
                     else:
                         print(f"  Status:         {sb.GREEN}✅ Up-to-date with openSUSE:Factory{sb.RESET} (no unsubmitted differences)")
                 else:
-                    pool_submit.ensure_pool_ref_fresh(target_pkg_dir)
-                    pool_ahead = 0
+                    active_br = "factory"
                     try:
-                        ahead_res = subprocess.run(["git", "-C", target_pkg_dir, "rev-list", "refs/pool/factory..origin/factory", "--count"], capture_output=True, text=True)
-                        if ahead_res.returncode == 0:
-                            pool_ahead = int(ahead_res.stdout.strip() or "0")
+                        res_br = subprocess.run(["git", "-C", target_pkg_dir, "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True)
+                        if res_br.returncode == 0:
+                            active_br = res_br.stdout.strip()
                     except Exception:
                         pass
-                    if pool_ahead > 0:
-                        print(f"  Status:         {sb.CYAN}📤 Unsubmitted{sb.RESET} (Ahead of pool by {pool_ahead} commit{'s' if pool_ahead != 1 else ''}; ready for 'geckopit-cli --submit-pool')")
+                    if active_br != "factory":
+                        stream_info = pool_submit.check_pool_stream_sync(target_pkg_dir, branch=active_br, pkg_name=pkg_name)
+                        if stream_info.get("exists"):
+                            s_ahead = stream_info.get("ahead", 0)
+                            s_behind = stream_info.get("behind", 0)
+                            if s_ahead > 0 and s_behind > 0:
+                                print(f"  Status:         {sb.RED}❌ Diverged from central pool ({active_br}) (Behind {s_behind}, Ahead {s_ahead}){sb.RESET}")
+                            elif s_behind > 0:
+                                print(f"  Status:         {sb.YELLOW}📥 Behind central pool ({active_br}) by {s_behind} commit{'s' if s_behind != 1 else ''} (Pull needed){sb.RESET}")
+                            elif s_ahead > 0:
+                                print(f"  Status:         {sb.CYAN}📤 Ahead of central pool ({active_br}) by {s_ahead} commit{'s' if s_ahead != 1 else ''} (PR needed){sb.RESET}")
+                            else:
+                                print(f"  Status:         {sb.GREEN}✅ Up-to-date with central pool ({active_br}){sb.RESET} (0 commits ahead)")
+                        else:
+                            cand_prj = pool_submit.get_git_obs_meta_project(target_pkg_dir, branch=active_br)
+                            if cand_prj:
+                                print(f"  Status:         {sb.CYAN}ℹ️ Checked out on '{active_br}' (configured for {cand_prj} via git-obs){sb.RESET}")
+                            else:
+                                print(f"  Status:         {sb.YELLOW}⚠️ Checked out on '{active_br}' (not tracked in central pool; central pool tracks 'factory'){sb.RESET}")
                     else:
-                        print(f"  Status:         {sb.GREEN}✅ Up-to-date with central pool{sb.RESET} (0 commits ahead)")
+                        pool_submit.ensure_pool_ref_fresh(target_pkg_dir)
+                        pool_ahead = 0
+                        try:
+                            ahead_res = subprocess.run(["git", "-C", target_pkg_dir, "rev-list", "refs/pool/factory..origin/factory", "--count"], capture_output=True, text=True)
+                            if ahead_res.returncode == 0:
+                                pool_ahead = int(ahead_res.stdout.strip() or "0")
+                        except Exception:
+                            pass
+                        if pool_ahead > 0:
+                            print(f"  Status:         {sb.CYAN}📤 Unsubmitted{sb.RESET} (Ahead of pool by {pool_ahead} commit{'s' if pool_ahead != 1 else ''}; ready for 'geckopit-cli --submit-pool')")
+                        else:
+                            print(f"  Status:         {sb.GREEN}✅ Up-to-date with central pool{sb.RESET} (0 commits ahead)")
             sys.exit(0)
         else:
             sys.exit(run_pool_audit_cli(workspace_path=os.getcwd()))

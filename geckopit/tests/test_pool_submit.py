@@ -186,12 +186,22 @@ class TestPoolSubmit(unittest.TestCase):
             self.assertFalse(ok)
             self.assertIn("does not exist", msg)
 
-            # 2. Dirty worktree
+            # 2. Dirty worktree informs user but does not block
             with patch("subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(stdout=" M test.spec\n", returncode=0)
-                ok, msg = pool_submit.submit_package_to_pool("pkg", tmpdir)
-                self.assertFalse(ok)
-                self.assertIn("uncommitted changes", msg)
+                def side_effect_dirty(cmd, **kwargs):
+                    if "status" in cmd:
+                        return MagicMock(stdout=" M test.spec\n", returncode=0)
+                    if "rev-list" in cmd:
+                        return MagicMock(stdout="1", returncode=0)
+                    return MagicMock(stdout="", returncode=0)
+                mock_run.side_effect = side_effect_dirty
+                with patch("pool_submit.get_package_pool_submission_status", return_value={
+                    "status": "pending",
+                    "request": {"id": "12345", "state": "review", "source_project": "GNOME:Factory"}
+                }):
+                    ok, msg = pool_submit.submit_package_to_pool("pkg", tmpdir)
+                    self.assertFalse(ok)
+                    self.assertIn("request #12345", msg)
 
             # 3. Pending SR guard
             with patch("subprocess.run") as mock_run:
@@ -232,7 +242,7 @@ class TestPoolSubmit(unittest.TestCase):
                     self.assertFalse(ok)
                     self.assertIn("request #12346 was already accepted", msg)
 
-            # 5. Git managed target (scmsync)
+            # 5. Git managed target (scmsync) transitions to Gitea PR route
             with patch("subprocess.run") as mock_run:
                 def side_effect_git(cmd, **kwargs):
                     if "status" in cmd:
@@ -245,9 +255,10 @@ class TestPoolSubmit(unittest.TestCase):
                 mock_run.side_effect = side_effect_git
                 with patch("pool_submit.get_package_pool_submission_status", return_value={"status": "unsubmitted"}):
                     with patch("pool_submit.is_project_git_managed", return_value={"is_git": True, "scmsync_url": "https://src.opensuse.org/foo"}):
-                        ok, msg = pool_submit.submit_package_to_pool("pkg", tmpdir)
-                        self.assertFalse(ok)
+                        ok, msg = pool_submit.submit_package_to_pool("pkg", tmpdir, dry_run=True)
+                        self.assertTrue(ok)
                         self.assertIn("Git-managed", msg)
+                        self.assertIn("Pull Request", msg)
                         self.assertIn("Gitea Pull Request", msg)
 
             # 6. Dry run success
@@ -298,6 +309,261 @@ class TestPoolSubmit(unittest.TestCase):
                 ok, msg = pool_submit.submit_package_to_pool("shotwell", tmpdir, dry_run=True)
                 self.assertTrue(ok)
                 self.assertIn("Would execute: osc sr graphics shotwell openSUSE:Factory", msg)
+
+    def test_has_real_obs_diff(self):
+        # 1. Diff with only _scmsync.obsinfo and build.specials.obscpio -> False
+        meta_diff = """Index: _scmsync.obsinfo
+===================================================================
+--- _scmsync.obsinfo (revision 1)
++++ _scmsync.obsinfo (deleted)
+Index: build.specials.obscpio
+===================================================================
+Binary file build.specials.obscpio deleted
+"""
+        with patch("subprocess.run", return_value=MagicMock(stdout=meta_diff, returncode=0)):
+            has_diff, _ = pool_submit.has_real_obs_diff("devel:prj", "pkg")
+            self.assertFalse(has_diff)
+
+        # 2. Diff with spec or changes -> True
+        real_diff = """Index: pkg.changes
+===================================================================
+--- pkg.changes
++++ pkg.changes
+@@ -1 +1,3 @@
++- Update to 1.0
+"""
+        with patch("subprocess.run", return_value=MagicMock(stdout=real_diff, returncode=0)):
+            has_diff, _ = pool_submit.has_real_obs_diff("devel:prj", "pkg")
+            self.assertTrue(has_diff)
+
+    def test_parse_scmsync_and_git_remote(self):
+        # Test scmsync parsing
+        h, r, b = pool_submit.parse_scmsync("https://src.opensuse.org/dimstar/vlc#factory")
+        self.assertEqual(h, "src.opensuse.org")
+        self.assertEqual(r, "dimstar/vlc")
+        self.assertEqual(b, "factory")
+
+        h2, r2, b2 = pool_submit.parse_scmsync("https://src.opensuse.org/GNOME/mutter?trackingbranch=factory#abc1234")
+        self.assertEqual(h2, "src.opensuse.org")
+        self.assertEqual(r2, "GNOME/mutter")
+        self.assertEqual(b2, "factory")
+
+        # Test remote url parsing
+        lh1, lr1 = pool_submit.parse_git_remote_url("gitea@src.opensuse.org:dimstar/vlc.git")
+        self.assertEqual(lh1, "src.opensuse.org")
+        self.assertEqual(lr1, "dimstar/vlc")
+
+        lh2, lr2 = pool_submit.parse_git_remote_url("https://src.opensuse.org/GNOME/mutter")
+        self.assertEqual(lh2, "src.opensuse.org")
+        self.assertEqual(lr2, "GNOME/mutter")
+
+    def test_verify_scmsync_provenance(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create .git marker
+            os.makedirs(os.path.join(tmpdir, ".git"))
+
+            pkg_meta_xml = """<package name="vlc" project="multimedia:libs">
+  <scmsync>https://src.opensuse.org/dimstar/vlc#factory</scmsync>
+</package>"""
+            # 1. Matching provenance
+            def side_effect(cmd, **kwargs):
+                if "meta" in cmd:
+                    return MagicMock(stdout=pkg_meta_xml, returncode=0)
+                if "remote" in cmd:
+                    return MagicMock(stdout="gitea@src.opensuse.org:dimstar/vlc.git\n", returncode=0)
+                if "rev-parse" in cmd:
+                    return MagicMock(stdout="factory\n", returncode=0)
+                return MagicMock(stdout="", returncode=0)
+
+            with patch("subprocess.run", side_effect=side_effect):
+                ok, msg = pool_submit.verify_scmsync_provenance(tmpdir, "multimedia:libs", "vlc")
+                self.assertTrue(ok)
+                self.assertIn("verified", msg.lower())
+
+            # 2. Mismatching remote (fork)
+            def side_effect_fork(cmd, **kwargs):
+                if "meta" in cmd:
+                    return MagicMock(stdout=pkg_meta_xml, returncode=0)
+                if "remote" in cmd:
+                    return MagicMock(stdout="gitea@src.opensuse.org:someoneelse/vlc.git\n", returncode=0)
+                if "rev-parse" in cmd:
+                    return MagicMock(stdout="factory\n", returncode=0)
+                return MagicMock(stdout="", returncode=0)
+
+            with patch.dict(pool_submit._SCMSYNC_CACHE, clear=True):
+                with patch("subprocess.run", side_effect=side_effect_fork):
+                    ok, msg = pool_submit.verify_scmsync_provenance(tmpdir, "multimedia:libs", "vlc")
+                    self.assertFalse(ok)
+                    self.assertIn("does not match current repository", msg)
+
+    def test_get_obs_scmsync_commit(self):
+        log_out = """----------------------------------------------------------------------------
+r367 | unknown | 2026-10-22 14:14:00 | 6341df4d71d5bcfef3f4adb4394a2231 | 3.0.24 |
+
+[info=30589ec2c0f9ee84102a0c24c4c9a9985cdf72d9e9c95463a7d8e62944293146]
+"""
+        with patch("subprocess.run", return_value=MagicMock(stdout=log_out, returncode=0)):
+            commit = pool_submit.get_obs_scmsync_commit("multimedia:libs", "vlc")
+            self.assertEqual(commit, "30589ec2c0f9ee84102a0c24c4c9a9985cdf72d9e9c95463a7d8e62944293146")
+
+    def test_is_accepted_sr_already_synced_with_obs_diff(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sr = {
+                "id": "1386327",
+                "state": "accepted",
+                "source_project": "multimedia:libs",
+                "description": ""
+            }
+            # When real differences exist in OBS between multimedia:libs and openSUSE:Factory
+            with patch("pool_submit.has_real_obs_diff", return_value=(True, "diff text")):
+                synced = pool_submit.is_accepted_sr_already_synced(tmpdir, sr, stable_branch="factory")
+                self.assertTrue(synced)
+
+            # When no differences exist
+            with patch("pool_submit.has_real_obs_diff", return_value=(False, "")):
+                synced = pool_submit.is_accepted_sr_already_synced(tmpdir, sr, stable_branch="factory")
+                self.assertFalse(synced)
+
+    def test_get_git_obs_meta_project(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # 1. Without .git -> None
+            self.assertIsNone(pool_submit.get_git_obs_meta_project(tmpdir, branch="factory"))
+
+            # 2. With .git and meta.json
+            obs_dir = os.path.join(tmpdir, ".git", "obs", "factory")
+            os.makedirs(obs_dir)
+            with open(os.path.join(obs_dir, "meta.json"), "w") as f:
+                json.dump({"project": "multimedia:libs"}, f)
+
+            proj = pool_submit.get_git_obs_meta_project(tmpdir, branch="factory")
+            self.assertEqual(proj, "multimedia:libs")
+
+            # 3. Branch without meta.json -> None
+            self.assertIsNone(pool_submit.get_git_obs_meta_project(tmpdir, branch="leap-16.1"))
+
+    def test_resolve_source_obs_project_git_obs_meta(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            obs_dir = os.path.join(tmpdir, ".git", "obs", "factory")
+            os.makedirs(obs_dir)
+            with open(os.path.join(obs_dir, "meta.json"), "w") as f:
+                json.dump({"project": "multimedia:libs"}, f)
+
+            proj = pool_submit.resolve_source_obs_project(tmpdir, branch="factory")
+            self.assertEqual(proj, "multimedia:libs")
+
+    def test_check_pool_stream_sync(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            def side_effect(cmd, **kwargs):
+                if "fetch" in cmd:
+                    return MagicMock(returncode=0)
+                if "rev-list" in cmd:
+                    return MagicMock(stdout="0\n", returncode=0)
+                return MagicMock(stdout="", returncode=0)
+
+            with patch("subprocess.run", side_effect=side_effect):
+                res = pool_submit.check_pool_stream_sync(tmpdir, branch="leap-16.1", pkg_name="vlc")
+                self.assertTrue(res["exists"])
+                self.assertEqual(res["ahead"], 0)
+                self.assertEqual(res["behind"], 0)
+
+    def test_submit_package_to_pool_stream_creates_pr(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, ".git"))
+            def side_effect(cmd, **kwargs):
+                if "rev-parse" in cmd and "--abbrev-ref" in cmd:
+                    return MagicMock(stdout="leap-16.1\n", returncode=0)
+                if "rev-list" in cmd:
+                    return MagicMock(stdout="2\n", returncode=0)
+                if "remote" in cmd:
+                    return MagicMock(stdout="gitea@src.opensuse.org:dimstar/pkg.git\n", returncode=0)
+                return MagicMock(stdout="", returncode=0)
+
+            with patch("subprocess.run", side_effect=side_effect):
+                with patch("pool_submit.check_pool_stream_sync", return_value={"exists": True, "ahead": 2, "behind": 0}):
+                    ok, msg = pool_submit.submit_package_to_pool("pkg", tmpdir, dry_run=True)
+                    self.assertTrue(ok)
+                    self.assertIn("Pull Request", msg)
+                    self.assertIn("pool/pkg:leap-16.1", msg)
+    def test_submit_package_to_pool_branch_mismatch_halts_first(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, ".git"))
+            # When active branch is my-feature and devel project tracks factory
+            def side_effect(cmd, **kwargs):
+                if "rev-parse" in cmd and "--abbrev-ref" in cmd:
+                    return MagicMock(stdout="my-feature\n", returncode=0)
+                if "status" in cmd:
+                    return MagicMock(stdout="", returncode=0)
+                if "meta" in cmd:
+                    return MagicMock(stdout="<package name=\"pkg\" project=\"multimedia:libs\"><scmsync>https://src.opensuse.org/dimstar/pkg#factory</scmsync></package>", returncode=0)
+                if "remote" in cmd:
+                    return MagicMock(stdout="gitea@src.opensuse.org:dimstar/pkg.git\n", returncode=0)
+                return MagicMock(stdout="", returncode=0)
+
+            with patch.dict(pool_submit._SCMSYNC_CACHE, clear=True):
+                with patch("pool_submit.check_pool_stream_sync", return_value={"exists": False}):
+                    with patch("subprocess.run", side_effect=side_effect):
+                        with patch("pool_submit.resolve_source_obs_project", return_value="multimedia:libs"):
+                            ok, msg = pool_submit.submit_package_to_pool("pkg", tmpdir)
+                            self.assertFalse(ok)
+                            self.assertIn("synchronizes branch 'factory', which does not match current branch 'my-feature'", msg)
+
+    def test_get_source_package_srcmd5(self):
+        xml_out = "<directory name=\"pkg\" rev=\"10\" srcmd5=\"abc123456789\" />"
+        with patch("subprocess.run", return_value=MagicMock(stdout=xml_out, returncode=0)):
+            md5 = pool_submit.get_source_package_srcmd5("devel:prj", "pkg")
+            self.assertEqual(md5, "abc123456789")
+
+    def test_get_package_pool_submission_status_outdated_pending_sr(self):
+        pending = {
+            "vlc": [{
+                "id": "1387152",
+                "state": "review",
+                "source_project": "multimedia:libs",
+                "source_package": "vlc",
+                "source_rev": "old_md5_111"
+            }]
+        }
+        # 1. When current srcmd5 in OBS matches source_rev -> pending (up-to-date)
+        with patch("pool_submit.get_source_package_srcmd5", return_value="old_md5_111"):
+            st = pool_submit.get_package_pool_submission_status("vlc", pending_requests=pending)
+            self.assertEqual(st["status"], "pending")
+            self.assertFalse(st["is_outdated"])
+
+        # 2. When current srcmd5 in OBS is newer -> pending_outdated
+        with patch("pool_submit.get_source_package_srcmd5", return_value="new_md5_222"):
+            st = pool_submit.get_package_pool_submission_status("vlc", pending_requests=pending)
+            self.assertEqual(st["status"], "pending_outdated")
+            self.assertTrue(st["is_outdated"])
+
+    def test_submit_package_to_pool_supersede_outdated_sr(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, ".git"))
+            def side_effect(cmd, **kwargs):
+                if "rev-parse" in cmd and "--abbrev-ref" in cmd:
+                    return MagicMock(stdout="factory\n", returncode=0)
+                if "rev-list" in cmd:
+                    return MagicMock(stdout="1\n", returncode=0)
+                if "meta" in cmd:
+                    return MagicMock(stdout="<package name=\"pkg\" project=\"multimedia:libs\"><scmsync>https://src.opensuse.org/dimstar/pkg#factory</scmsync></package>", returncode=0)
+                if "remote" in cmd:
+                    return MagicMock(stdout="gitea@src.opensuse.org:dimstar/pkg.git\n", returncode=0)
+                return MagicMock(stdout="", returncode=0)
+
+            outdated_status = {
+                "status": "pending_outdated",
+                "request_id": "1387152",
+                "request": {"id": "1387152", "state": "review", "source_project": "multimedia:libs", "source_rev": "old_md5"}
+            }
+
+            with patch.dict(pool_submit._SCMSYNC_CACHE, clear=True):
+                with patch("subprocess.run", side_effect=side_effect):
+                    with patch("pool_submit.resolve_source_obs_project", return_value="multimedia:libs"):
+                        with patch("pool_submit.get_package_pool_submission_status", return_value=outdated_status):
+                            with patch("pool_submit.has_real_obs_diff", return_value=(True, "diff")):
+                                ok, msg = pool_submit.submit_package_to_pool("pkg", tmpdir, dry_run=True)
+                                self.assertTrue(ok)
+                                self.assertIn("Would supersede pending SR #1387152", msg)
+                                self.assertIn("-s 1387152 --yes", msg)
 
 if __name__ == "__main__":
     unittest.main()
