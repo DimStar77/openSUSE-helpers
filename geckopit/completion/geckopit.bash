@@ -125,6 +125,36 @@ print(' '.join(sorted(prs)))
 " "$cur_pkg" 2>/dev/null
 }
 
+_geckopit_get_ignored_versions() {
+    local cur_pkg="$1"
+    python3 -c "
+import json, os, sys
+
+pkg = sys.argv[1] if len(sys.argv) > 1 else ''
+if not pkg:
+    pkg = os.path.basename(os.getcwd())
+
+p = os.path.expanduser('~/.config/geckopit.json')
+vers = set(['all'])
+if os.path.isfile(p):
+    try:
+        d = json.load(open(p))
+        act = d.get('active_workspace') or d.get('active_profile') or 'Default'
+        ws = d.get('workspaces', {}).get(act) or d.get('profiles', {}).get(act) or {}
+        ign = ws.get('ignored_versions') or ws.get('ignored_unstable_versions') or {}
+        raw = ign.get(pkg) or ign.get(os.path.basename(pkg))
+        if raw:
+            for item in str(raw).split(','):
+                item = item.strip()
+                if item:
+                    vers.add(item)
+    except Exception:
+        pass
+
+print(' '.join(sorted(vers)))
+" "$cur_pkg" 2>/dev/null
+}
+
 _geckopit_completion() {
     local cur prev words cword
     if type _init_completion >/dev/null 2>&1; then
@@ -135,7 +165,7 @@ _geckopit_completion() {
         prev="${COMP_WORDS[COMP_CWORD-1]}"
     fi
 
-    local options="--check-patches --verbose --sle --rebase-patch --shell --list-prs --merge-pr --squash --no-commit --upgrade -u --commit -c --no-edit --audit-deps -d --fix-deps --sync -s --fetch --force -f --jobs -j --version -v --branch -b --profile -p --package --not-in-pool --include-not-in-pool --check-pool --submit-pool --pending-sr --pending-requests --message -m --all -a --yes -y --guide --docs --check-setup --setup --dry-run -n --help -h --bash-completion"
+    local options="--ignore --unignore --list-ignored --check-patches --verbose --sle --rebase-patch --shell --list-prs --merge-pr --squash --no-commit --upgrade -u --commit -c --no-edit --audit-deps -d --fix-deps --sync -s --fetch --force -f --jobs -j --version -v --branch -b --profile -p --package --not-in-pool --include-not-in-pool --check-pool --submit-pool --pending-sr --pending-requests --message -m --all -a --yes -y --guide --docs --check-setup --setup --dry-run -n --help -h --bash-completion"
     local branches="factory next stable unstable"
 
     case "$prev" in
@@ -179,6 +209,30 @@ _geckopit_completion() {
             done
             local up_targets=$(_geckopit_get_upgrade_targets "$cand_pkg")
             COMPREPLY=( $(compgen -W "$up_targets" -- "$cur") )
+            return 0
+            ;;
+        --ignore)
+            local cand_pkg=""
+            for w in "${COMP_WORDS[@]}"; do
+                if [[ "$w" != -* && "$w" != "geckopit"* && "$w" != "$cur" ]]; then
+                    cand_pkg="$w"
+                    break
+                fi
+            done
+            local up_targets=$(_geckopit_get_upgrade_targets "$cand_pkg")
+            COMPREPLY=( $(compgen -W "$up_targets" -- "$cur") )
+            return 0
+            ;;
+        --unignore)
+            local cand_pkg=""
+            for w in "${COMP_WORDS[@]}"; do
+                if [[ "$w" != -* && "$w" != "geckopit"* && "$w" != "$cur" ]]; then
+                    cand_pkg="$w"
+                    break
+                fi
+            done
+            local ign_targets=$(_geckopit_get_ignored_versions "$cand_pkg")
+            COMPREPLY=( $(compgen -W "$ign_targets" -- "$cur") )
             return 0
             ;;
     esac

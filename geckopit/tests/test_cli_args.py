@@ -59,6 +59,12 @@ class TestCliArgs(unittest.TestCase):
             ["libnotify", "--submit-pool", "--dry-run"],
             ["--submit-pool", "--all", "--yes"],
             ["--submit-pool", "-m", "Update version"],
+            ["--ignore", "0.6.0"],
+            ["--ignore=0.6.0"],
+            ["--unignore", "0.6.0"],
+            ["--unignore=all"],
+            ["--list-ignored"],
+            ["lasem", "--ignore", "0.6.0"],
         ]
         for args in valid_cases:
             err = geckopit_cli.validate_cli_options(args)
@@ -87,6 +93,10 @@ class TestCliArgs(unittest.TestCase):
         self.assertIsNotNone(err_commit)
         self.assertIn("Unrecognized option '--comit'", err_commit)
         self.assertIn("Did you mean '--commit'?", err_commit)
+
+        err_ign = geckopit_cli.validate_cli_options(["--ignre"])
+        self.assertIsNotNone(err_ign)
+        self.assertIn("Did you mean '--ignore'?", err_ign)
 
     def test_unknown_option_without_suggestion(self):
         """Tests completely unrecognized options without suggestions."""

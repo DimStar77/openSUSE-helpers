@@ -8,6 +8,8 @@ sync checking, upstream upgrades, and defensive commits.
 
 import os
 import sys
+import json
+from pathlib import Path
 import concurrent.futures
 import locale
 import difflib
@@ -238,28 +240,40 @@ def render_single_package_dashboard(data):
     n_ver = ver.get('next_ver', '—')
     u_latest = ver.get('upstream_latest', '—')
 
+    is_ignored_stable = ver.get('is_ignored_stable', False)
+    is_ignored_unstable = ver.get('is_ignored_unstable', False)
+
     head = wt.get('head') or branch
     if head not in (st_branch, unst_branch):
         lbl = f"Release ({head}):"
         if sb.is_version_newer(u_stable, f_ver, repo):
-            matching_pr = next((p for p in pr.get('prs', []) if p.get('base') == head), None)
-            pr_annot = f" {sb.CYAN}[PR #{matching_pr['number']} pending]{sb.RESET}" if matching_pr else ""
-            status = f"{sb.YELLOW}🔺 Update available: {f_ver} ➔ {u_stable}{sb.RESET}{pr_annot}"
+            if is_ignored_stable:
+                status = f"{sb.DIM}⏸️  Ignored: {f_ver} ➔ {u_stable}{sb.RESET}"
+            else:
+                matching_pr = next((p for p in pr.get('prs', []) if p.get('base') == head), None)
+                pr_annot = f" {sb.CYAN}[PR #{matching_pr['number']} pending]{sb.RESET}" if matching_pr else ""
+                status = f"{sb.YELLOW}🔺 Update available: {f_ver} ➔ {u_stable}{sb.RESET}{pr_annot}"
         else:
             status = f"{sb.GREEN}✅ Up-to-date ({f_ver}){sb.RESET}"
         print(f"  {lbl:<15} {status}")
     else:
         if sb.is_version_newer(u_stable, f_ver, repo):
-            matching_pr = next((p for p in pr.get('prs', []) if p.get('base') == st_branch), None)
-            pr_annot = f" {sb.CYAN}[PR #{matching_pr['number']} pending]{sb.RESET}" if matching_pr else ""
-            f_status = f"{sb.YELLOW}🔺 Update available: {f_ver} ➔ {u_stable}{sb.RESET}{pr_annot}"
+            if is_ignored_stable:
+                f_status = f"{sb.DIM}⏸️  Ignored: {f_ver} ➔ {u_stable}{sb.RESET}"
+            else:
+                matching_pr = next((p for p in pr.get('prs', []) if p.get('base') == st_branch), None)
+                pr_annot = f" {sb.CYAN}[PR #{matching_pr['number']} pending]{sb.RESET}" if matching_pr else ""
+                f_status = f"{sb.YELLOW}🔺 Update available: {f_ver} ➔ {u_stable}{sb.RESET}{pr_annot}"
         else:
             f_status = f"{sb.GREEN}✅ Up-to-date ({f_ver}){sb.RESET}"
         print(f"  Stable:        {f_status}")
 
     if n_ver != '—':
         if sb.is_version_newer(u_latest, n_ver, repo):
-            n_status = f"{sb.YELLOW}🔺 Update available: {n_ver} ➔ {u_latest}{sb.RESET}"
+            if is_ignored_unstable:
+                n_status = f"{sb.DIM}⏸️  Ignored: {n_ver} ➔ {u_latest}{sb.RESET}"
+            else:
+                n_status = f"{sb.YELLOW}🔺 Update available: {n_ver} ➔ {u_latest}{sb.RESET}"
         else:
             n_status = f"{sb.GREEN}✅ Up-to-date ({n_ver}){sb.RESET}"
         print(f"  Unstable:      {n_status}")
@@ -389,7 +403,7 @@ def run_single_package_version(pkg_dir=".", branch=None):
     prof = sb.load_geckopit_profile_config()
     st_b = prof.get("stable_branch", "factory") or "factory"
     unst_b = prof.get("unstable_branch", "next") or "next"
-    ignored = prof.get("ignored_unstable_versions", {})
+    ignored = prof.get("ignored_versions") or prof.get("ignored_unstable_versions", {})
 
     _, data = sb.check_repo_version(pkg_name, branch, st_b, unst_b, parent_dir, ignored)
     print(f"\n📦 {sb.BOLD}Package Upstream Version: {sb.CYAN}{pkg_name}{sb.RESET}")
@@ -861,7 +875,7 @@ def run_sync_check(repos, include_not_in_pool=False):
 
 def run_version_check(repos, branch=None):
     prof = sb.load_geckopit_profile_config()
-    ignored_versions = prof.get("ignored_unstable_versions", {})
+    ignored_versions = prof.get("ignored_versions") or prof.get("ignored_unstable_versions", {})
     total = len(repos)
     if branch:
         print(f"Checking {branch} versions for {total} packages against release-monitoring.org (30 threads)...", file=sys.stderr)
@@ -1488,6 +1502,7 @@ KNOWN_OPTIONS = {
     "--commit", "-c", "--no-edit",
     "--audit-deps", "-d", "--fix-deps",
     "--list-prs", "--merge-pr", "--squash", "--no-commit",
+    "--ignore", "--unignore", "--list-ignored",
     "--submit-pool", "--check-pool", "--pending-sr", "--pending-requests",
     "--message", "-m", "--all", "-a", "--yes", "-y",
     "--check-setup", "--setup",
@@ -1500,6 +1515,126 @@ KNOWN_OPTIONS = {
     "--profile", "--package",
     "--help", "-h"
 }
+
+
+def run_ignore_version_action(pkg_dir, version_to_ignore=None, profile_override=None):
+    prof = sb.load_geckopit_profile_config(workspace_dir=profile_override)
+    ws_name = prof.get("active_workspace", "Default")
+    cfg_path = Path.home() / ".config" / "geckopit.json"
+
+    if pkg_dir and sb.is_package_dir(pkg_dir):
+        pkg_name = sb.get_package_name_from_dir(pkg_dir) or os.path.basename(os.path.abspath(pkg_dir))
+    else:
+        print(f"{sb.RED}[Error]{sb.RESET} Must specify a package name or run inside a package checkout.", file=sys.stderr)
+        return 1
+
+    if not version_to_ignore:
+        _, ver_data = sb.check_repo_version(pkg_name, workspace_path=os.path.dirname(os.path.abspath(pkg_dir)) or ".", skip_fetch=True)
+        version_to_ignore = ver_data.get("upstream_latest") or ver_data.get("upstream_stable")
+        if not version_to_ignore or version_to_ignore in ("—", "N/A"):
+            print(f"{sb.RED}[Error]{sb.RESET} Could not determine latest upstream version for {pkg_name}. Please specify a version explicitly: geckopit-cli --ignore <version> {pkg_name}", file=sys.stderr)
+            return 1
+
+    config_data = {}
+    if cfg_path.exists():
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                config_data = json.load(f)
+        except Exception:
+            pass
+
+    workspaces = config_data.get("workspaces", {})
+    if ws_name not in workspaces:
+        workspaces[ws_name] = {}
+    ws_profile = workspaces[ws_name]
+
+    if "ignored_versions" not in ws_profile:
+        ws_profile["ignored_versions"] = dict(ws_profile.get("ignored_unstable_versions", {}))
+
+    cur_ign = ws_profile.get("ignored_versions", {}).get(pkg_name)
+    if cur_ign:
+        existing = [v.strip() for v in str(cur_ign).split(",") if v.strip()]
+        if not any(sb.is_version_equal(version_to_ignore, e, pkg_name) for e in existing):
+            existing.append(version_to_ignore)
+        ws_profile["ignored_versions"][pkg_name] = ", ".join(existing)
+    else:
+        ws_profile["ignored_versions"][pkg_name] = version_to_ignore
+
+    ws_profile["ignored_unstable_versions"] = dict(ws_profile["ignored_versions"])
+
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(cfg_path, "w", encoding="utf-8") as f:
+        json.dump(config_data, f, indent=2)
+
+    print(f"{sb.GREEN}🚫 Version {sb.BOLD}{version_to_ignore}{sb.RESET}{sb.GREEN} is now ignored for {sb.BOLD}{pkg_name}{sb.RESET}{sb.GREEN} (profile: {ws_name}).{sb.RESET}")
+    return 0
+
+
+def run_unignore_version_action(pkg_dir, version_to_unignore="all", profile_override=None):
+    prof = sb.load_geckopit_profile_config(workspace_dir=profile_override)
+    ws_name = prof.get("active_workspace", "Default")
+    cfg_path = Path.home() / ".config" / "geckopit.json"
+
+    if pkg_dir and sb.is_package_dir(pkg_dir):
+        pkg_name = sb.get_package_name_from_dir(pkg_dir) or os.path.basename(os.path.abspath(pkg_dir))
+    else:
+        print(f"{sb.RED}[Error]{sb.RESET} Must specify a package name or run inside a package checkout.", file=sys.stderr)
+        return 1
+
+    config_data = {}
+    if cfg_path.exists():
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                config_data = json.load(f)
+        except Exception:
+            pass
+
+    workspaces = config_data.get("workspaces", {})
+    ws_profile = workspaces.get(ws_name, {})
+    ignored_dict = ws_profile.get("ignored_versions") or ws_profile.get("ignored_unstable_versions", {})
+
+    if pkg_name not in ignored_dict:
+        print(f"{sb.YELLOW}ℹ️  No ignored versions configured for {pkg_name} in profile '{ws_name}'.{sb.RESET}")
+        return 0
+
+    cur_ign = ignored_dict[pkg_name]
+    if not version_to_unignore or version_to_unignore.lower() == "all":
+        del ignored_dict[pkg_name]
+        msg = f"All ignored versions removed for {pkg_name}"
+    else:
+        existing = [v.strip() for v in str(cur_ign).split(",") if v.strip()]
+        remaining = [e for e in existing if not sb.is_version_equal(version_to_unignore, e, pkg_name)]
+        if remaining:
+            ignored_dict[pkg_name] = ", ".join(remaining)
+            msg = f"Version {version_to_unignore} is no longer ignored for {pkg_name}"
+        else:
+            del ignored_dict[pkg_name]
+            msg = f"Version {version_to_unignore} is no longer ignored for {pkg_name}"
+
+    ws_profile["ignored_versions"] = dict(ignored_dict)
+    ws_profile["ignored_unstable_versions"] = dict(ignored_dict)
+
+    with open(cfg_path, "w", encoding="utf-8") as f:
+        json.dump(config_data, f, indent=2)
+
+    print(f"{sb.GREEN}🔄 {msg} (profile: {ws_name}).{sb.RESET}")
+    return 0
+
+
+def run_list_ignored_action(profile_override=None):
+    prof = sb.load_geckopit_profile_config(workspace_dir=profile_override)
+    ws_name = prof.get("active_workspace", "Default")
+    ignored = prof.get("ignored_versions") or prof.get("ignored_unstable_versions", {})
+
+    print(f"── {sb.BOLD}🚫 Ignored Package Versions{sb.RESET} (profile: {sb.CYAN}{ws_name}{sb.RESET}) {'─'*35}")
+    if not ignored:
+        print(f"  {sb.DIM}No ignored package versions configured for profile '{ws_name}'.{sb.RESET}\n")
+        return 0
+
+    for pkg, vers in sorted(ignored.items()):
+        print(f"  • {sb.BOLD}{pkg:<25}{sb.RESET} {sb.YELLOW}{vers}{sb.RESET}")
+    print()
+    return 0
 
 
 def validate_cli_options(args):
@@ -1544,6 +1679,10 @@ def print_help():
     print(f"  {sb.BOLD}--check-pool{sb.RESET}       Audits workspace or package for pending Factory submit requests.")
     print(f"  {sb.BOLD}--submit-pool [p]{sb.RESET}  Submits package changes to central pool (openSUSE:Factory) via osc sr.")
     print(f"  {sb.BOLD}--todo{sb.RESET}             Alias for default sync checking mode.")
+    print(f"\n{sb.BOLD}Version Ignoring & Monitoring:{sb.RESET}")
+    print(f"  {sb.BOLD}--ignore [VER] [pkg]{sb.RESET}  Ignores an upstream release version for a package.")
+    print(f"  {sb.BOLD}--unignore <VER|all> [pkg]{sb.RESET} Removes an ignored version rule for a package.")
+    print(f"  {sb.BOLD}--list-ignored{sb.RESET}        Lists all ignored package versions in active profile.")
     print(f"\n{sb.BOLD}Package Upgrades & Spec Tools:{sb.RESET}")
     print(f"  {sb.BOLD}-u, --upgrade [REV]{sb.RESET}")
     print("                     Upgrades package to specified revision (default: @PARENT_TAG@).")
@@ -1608,6 +1747,31 @@ def main():
         print(f"{sb.RED}{err}{sb.RESET}", file=sys.stderr)
         sys.exit(1)
 
+    # Parse version ignore options
+    show_list_ignored = "--list-ignored" in sys.argv
+    ignore_ver = None
+    show_ignore = False
+    unignore_ver = None
+    show_unignore = False
+
+    for idx, arg in enumerate(sys.argv):
+        if arg == "--ignore":
+            show_ignore = True
+            if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("-") and not sb.is_package_dir(sys.argv[idx + 1]):
+                ignore_ver = sys.argv[idx + 1]
+        elif arg.startswith("--ignore="):
+            show_ignore = True
+            ignore_ver = arg.split("=", 1)[1]
+        elif arg == "--unignore":
+            show_unignore = True
+            if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("-") and not sb.is_package_dir(sys.argv[idx + 1]):
+                unignore_ver = sys.argv[idx + 1]
+            else:
+                unignore_ver = "all"
+        elif arg.startswith("--unignore="):
+            show_unignore = True
+            unignore_ver = arg.split("=", 1)[1]
+
     # Parse upgrade options first to separate version parameters from target directories
     show_upgrade = False
     upgrade_rev = None
@@ -1632,7 +1796,7 @@ def main():
     # Detect if a target package argument was provided (e.g. 'geckopit-cli baobab')
     target_arg = None
     for arg in sys.argv[1:]:
-        if not arg.startswith("-") and arg != upgrade_rev and arg != merge_pr_id and arg not in ("factory", "next", "stable", "unstable"):
+        if not arg.startswith("-") and arg != upgrade_rev and arg != merge_pr_id and arg != ignore_ver and arg != unignore_ver and arg not in ("factory", "next", "stable", "unstable"):
             target_arg = arg
             break
 
@@ -1650,6 +1814,15 @@ def main():
                 if p == target_arg or os.path.basename(p) == target_arg:
                     target_pkg_dir = p
                     break
+
+    if show_list_ignored:
+        sys.exit(run_list_ignored_action())
+
+    if show_ignore:
+        sys.exit(run_ignore_version_action(target_pkg_dir or target_arg, version_to_ignore=ignore_ver))
+
+    if show_unignore:
+        sys.exit(run_unignore_version_action(target_pkg_dir or target_arg, version_to_unignore=unignore_ver or "all"))
 
     # Parse sync options
     show_sync = "--sync" in sys.argv or "-s" in sys.argv or "--fetch" in sys.argv

@@ -31,6 +31,10 @@ class TestBashCompletion(unittest.TestCase):
         self.assertIn("complete -F _geckopit_completion geckopit-cli", res_cli.stdout)
         self.assertIn("_geckopit_get_packages", res_cli.stdout)
         self.assertIn("_geckopit_get_upgrade_targets", res_cli.stdout)
+        self.assertIn("_geckopit_get_ignored_versions", res_cli.stdout)
+        self.assertIn("--ignore", res_cli.stdout)
+        self.assertIn("--unignore", res_cli.stdout)
+        self.assertIn("--list-ignored", res_cli.stdout)
 
 
 if __name__ == '__main__':
