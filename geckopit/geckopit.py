@@ -897,6 +897,41 @@ class WorkspaceConfig:
         except Exception:
             pass
 
+    def get_profile_filters(self, ws_name=None):
+        name = ws_name or self.active_workspace
+        prof = self.workspaces.get(name, {}) if isinstance(self.workspaces, dict) else {}
+        default_filters = {
+            "needs_action": True,
+            "pool": False,
+            "stable": False,
+            "unstable": False,
+            "forwarding": False,
+        }
+        filters = prof.get("filters", {})
+        if not isinstance(filters, dict):
+            return default_filters
+        return {
+            "needs_action": bool(filters.get("needs_action", True)),
+            "pool": bool(filters.get("pool", False)),
+            "stable": bool(filters.get("stable", False)),
+            "unstable": bool(filters.get("unstable", False)),
+            "forwarding": bool(filters.get("forwarding", False)),
+        }
+
+    def set_profile_filters(self, filters, ws_name=None):
+        name = ws_name or self.active_workspace
+        if isinstance(self.workspaces, dict) and name in self.workspaces:
+            if not isinstance(self.workspaces[name], dict):
+                self.workspaces[name] = {}
+            self.workspaces[name]["filters"] = {
+                "needs_action": bool(filters.get("needs_action", True)),
+                "pool": bool(filters.get("pool", False)),
+                "stable": bool(filters.get("stable", False)),
+                "unstable": bool(filters.get("unstable", False)),
+                "forwarding": bool(filters.get("forwarding", False)),
+            }
+            self.save()
+
     def get_active_profile(self):
         return self.workspaces.get(self.active_workspace, {
             "stable_path": "",
@@ -1726,12 +1761,17 @@ class WorkspaceManagerDialog(Gtk.Window):
                 if self.editing_ws_name in self.config.workspaces:
                     del self.config.workspaces[self.editing_ws_name]
 
+        existing_filters = {}
+        if not self.is_adding_new and self.editing_ws_name and self.editing_ws_name in self.config.workspaces:
+            existing_filters = self.config.workspaces[self.editing_ws_name].get("filters", {})
+
         self.config.workspaces[ws_name] = {
             "stable_path": stable_p,
             "stable_branch": stable_b,
             "unstable_path": unstable_p,
             "unstable_branch": unstable_b,
-            "ignored_unstable_versions": dict(getattr(self, "current_ignored_versions", {}))
+            "ignored_unstable_versions": dict(getattr(self, "current_ignored_versions", {})),
+            "filters": existing_filters or {"needs_action": True, "pool": False, "stable": False, "unstable": False, "forwarding": False}
         }
 
         self.config.active_workspace = ws_name
@@ -1893,6 +1933,9 @@ class SyncWindow(Adw.ApplicationWindow):
         # Apply profile configuration UI states dynamically on startup
         self.apply_active_profile_ui()
 
+        # Restore saved filter combination for active profile
+        self.restore_active_profile_filters()
+
         # Vertical split pane: Top is horizontal split, Bottom is terminal drawer
         self.main_paned = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
         self.main_paned.set_start_child(self.horizontal_paned)
@@ -2011,11 +2054,13 @@ class SyncWindow(Adw.ApplicationWindow):
 
     def on_close_request(self, window):
         """Gracefully dismantles GLib timers, closes thread pools, and terminates shell children."""
-        if hasattr(self, "horizontal_paned") and hasattr(self, "config"):
-            pos = self.horizontal_paned.get_position()
-            if pos >= 460:
-                self.config.sidebar_width = pos
-                self.config.save()
+        if hasattr(self, "config"):
+            self.save_current_profile_filters()
+            if hasattr(self, "horizontal_paned"):
+                pos = self.horizontal_paned.get_position()
+                if pos >= 460:
+                    self.config.sidebar_width = pos
+            self.config.save()
 
         if hasattr(self, "timeout_id") and self.timeout_id:
             GLib.Source.remove(self.timeout_id)
@@ -2168,6 +2213,53 @@ class SyncWindow(Adw.ApplicationWindow):
         except Exception:
             pass
 
+    def save_current_profile_filters(self, ws_name=None):
+        """Persists the active toolbar track filter states into the workspace configuration."""
+        if getattr(self, "is_restoring_filters", False):
+            return
+        if not hasattr(self, "config") or not hasattr(self.config, "set_profile_filters"):
+            return
+        filters = {
+            "needs_action": self.filter_needs_action.get_active() if hasattr(self, "filter_needs_action") else True,
+            "pool": self.filter_pool_sync.get_active() if hasattr(self, "filter_pool_sync") else False,
+            "stable": self.filter_stable.get_active() if hasattr(self, "filter_stable") else False,
+            "unstable": self.filter_unstable.get_active() if hasattr(self, "filter_unstable") else False,
+            "forwarding": self.filter_forwarding.get_active() if hasattr(self, "filter_forwarding") else False,
+        }
+        self.config.set_profile_filters(filters, ws_name=ws_name)
+
+    def restore_active_profile_filters(self):
+        """Restores the saved filter combination for the active workspace profile."""
+        if not hasattr(self, "config") or not hasattr(self.config, "get_profile_filters"):
+            return
+        filters = self.config.get_profile_filters()
+        active_prof = self.config.get_active_profile() if hasattr(self.config, "get_active_profile") else {}
+        unstable_p = active_prof.get("unstable_path")
+        is_dual = unstable_p is not None and os.path.exists(unstable_p)
+
+        self.is_restoring_filters = True
+        try:
+            if hasattr(self, "filter_needs_action"):
+                self.filter_needs_action.set_active(bool(filters.get("needs_action", True)))
+            if hasattr(self, "filter_pool_sync"):
+                self.filter_pool_sync.set_active(bool(filters.get("pool", False)))
+            if hasattr(self, "filter_stable"):
+                self.filter_stable.set_active(bool(filters.get("stable", False)))
+
+            # In single-stream workspace, unstable and forwarding filters are forced to False
+            unstable_active = bool(filters.get("unstable", False)) if is_dual else False
+            fwd_active = bool(filters.get("forwarding", False)) if is_dual else False
+
+            if hasattr(self, "filter_unstable"):
+                self.filter_unstable.set_active(unstable_active)
+            if hasattr(self, "filter_forwarding"):
+                self.filter_forwarding.set_active(fwd_active)
+        finally:
+            self.is_restoring_filters = False
+
+        self.update_track_filters_sensitivity()
+        self.snapshot_filter_states()
+
     def apply_active_profile_ui(self):
         active_prof = self.config.get_active_profile()
         unstable_p = active_prof.get("unstable_path")
@@ -2182,6 +2274,13 @@ class SyncWindow(Adw.ApplicationWindow):
         # Hide unstable filter buttons in sidebar
         self.filter_unstable.set_visible(is_dual)
         self.filter_forwarding.set_visible(is_dual)
+
+        if not is_dual:
+            # Single stream / flat org: ensure unstable and forwarding filters are deactivated
+            if hasattr(self, "filter_unstable") and self.filter_unstable.get_active():
+                self.filter_unstable.set_active(False)
+            if hasattr(self, "filter_forwarding") and self.filter_forwarding.get_active():
+                self.filter_forwarding.set_active(False)
 
         # Hide diff perspective dropdown selector if single pipeline
         self.diff_selector.set_visible(is_dual)
@@ -2218,6 +2317,7 @@ class SyncWindow(Adw.ApplicationWindow):
         if 0 <= active_idx < len(ws_names):
             ws_name = ws_names[active_idx]
             if ws_name != self.config.active_workspace:
+                self.save_current_profile_filters()
                 self.config.active_workspace = ws_name
                 self.config.save()
                 GLib.idle_add(self._on_header_reload_idle)
@@ -2255,14 +2355,21 @@ class SyncWindow(Adw.ApplicationWindow):
         # Recreate executor pools on-the-fly with new concurrency settings!
         self.init_executors()
 
+        # Update dynamic layouts (single vs dual pipeline)
+        self.apply_active_profile_ui()
+
+        # Restore saved filters for active profile
+        self.restore_active_profile_filters()
+
         # Update sidebar list row entries dynamically
         self.populate_sidebar_rows()
 
         # Update header-combo selection list
         self.update_header_profile_combo()
 
-        # Update dynamic layouts (single vs dual pipeline)
-        self.apply_active_profile_ui()
+        # Invalidate filter on listbox to refresh visible entries
+        if hasattr(self, "master_list_box"):
+            self.master_list_box.invalidate_filter()
 
         # Clear active selected details
         self.detail_stack.set_visible_child_name("empty")
@@ -3437,8 +3544,21 @@ class SyncWindow(Adw.ApplicationWindow):
             self._filter_needs_action = self.filter_needs_action.get_active() if hasattr(self, "filter_needs_action") else True
             self._filter_pool_sync = self.filter_pool_sync.get_active() if hasattr(self, "filter_pool_sync") else False
             self._filter_stable = self.filter_stable.get_active() if hasattr(self, "filter_stable") else False
-            self._filter_unstable = self.filter_unstable.get_active() if hasattr(self, "filter_unstable") else False
-            self._filter_forwarding = self.filter_forwarding.get_active() if hasattr(self, "filter_forwarding") else False
+
+            is_dual = bool(getattr(self, "unstable_b", None))
+            has_unstable = hasattr(self, "filter_unstable") and (not hasattr(self.filter_unstable, "get_visible") or self.filter_unstable.get_visible())
+            has_fwd = hasattr(self, "filter_forwarding") and (not hasattr(self.filter_forwarding, "get_visible") or self.filter_forwarding.get_visible())
+
+            self._filter_unstable = (
+                bool(self.filter_unstable.get_active())
+                if is_dual and has_unstable
+                else False
+            )
+            self._filter_forwarding = (
+                bool(self.filter_forwarding.get_active())
+                if is_dual and has_fwd
+                else False
+            )
         except Exception:
             pass
 
@@ -3458,9 +3578,12 @@ class SyncWindow(Adw.ApplicationWindow):
         return False # Run once and terminate
 
     def on_filter_toggled(self, btn):
+        if getattr(self, "is_restoring_filters", False):
+            return
         if btn == getattr(self, "filter_needs_action", None):
             self.update_track_filters_sensitivity()
         self.snapshot_filter_states()
+        self.save_current_profile_filters()
         self.master_list_box.invalidate_filter()
         GLib.idle_add(self.scroll_selected_row_to_view)
 
@@ -3897,6 +4020,11 @@ class SyncWindow(Adw.ApplicationWindow):
         f_stable = getattr(self, "_filter_stable", False)
         f_unstable = getattr(self, "_filter_unstable", False)
         f_fwd = getattr(self, "_filter_forwarding", False)
+
+        # In a single-stream workspace (flat org / single pipeline), unstable and forwarding filters cannot apply
+        if not getattr(self, "unstable_b", None):
+            f_unstable = False
+            f_fwd = False
 
         any_track_selected = f_pool or f_stable or f_unstable or f_fwd
 
@@ -5161,11 +5289,13 @@ class SyncWindow(Adw.ApplicationWindow):
                     self.filter_stable.set_active(not self.filter_stable.get_active())
                 return True
             elif keyval in (Gdk.KEY_4, Gdk.KEY_KP_4):
-                if self.filter_needs_action.get_active():
+                is_unstable_visible = not hasattr(self.filter_unstable, "get_visible") or self.filter_unstable.get_visible()
+                if self.filter_needs_action.get_active() and (getattr(self, "unstable_b", None) is not None or not hasattr(self, "unstable_b")) and is_unstable_visible:
                     self.filter_unstable.set_active(not self.filter_unstable.get_active())
                 return True
             elif keyval in (Gdk.KEY_5, Gdk.KEY_KP_5):
-                if self.filter_needs_action.get_active():
+                is_fwd_visible = not hasattr(self.filter_forwarding, "get_visible") or self.filter_forwarding.get_visible()
+                if self.filter_needs_action.get_active() and (getattr(self, "unstable_b", None) is not None or not hasattr(self, "unstable_b")) and is_fwd_visible:
                     self.filter_forwarding.set_active(not self.filter_forwarding.get_active())
                 return True
             elif keyval in (Gdk.KEY_p, Gdk.KEY_P):

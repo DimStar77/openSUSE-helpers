@@ -1301,6 +1301,76 @@ class TestSyncWindow(unittest.TestCase):
         mock_win.update_detail_title.assert_called_with("pkg_test")
         mock_win.update_detail_pr_ui.assert_called_with("pkg_test")
 
+    def test_apply_active_profile_ui_single_pipeline_deactivates_unstable_filters(self):
+        from geckopit import SyncWindow
+        mock_win = mock.Mock()
+        mock_win.config.get_active_profile.return_value = {
+            "stable_path": "/tmp/packaging",
+            "unstable_path": None,
+        }
+        mock_win.config.active_workspace = "PKG Maintainer collection"
+        mock_win.filter_unstable.get_active.return_value = True
+        mock_win.filter_forwarding.get_active.return_value = True
+
+        SyncWindow.apply_active_profile_ui(mock_win)
+
+        mock_win.filter_unstable.set_visible.assert_called_with(False)
+        mock_win.filter_forwarding.set_visible.assert_called_with(False)
+        mock_win.filter_unstable.set_active.assert_called_with(False)
+        mock_win.filter_forwarding.set_active.assert_called_with(False)
+        mock_win.unstable_card.set_visible.assert_called_with(False)
+        mock_win.diff_selector.set_visible.assert_called_with(False)
+        mock_win.diff_selector.set_selected.assert_called_with(1)
+
+    def test_snapshot_filter_states_single_pipeline_guards(self):
+        from geckopit import SyncWindow
+        mock_win = mock.Mock()
+        mock_win.sidebar_search.get_text.return_value = ""
+        mock_win.filter_needs_action.get_active.return_value = True
+        mock_win.filter_pool_sync.get_active.return_value = False
+        mock_win.filter_stable.get_active.return_value = False
+        mock_win.filter_unstable.get_active.return_value = True
+        mock_win.filter_forwarding.get_active.return_value = True
+        mock_win.filter_unstable.get_visible.return_value = False
+        mock_win.filter_forwarding.get_visible.return_value = False
+        mock_win.unstable_b = None  # Single-stream workspace
+
+        SyncWindow.snapshot_filter_states(mock_win)
+
+        self.assertTrue(mock_win._filter_needs_action)
+        self.assertFalse(mock_win._filter_pool_sync)
+        self.assertFalse(mock_win._filter_stable)
+        self.assertFalse(mock_win._filter_unstable)
+        self.assertFalse(mock_win._filter_forwarding)
+
+    def test_sidebar_filter_single_pipeline_ignores_ghost_unstable_track(self):
+        from geckopit import SyncWindow
+        mock_win = mock.Mock()
+        mock_win.unstable_b = None  # Single-stream workspace (flat org)
+        mock_win._filter_name_tokens = []
+        mock_win._filter_active_flags = set()
+        mock_win._filter_needs_action = True
+        mock_win._filter_pool_sync = False
+        mock_win._filter_stable = False
+        mock_win._filter_unstable = True  # Stale ghost filter from previous dual profile
+        mock_win._filter_forwarding = False
+
+        row_todo = mock.Mock(package_name="pkg-todo")
+        row_clean = mock.Mock(package_name="pkg-clean")
+
+        mock_win.package_data = {
+            "pkg-todo": {
+                "sync": {},
+                "worktree": {"stable": {"dirty": True}},
+                "version": {"stable_needs_update": False}
+            },
+            "pkg-clean": {"sync": {}, "worktree": {}, "version": {}}
+        }
+
+        # Ghost unstable track must not block Todos in single-stream workspace
+        self.assertTrue(SyncWindow.sidebar_filter_func(mock_win, row_todo))
+        self.assertFalse(SyncWindow.sidebar_filter_func(mock_win, row_clean))
+
     def test_sidebar_filter_snapshot_caching(self):
         from geckopit import SyncWindow
         mock_win = mock.Mock()
@@ -1811,6 +1881,113 @@ class TestSyncWindow(unittest.TestCase):
         hdr_2 = mock_win.pr_card_title_lbl.set_markup.call_args[0][0]
         self.assertIn("⚠️ 1 Contributor PR", hdr_2)
         self.assertIn("🔀 1 Forward PR", hdr_2)
+
+    def test_workspace_config_per_profile_filter_persistence(self):
+        from geckopit import WorkspaceConfig
+        cfg = WorkspaceConfig()
+        cfg.workspaces = {
+            "GNOME": {"stable_path": "/path/gnome", "unstable_path": "/path/next"},
+            "FlatOrg": {"stable_path": "/path/pkg", "unstable_path": None},
+        }
+        cfg.active_workspace = "GNOME"
+
+        # Defaults when no filters defined
+        filters = cfg.get_profile_filters("GNOME")
+        self.assertEqual(filters, {
+            "needs_action": True,
+            "pool": False,
+            "stable": False,
+            "unstable": False,
+            "forwarding": False,
+        })
+
+        # Save custom filters on GNOME
+        cfg.set_profile_filters({
+            "needs_action": True,
+            "pool": False,
+            "stable": False,
+            "unstable": True,
+            "forwarding": False,
+        }, ws_name="GNOME")
+
+        # Save different filters on FlatOrg
+        cfg.set_profile_filters({
+            "needs_action": True,
+            "pool": True,
+            "stable": True,
+            "unstable": False,
+            "forwarding": False,
+        }, ws_name="FlatOrg")
+
+        # Verify independence of profile filters
+        gnome_filters = cfg.get_profile_filters("GNOME")
+        flat_filters = cfg.get_profile_filters("FlatOrg")
+        self.assertTrue(gnome_filters["unstable"])
+        self.assertFalse(gnome_filters["pool"])
+        self.assertFalse(flat_filters["unstable"])
+        self.assertTrue(flat_filters["pool"])
+        self.assertTrue(flat_filters["stable"])
+
+    def test_sync_window_profile_switch_filter_round_trip(self):
+        from geckopit import SyncWindow, WorkspaceConfig
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            gnome_stable = os.path.join(tmp_dir, "gnome")
+            gnome_unstable = os.path.join(tmp_dir, "gnome_next")
+            flat_stable = os.path.join(tmp_dir, "flat")
+            os.makedirs(gnome_stable)
+            os.makedirs(gnome_unstable)
+            os.makedirs(flat_stable)
+
+            cfg = WorkspaceConfig()
+            cfg.workspaces = {
+                "GNOME": {
+                    "stable_path": gnome_stable,
+                    "unstable_path": gnome_unstable,
+                    "filters": {"needs_action": True, "pool": False, "stable": False, "unstable": True, "forwarding": False}
+                },
+                "FlatOrg": {
+                    "stable_path": flat_stable,
+                    "unstable_path": None,
+                    "filters": {"needs_action": True, "pool": False, "stable": False, "unstable": False, "forwarding": False}
+                }
+            }
+            cfg.active_workspace = "GNOME"
+
+            mock_win = mock.Mock()
+            mock_win.config = cfg
+            mock_win.filter_needs_action = mock.Mock()
+            mock_win.filter_pool_sync = mock.Mock()
+            mock_win.filter_stable = mock.Mock()
+            mock_win.filter_unstable = mock.Mock()
+            mock_win.filter_forwarding = mock.Mock()
+            mock_win.update_track_filters_sensitivity = mock.Mock()
+            mock_win.snapshot_filter_states = mock.Mock()
+
+            # 1. Restore GNOME filters: unstable should be activated
+            SyncWindow.restore_active_profile_filters(mock_win)
+            mock_win.filter_unstable.set_active.assert_called_with(True)
+
+            # 2. Simulate switching to FlatOrg: save outgoing GNOME filters and switch
+            mock_win.filter_unstable.get_active.return_value = True
+            mock_win.filter_needs_action.get_active.return_value = True
+            mock_win.filter_pool_sync.get_active.return_value = False
+            mock_win.filter_stable.get_active.return_value = False
+            mock_win.filter_forwarding.get_active.return_value = False
+
+            SyncWindow.save_current_profile_filters(mock_win, ws_name="GNOME")
+            cfg.active_workspace = "FlatOrg"
+
+            # In FlatOrg, restore filters: unstable must be forced False
+            SyncWindow.restore_active_profile_filters(mock_win)
+            mock_win.filter_unstable.set_active.assert_called_with(False)
+
+            # 3. Switch back to GNOME: unstable must be restored to True!
+            cfg.active_workspace = "GNOME"
+            SyncWindow.restore_active_profile_filters(mock_win)
+            mock_win.filter_unstable.set_active.assert_called_with(True)
+
 
 if __name__ == '__main__':
     unittest.main()
