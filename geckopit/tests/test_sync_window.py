@@ -1120,7 +1120,7 @@ class TestSyncWindow(unittest.TestCase):
             {"has_pr": True, "number": 101}
         )
 
-        # Case 2: next is NOT ahead -> check_repo_pr MUST NOT be called
+        # Case 2: next is NOT ahead and no cached PR -> check_repo_pr MUST NOT be called, pr_data passed as None to preserve cache
         mock_pr.reset_mock()
         mock_idle.reset_mock()
         mock_sync.return_value = ("pkg_clean", {
@@ -1136,7 +1136,50 @@ class TestSyncWindow(unittest.TestCase):
             "pkg_clean",
             mock_sync.return_value[1],
             {"stable": {}},
-            {"has_pr": False}
+            None
+        )
+
+        # Case 3: single-stream workspace (flat org / maintainer portfolio) -> check_repo_pr MUST be called for multi-target PRs
+        mock_win.unstable_b = None
+        mock_pr.reset_mock()
+        mock_idle.reset_mock()
+        mock_sync.return_value = ("pkg_flat", {
+            "status": "success",
+            "next_status": "No next branch",
+            "next_ahead": 0
+        })
+        mock_pr.return_value = ("pkg_flat", {"has_pr": True, "number": 3})
+
+        SyncWindow.run_bg_sync(mock_win, "pkg_flat")
+        mock_pr.assert_called_with("pkg_flat", stable_branch="factory", unstable_branch=None, workspace_path="/workspace")
+        mock_idle.assert_called_with(
+            mock_win.add_sync_result,
+            "pkg_flat",
+            mock_sync.return_value[1],
+            {"stable": {}},
+            {"has_pr": True, "number": 3}
+        )
+
+        # Case 4: dual-stream workspace with cached PR -> check_repo_pr MUST be called even if next_ahead == 0
+        mock_win.unstable_b = "next"
+        mock_win.package_data = {"pkg_cached": {"pr": {"has_pr": True}}}
+        mock_pr.reset_mock()
+        mock_idle.reset_mock()
+        mock_sync.return_value = ("pkg_cached", {
+            "status": "success",
+            "next_status": "In Sync",
+            "next_ahead": 0
+        })
+        mock_pr.return_value = ("pkg_cached", {"has_pr": True, "number": 42})
+
+        SyncWindow.run_bg_sync(mock_win, "pkg_cached")
+        mock_pr.assert_called_with("pkg_cached", stable_branch="factory", unstable_branch="next", workspace_path="/workspace")
+        mock_idle.assert_called_with(
+            mock_win.add_sync_result,
+            "pkg_cached",
+            mock_sync.return_value[1],
+            {"stable": {}},
+            {"has_pr": True, "number": 42}
         )
 
     def test_update_detail_pr_ui_group_card(self):

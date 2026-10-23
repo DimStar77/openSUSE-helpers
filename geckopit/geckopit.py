@@ -3471,7 +3471,7 @@ class SyncWindow(Adw.ApplicationWindow):
         sync_data = self.package_data.get(repo, {}).get("sync")
         if not sync_data or sync_data.get("status") != "success":
             _, sync_data = sb.check_repo_sync(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
-        pr_data = {"has_pr": False}
+        pr_data = None
         if self.unstable_b and sync_data.get("status") == "success" and sync_data.get("next_status") != "No next branch":
             next_ahead = sync_data.get("next_ahead", 0)
             if next_ahead > 0:
@@ -3490,11 +3490,13 @@ class SyncWindow(Adw.ApplicationWindow):
             return
         if sync_data.get("status") == "success":
             self.package_data[name]["sync"] = sync_data
-        self.package_data[name]["pr"] = pr_data
+        if pr_data is not None:
+            self.package_data[name]["pr"] = pr_data
         self.update_row_ui(name)
         if getattr(self, "current_selected_package", None) == name:
             self.update_detail_sync_ui(name)
             self.update_detail_title(name)
+            self.update_detail_pr_ui(name)
 
     def update_row_ui(self, name):
         row = self.package_rows.get(name)
@@ -6399,11 +6401,34 @@ class SyncWindow(Adw.ApplicationWindow):
                 stable_branch=self.stable_b
             )
         wt_data = self.check_worktrees_for_repo(repo)
-        pr_data = {"has_pr": False}
-        if self.unstable_b and data.get("status") == "success" and data.get("next_status") != "No next branch":
-            next_ahead = data.get("next_ahead", 0)
-            if next_ahead > 0:
-                _, pr_data = sb.check_repo_pr(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
+
+        # Determine whether to check PRs for this package:
+        # 1. Single-stream workspace (flat org / maintainer portfolio) where PRs are multi-target (e.g. leap-16.1, factory)
+        # 2. Dual-stream workspace when next is ahead of factory (forward PR candidate)
+        # 3. Package already has an active PR in cache (verify if still open or merged/closed)
+        # 4. Package has commits ahead of central pool (PR candidate for pool submit)
+        pkg_cached = (self.package_data.get(name, {}) or self.package_data.get(repo, {})) if isinstance(getattr(self, "package_data", None), dict) else {}
+        pr_cached = pkg_cached.get("pr", {}) if isinstance(pkg_cached, dict) else {}
+        has_cached_pr = bool(pr_cached.get("has_pr")) if isinstance(pr_cached, dict) else False
+        is_single_stream = not bool(self.unstable_b)
+        should_check_pr = (
+            is_single_stream
+            or (self.unstable_b and data.get("status") == "success" and data.get("next_ahead", 0) > 0)
+            or has_cached_pr
+            or (data.get("status") == "success" and data.get("pool_ahead", 0) > 0)
+        )
+
+        pr_data = None
+        if should_check_pr and data.get("status") == "success":
+            try:
+                _, pr_data = sb.check_repo_pr(
+                    repo,
+                    stable_branch=self.stable_b,
+                    unstable_branch=self.unstable_b,
+                    workspace_path=self.stable_p
+                )
+            except Exception:
+                pr_data = None
         if gen is not None and gen != getattr(self, "scan_generation", 0):
             return
         if gen is not None:
@@ -6444,6 +6469,7 @@ class SyncWindow(Adw.ApplicationWindow):
                 self.update_detail_sync_ui(name)
                 self.update_detail_worktree_ui(name)
                 self.update_detail_title(name)
+                self.update_detail_pr_ui(name)
         else:
             self.package_data[name]["sync"] = data
             self.update_row_ui(name)
@@ -6524,7 +6550,7 @@ class SyncWindow(Adw.ApplicationWindow):
         sync_data = self.package_data.get(repo, {}).get("sync")
         if not sync_data or sync_data.get("status") != "success":
             _, sync_data = sb.check_repo_sync(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
-        pr_data = {"has_pr": False}
+        pr_data = None
         if self.unstable_b and sync_data.get("status") == "success" and sync_data.get("next_status") != "No next branch":
             next_ahead = sync_data.get("next_ahead", 0)
             if next_ahead > 0:
@@ -6546,12 +6572,14 @@ class SyncWindow(Adw.ApplicationWindow):
 
         if sync_data.get("status") == "success":
             self.package_data[name]["sync"] = sync_data
-        self.package_data[name]["pr"] = pr_data
+        if pr_data is not None:
+            self.package_data[name]["pr"] = pr_data
         self.update_row_ui(name)
 
         if getattr(self, "current_selected_package", None) == name:
             self.update_detail_sync_ui(name)
             self.update_detail_title(name)
+            self.update_detail_pr_ui(name)
 
     def run_bg_diff(self, package_name):
         diff_text = sb.get_git_diff(package_name)
