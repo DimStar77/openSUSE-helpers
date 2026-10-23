@@ -163,6 +163,8 @@ RED = "\x1b[31m"
 YELLOW = "\x1b[33m"
 CYAN = "\x1b[36m"
 BOLD = "\x1b[1m"
+DIM = "\x1b[2m"
+GRAY = "\x1b[90m"
 RESET = "\x1b[0m"
 
 def get_gitea_repo_name(repo_path, default_name):
@@ -910,13 +912,91 @@ def guess_update_revision(current_revision: Optional[str], target_version: str) 
     # If no version-like digits and separators were found, we are not confident
     return None, f"contains an unrecognized pattern ('{current_revision}')"
 
-def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable_branch="next", workspace_path=".", ignored_unstable_versions=None, skip_fetch=False):
+def prune_superseded_ignored_versions(repo_name, factory_ver, next_ver=None, unstable_branch=None, ignored_versions=None):
+    """
+    If local versions on disk are newer than an ignored version, the ignore rule
+    is obsolete and can be pruned.
+    For dual-stream workspaces, requires both factory_ver > ignored and next_ver > ignored.
+    For single-stream workspaces, requires factory_ver > ignored.
+    Returns (cleaned_ignored_dict, pruned_versions_list).
+    """
+    if not ignored_versions or repo_name not in ignored_versions:
+        return ignored_versions, []
+
+    cur_entry = ignored_versions[repo_name]
+    items = [v.strip() for v in str(cur_entry).split(",") if v.strip()]
+    retained = []
+    pruned = []
+
+    for v in items:
+        stable_surpassed = bool(factory_ver and is_version_newer(factory_ver, v, repo_name))
+        if unstable_branch and next_ver and next_ver != "—":
+            unstable_surpassed = bool(is_version_newer(next_ver, v, repo_name))
+            is_superseded = stable_surpassed and unstable_surpassed
+        else:
+            is_superseded = stable_surpassed
+
+        if is_superseded:
+            pruned.append(v)
+        else:
+            retained.append(v)
+
+    if not pruned:
+        return ignored_versions, []
+
+    new_dict = dict(ignored_versions)
+    if retained:
+        new_dict[repo_name] = ", ".join(retained)
+    else:
+        del new_dict[repo_name]
+
+    return new_dict, pruned
+
+
+def save_geckopit_profile_ignored_versions(new_dict, workspace_dir=None):
+    """Persists updated ignored versions to ~/.config/geckopit.json for the active workspace."""
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return
+    cfg_path = Path.home() / ".config" / "geckopit.json"
+    if not cfg_path.exists():
+        return
+    try:
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        prof_cfg = load_geckopit_profile_config(workspace_dir=workspace_dir)
+        ws_name = prof_cfg.get("active_workspace", "Default")
+        workspaces = data.get("workspaces", {})
+        if ws_name in workspaces:
+            workspaces[ws_name]["ignored_versions"] = dict(new_dict)
+            workspaces[ws_name]["ignored_unstable_versions"] = dict(new_dict)
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+    except Exception:
+        pass
+
+
+def is_version_ignored(version, ignored_entry, repo_name=""):
+    """
+    Returns True if version matches any version declared in ignored_entry.
+    Supports single strings ('0.6.0'), comma-separated strings ('0.6.0, 0.5.2'),
+    or collections (['0.6.0', '0.5.2']).
+    """
+    if not ignored_entry or not version:
+        return False
+    if isinstance(ignored_entry, (list, tuple, set)):
+        return any(is_version_equal(version, str(ign), repo_name) for ign in ignored_entry)
+    ignored_items = [v.strip() for v in str(ignored_entry).split(",") if v.strip()]
+    return any(is_version_equal(version, ign, repo_name) for ign in ignored_items)
+
+def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable_branch="next", workspace_path=".", ignored_unstable_versions=None, skip_fetch=False, ignored_versions=None):
     repo_path = os.path.join(workspace_path, repo_name)
 
-    if ignored_unstable_versions is None:
-        ignored_unstable_versions = {}
+    if ignored_versions is None:
+        ignored_versions = ignored_unstable_versions
+    if ignored_versions is None:
+        ignored_versions = {}
 
-    ignored_ver = ignored_unstable_versions.get(repo_name)
+    ignored_ver = ignored_versions.get(repo_name) if isinstance(ignored_versions, dict) else None
 
     # 1. Fetch latest state from origin (src.opensuse.org/<devel_project>/<repo>)
     if not skip_fetch:
@@ -978,6 +1058,20 @@ def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable
         except Exception:
             pass
 
+    # Auto-prune obsolete ignore rules if local on-disk packages have surpassed the ignored version
+    if ignored_ver and factory_ver:
+        cleaned_dict, pruned_vers = prune_superseded_ignored_versions(
+            repo_name,
+            factory_ver,
+            next_ver=next_ver,
+            unstable_branch=unstable_branch,
+            ignored_versions=ignored_versions
+        )
+        if pruned_vers:
+            ignored_versions = cleaned_dict
+            ignored_ver = ignored_versions.get(repo_name)
+            save_geckopit_profile_ignored_versions(cleaned_dict, workspace_dir=workspace_path)
+
     # 5. Query release-monitoring.org for upstream versions (spoofing curl User-Agent)
     upstream_stable = None
     upstream_latest = None
@@ -1002,6 +1096,51 @@ def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable
 
                 upstream_stable = exact_item.get("stable_version") or exact_item.get("version")
                 upstream_latest = exact_item.get("version")
+
+                # Fallback: if the latest upstream version matches an active ignore rule,
+                # inspect the project's historical releases to find the highest unignored release
+                # that is newer than local (e.g. maintenance branch releases like 0.4.5 when 0.6.0 is ignored).
+                is_stable_ignored = bool(ignored_ver and upstream_stable and is_version_ignored(upstream_stable, ignored_ver, repo_name))
+                is_latest_ignored = bool(ignored_ver and upstream_latest and is_version_ignored(upstream_latest, ignored_ver, repo_name))
+
+                if (is_stable_ignored or is_latest_ignored) and exact_item.get("project"):
+                    project_name = exact_item.get("project")
+                    try:
+                        p_url = f"https://release-monitoring.org/api/v2/projects/?name={project_name}"
+                        p_resp = get_http_session().get(p_url, headers=headers, timeout=10)
+                        if p_resp.status_code == 200:
+                            p_data = p_resp.json()
+                            p_items = p_data.get("items", [])
+                            if p_items:
+                                p_item = p_items[0]
+                                stable_vers = p_item.get("stable_versions", [])
+                                all_vers = p_item.get("versions", [])
+
+                                # Look for highest unignored stable release newer than local factory_ver
+                                if is_stable_ignored and factory_ver:
+                                    best_stable = None
+                                    for v in stable_vers:
+                                        if is_version_ignored(v, ignored_ver, repo_name):
+                                            continue
+                                        if is_version_newer(v, factory_ver, repo_name):
+                                            if best_stable is None or is_version_newer(v, best_stable, repo_name):
+                                                best_stable = v
+                                    if best_stable:
+                                        upstream_stable = best_stable
+
+                                # Look for highest unignored latest release newer than local next_ver
+                                if is_latest_ignored and next_ver and next_ver != "—":
+                                    best_latest = None
+                                    for v in all_vers:
+                                        if is_version_ignored(v, ignored_ver, repo_name):
+                                            continue
+                                        if is_version_newer(v, next_ver, repo_name):
+                                            if best_latest is None or is_version_newer(v, best_latest, repo_name):
+                                                best_latest = v
+                                    if best_latest:
+                                        upstream_latest = best_latest
+                    except Exception:
+                        pass
     except Exception:
         # If API is unreachable or rate-limited, we report partial error but keep spec versions
         return repo_name, {
@@ -1018,14 +1157,15 @@ def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable
 
     if (branch is None or branch == stable_branch or branch == "factory") and factory_ver and upstream_stable:
         if is_version_newer(upstream_stable, factory_ver, repo_name):
-            stable_needs_update = True
-            needs_update = True
+            is_ignored_stable = bool(ignored_ver and is_version_ignored(upstream_stable, ignored_ver, repo_name))
+            if not is_ignored_stable:
+                stable_needs_update = True
+                needs_update = True
 
     if unstable_branch and (branch is None or branch == unstable_branch or branch == "next") and next_ver and next_ver != "—" and upstream_latest:
         if is_version_newer(upstream_latest, next_ver, repo_name):
-            # Check if this specific found unstable version is in our ignore list!
-            is_ignored = bool(ignored_ver and is_version_equal(upstream_latest, ignored_ver, repo_name))
-            if not is_ignored:
+            is_ignored_unstable = bool(ignored_ver and is_version_ignored(upstream_latest, ignored_ver, repo_name))
+            if not is_ignored_unstable:
                 unstable_needs_update = True
                 needs_update = True
 
@@ -1038,6 +1178,8 @@ def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable
         "needs_update": needs_update,
         "stable_needs_update": stable_needs_update,
         "unstable_needs_update": unstable_needs_update,
+        "is_ignored_stable": bool(ignored_ver and upstream_stable and is_version_ignored(upstream_stable, ignored_ver, repo_name)),
+        "is_ignored_unstable": bool(ignored_ver and upstream_latest and is_version_ignored(upstream_latest, ignored_ver, repo_name)),
         "project": exact_item.get("project") if exact_item else repo_name
     }
 
@@ -1738,7 +1880,8 @@ def load_geckopit_profile_config(workspace_dir=None):
                 config["unstable_branch"] = matched_profile.get("unstable_branch", "next") or "next"
                 config["stable_path"] = matched_profile.get("stable_path", ".") or "."
                 config["unstable_path"] = matched_profile.get("unstable_path")
-                config["ignored_unstable_versions"] = matched_profile.get("ignored_unstable_versions", {})
+                config["ignored_versions"] = matched_profile.get("ignored_versions") or matched_profile.get("ignored_unstable_versions", {})
+                config["ignored_unstable_versions"] = config["ignored_versions"]
         except Exception:
             pass
     return config
@@ -1797,7 +1940,7 @@ def check_single_package_full(pkg_dir=".", stable_branch=None, unstable_branch=N
     prof = load_geckopit_profile_config()
     st_branch = stable_branch or prof.get("stable_branch", "factory") or "factory"
     unst_branch = unstable_branch or prof.get("unstable_branch", "next") or "next"
-    ignored_vers = prof.get("ignored_unstable_versions", {})
+    ignored_vers = prof.get("ignored_versions") or prof.get("ignored_unstable_versions", {})
 
     wt = check_worktree_status(pkg_dir, expected_branch=unst_branch)
     active_branch = wt.get("head") or "unknown"

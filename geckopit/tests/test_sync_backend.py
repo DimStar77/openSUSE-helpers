@@ -452,5 +452,147 @@ class TestSyncBackend(unittest.TestCase):
         self.assertEqual(owner3, "GNOME")
         self.assertEqual(repo3, "baobab")
 
+    @mock.patch("sync_backend.get_http_session")
+    def test_check_repo_version_ignored_versions_stable_and_unstable(self, mock_get_sess):
+        import sync_backend as sb
+        import tempfile
+        import os
+
+        mock_sess = mock.Mock()
+        mock_resp = mock.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "items": [{"name": "lasem", "stable_version": "0.6.0", "version": "0.6.0"}]
+        }
+        mock_sess.get.return_value = mock_resp
+        mock_get_sess.return_value = mock_sess
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pkg_dir = os.path.join(tmpdir, "lasem")
+            os.makedirs(pkg_dir)
+            spec_path = os.path.join(pkg_dir, "lasem.spec")
+            with open(spec_path, "w") as f:
+                f.write("Name: lasem\nVersion: 0.4.3\n")
+
+            with mock.patch("sync_backend.run_tracked", return_value=mock.Mock(stdout="Version: 0.4.3\n", returncode=0)):
+                # Case 1: 0.6.0 is ignored -> neither stable nor unstable should trigger needs_update
+                _, ver_ignored = sb.check_repo_version(
+                    "lasem",
+                    stable_branch="factory",
+                    unstable_branch="next",
+                    workspace_path=tmpdir,
+                    ignored_versions={"lasem": "0.6.0"},
+                    skip_fetch=True
+                )
+                self.assertFalse(ver_ignored["stable_needs_update"])
+                self.assertFalse(ver_ignored["unstable_needs_update"])
+                self.assertFalse(ver_ignored["needs_update"])
+                self.assertTrue(ver_ignored["is_ignored_stable"])
+                self.assertTrue(ver_ignored["is_ignored_unstable"])
+
+                # Case 2: 0.5.0 is ignored but upstream is 0.6.0 -> needs_update MUST trigger
+                _, ver_not_ignored = sb.check_repo_version(
+                    "lasem",
+                    stable_branch="factory",
+                    unstable_branch="next",
+                    workspace_path=tmpdir,
+                    ignored_versions={"lasem": "0.5.0"},
+                    skip_fetch=True
+                )
+                self.assertTrue(ver_not_ignored["stable_needs_update"])
+                self.assertTrue(ver_not_ignored["needs_update"])
+                self.assertFalse(ver_not_ignored["is_ignored_stable"])
+
+    @mock.patch("sync_backend.get_http_session")
+    def test_check_repo_version_anitya_project_maintenance_fallback(self, mock_get_sess):
+        import sync_backend as sb
+        import tempfile
+        import os
+
+        # Package endpoint returns 0.6.0 as stable
+        mock_pkg_resp = mock.Mock()
+        mock_pkg_resp.status_code = 200
+        mock_pkg_resp.json.return_value = {
+            "items": [{"name": "lasem", "project": "lasem", "stable_version": "0.6.0", "version": "0.6.0"}]
+        }
+
+        # Project endpoint returns historical releases including maintenance 0.4.5
+        mock_prj_resp = mock.Mock()
+        mock_prj_resp.status_code = 200
+        mock_prj_resp.json.return_value = {
+            "items": [{
+                "name": "lasem",
+                "stable_versions": ["0.6.0", "0.4.5", "0.4.4", "0.4.3"],
+                "versions": ["0.6.0", "0.4.5", "0.4.4", "0.4.3"]
+            }]
+        }
+
+        def fake_get(url, **kwargs):
+            if "projects" in url:
+                return mock_prj_resp
+            return mock_pkg_resp
+
+        mock_sess = mock.Mock()
+        mock_sess.get.side_effect = fake_get
+        mock_get_sess.return_value = mock_sess
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pkg_dir = os.path.join(tmpdir, "lasem")
+            os.makedirs(pkg_dir)
+            with open(os.path.join(pkg_dir, "lasem.spec"), "w") as f:
+                f.write("Name: lasem\nVersion: 0.4.4\n")
+
+            with mock.patch("sync_backend.run_tracked", return_value=mock.Mock(stdout="Version: 0.4.4\n", returncode=0)):
+                # Case: 0.6.0 is ignored -> fallback MUST discover 0.4.5 and trigger needs_update!
+                _, ver = sb.check_repo_version(
+                    "lasem",
+                    stable_branch="factory",
+                    unstable_branch="next",
+                    workspace_path=tmpdir,
+                    ignored_versions={"lasem": "0.6.0"},
+                    skip_fetch=True
+                )
+                self.assertEqual(ver["upstream_stable"], "0.4.5")
+                self.assertTrue(ver["stable_needs_update"])
+                self.assertTrue(ver["needs_update"])
+                self.assertFalse(ver["is_ignored_stable"])
+
+    def test_is_version_ignored_multi_version_support(self):
+        import sync_backend as sb
+        self.assertTrue(sb.is_version_ignored("0.6.0", "0.6.0", "lasem"))
+        self.assertTrue(sb.is_version_ignored("0.6.0", "0.6.0, 0.5.2", "lasem"))
+        self.assertTrue(sb.is_version_ignored("0.5.2", "0.6.0, 0.5.2", "lasem"))
+        self.assertTrue(sb.is_version_ignored("0.6.0", ["0.6.0", "0.5.2"], "lasem"))
+        self.assertFalse(sb.is_version_ignored("0.4.5", "0.6.0, 0.5.2", "lasem"))
+        self.assertFalse(sb.is_version_ignored("0.4.5", None, "lasem"))
+
+    def test_prune_superseded_ignored_versions(self):
+        import sync_backend as sb
+
+        # Case 1: Dual stream - both factory and next surpass ignored -> pruned
+        new_d1, pruned1 = sb.prune_superseded_ignored_versions("lasem", "0.7.0", "0.7.0", "next", {"lasem": "0.6.0"})
+        self.assertEqual(pruned1, ["0.6.0"])
+        self.assertEqual(new_d1, {})
+
+        # Case 2: Dual stream - only unstable surpasses -> NOT pruned
+        new_d2, pruned2 = sb.prune_superseded_ignored_versions("lasem", "0.4.4", "0.7.0", "next", {"lasem": "0.6.0"})
+        self.assertEqual(pruned2, [])
+        self.assertEqual(new_d2, {"lasem": "0.6.0"})
+
+        # Case 3: Dual stream - only stable surpasses -> NOT pruned
+        new_d3, pruned3 = sb.prune_superseded_ignored_versions("lasem", "0.7.0", "0.4.4", "next", {"lasem": "0.6.0"})
+        self.assertEqual(pruned3, [])
+        self.assertEqual(new_d3, {"lasem": "0.6.0"})
+
+        # Case 4: Single stream (flat org) - stable surpasses -> pruned
+        new_d4, pruned4 = sb.prune_superseded_ignored_versions("lasem", "0.7.0", None, None, {"lasem": "0.6.0"})
+        self.assertEqual(pruned4, ["0.6.0"])
+        self.assertEqual(new_d4, {})
+
+        # Case 5: Multi-version - 0.5.2 surpassed, 0.6.0 retained
+        new_d5, pruned5 = sb.prune_superseded_ignored_versions("lasem", "0.5.5", "0.5.5", "next", {"lasem": "0.5.2, 0.6.0"})
+        self.assertEqual(pruned5, ["0.5.2"])
+        self.assertEqual(new_d5, {"lasem": "0.6.0"})
+
 if __name__ == '__main__':
     unittest.main()

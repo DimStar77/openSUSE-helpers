@@ -1928,6 +1928,7 @@ class TestSyncWindow(unittest.TestCase):
     def test_workspace_config_per_profile_filter_persistence(self):
         from geckopit import WorkspaceConfig
         cfg = WorkspaceConfig()
+        cfg.save = mock.Mock()
         cfg.workspaces = {
             "GNOME": {"stable_path": "/path/gnome", "unstable_path": "/path/next"},
             "FlatOrg": {"stable_path": "/path/pkg", "unstable_path": None},
@@ -1984,6 +1985,7 @@ class TestSyncWindow(unittest.TestCase):
             os.makedirs(flat_stable)
 
             cfg = WorkspaceConfig()
+            cfg.save = mock.Mock()
             cfg.workspaces = {
                 "GNOME": {
                     "stable_path": gnome_stable,
@@ -2079,6 +2081,68 @@ class TestSyncWindow(unittest.TestCase):
         res = SyncWindow.on_window_key_pressed(mock_win, None, Gdk.KEY_F12, 0, 0)
         self.assertTrue(res)
         mock_win.terminal_drawer.set_visible.assert_called_with(False)
+
+    def test_update_detail_version_ui_ignored_stable_version(self):
+        from geckopit import SyncWindow
+        mock_win = mock.Mock()
+        mock_win.current_selected_package = "lasem"
+        mock_win.package_data = {
+            "lasem": {
+                "version": {
+                    "factory_ver": "0.4.3",
+                    "upstream_stable": "0.6.0",
+                    "next_ver": "—",
+                    "upstream_latest": "—",
+                },
+                "pr": {},
+                "sync": {"is_osc": False}
+            }
+        }
+        mock_win.config.get_active_profile.return_value = {
+            "ignored_versions": {"lasem": "0.6.0"}
+        }
+        mock_win.get_ignored_version.return_value = "0.6.0"
+        mock_win.get_mapped_worktree_path.return_value = None
+        mock_win.unstable_b = None
+        mock_win.stable_b = "factory"
+
+        SyncWindow.update_detail_version_ui(mock_win, "lasem")
+
+        # Stable label should show (Ignored)
+        lbl_markup = mock_win.stable_ver_lbl.set_markup.call_args[0][0]
+        self.assertIn("0.6.0 (Ignored)", lbl_markup)
+        mock_win.update_factory_btn.set_sensitive.assert_called_with(False)
+        mock_win.update_factory_btn.set_label.assert_called_with("Ignored Version Update")
+
+    def test_sidebar_filter_func_excludes_ignored_stable_version(self):
+        from geckopit import SyncWindow
+        mock_win = mock.Mock()
+        mock_win.unstable_b = None
+        mock_win._filter_name_tokens = []
+        mock_win._filter_active_flags = set()
+        mock_win._filter_needs_action = True
+        mock_win._filter_pool_sync = False
+        mock_win._filter_stable = False
+        mock_win._filter_unstable = False
+        mock_win._filter_forwarding = False
+
+        row_lasem = mock.Mock(package_name="lasem")
+        mock_win.package_data = {
+            "lasem": {
+                "sync": {},
+                "worktree": {},
+                "version": {
+                    "factory_ver": "0.4.3",
+                    "upstream_stable": "0.6.0",
+                    "stable_needs_update": False,  # Evaluated as False because 0.6.0 is ignored
+                    "unstable_needs_update": False
+                }
+            }
+        }
+        mock_win.get_ignored_version.return_value = "0.6.0"
+
+        # lasem must NOT appear in the action queue
+        self.assertFalse(SyncWindow.sidebar_filter_func(mock_win, row_lasem))
 
 if __name__ == '__main__':
     unittest.main()
