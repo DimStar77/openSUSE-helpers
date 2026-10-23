@@ -220,8 +220,13 @@ def get_gitea_owner_and_repo(repo_path, default_name):
     """
     Parses local git configuration to return (owner, repo_name) for Gitea.
     """
-    owner = "GNOME"
-    repo_name = default_name
+    if "/" in default_name:
+        parts = default_name.split("/")
+        owner = parts[0]
+        repo_name = parts[-1]
+    else:
+        owner = "GNOME"
+        repo_name = default_name
     try:
         git_path = os.path.join(repo_path, '.git')
         if os.path.isfile(git_path):

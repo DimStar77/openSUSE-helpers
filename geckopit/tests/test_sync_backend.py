@@ -436,5 +436,21 @@ class TestSyncBackend(unittest.TestCase):
             target = sb.get_upstream_gitea_target("/nonexistent", "someone", "mypkg")
             self.assertEqual(target, ("pool", "mypkg"))
 
+    def test_get_gitea_owner_and_repo_namespace_fallback(self):
+        import helpers.sync_backend as sb
+        # Namespace in default_name without git config falls back to the namespace
+        owner, repo = sb.get_gitea_owner_and_repo("/nonexistent", "dimstar/vlc")
+        self.assertEqual(owner, "dimstar")
+        self.assertEqual(repo, "vlc")
+
+        owner2, repo2 = sb.get_gitea_owner_and_repo("/nonexistent", "multimedia:libs/gstreamer")
+        self.assertEqual(owner2, "multimedia:libs")
+        self.assertEqual(repo2, "gstreamer")
+
+        # Flat package name without slash falls back to GNOME
+        owner3, repo3 = sb.get_gitea_owner_and_repo("/nonexistent", "baobab")
+        self.assertEqual(owner3, "GNOME")
+        self.assertEqual(repo3, "baobab")
+
 if __name__ == '__main__':
     unittest.main()

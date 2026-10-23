@@ -16,6 +16,7 @@ import re
 import time
 import json
 import html
+import copy
 from pathlib import Path
 import locale
 
@@ -2193,7 +2194,8 @@ class SyncWindow(Adw.ApplicationWindow):
         """Snapshots in-memory package state on the main thread and writes JSON to disk in a background thread."""
         try:
             active_ws = getattr(self.config, "active_workspace", "Default") if hasattr(self, "config") else "Default"
-            data_copy = {k: dict(v) if isinstance(v, dict) else v for k, v in self.package_data.items()}
+            # Deep copy to ensure background JSON serialization is completely thread-safe against concurrent worker mutations
+            data_copy = copy.deepcopy(self.package_data)
             cache_path = self.get_cache_path()
 
             def _write():
@@ -2204,8 +2206,11 @@ class SyncWindow(Adw.ApplicationWindow):
                         "scanned_at": time.time(),
                         "package_data": data_copy
                     }, indent=2)
-                    with open(cache_path, "w", encoding="utf-8") as f:
+                    # Atomic write via temporary file replacement to eliminate cache corruption risks on interruption
+                    tmp_path = cache_path.with_suffix(".tmp")
+                    with open(tmp_path, "w", encoding="utf-8") as f:
                         f.write(payload)
+                    tmp_path.replace(cache_path)
                 except Exception:
                     pass
 
@@ -3464,39 +3469,6 @@ class SyncWindow(Adw.ApplicationWindow):
             if getattr(self, "current_selected_package", None) == name:
                 self.update_detail_version_ui(name)
                 self.update_detail_title(name)
-
-    def run_bg_forward_single(self, repo, gen=None):
-        if gen is not None and gen != getattr(self, "scan_generation", 0):
-            return
-        sync_data = self.package_data.get(repo, {}).get("sync")
-        if not sync_data or sync_data.get("status") != "success":
-            _, sync_data = sb.check_repo_sync(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
-        pr_data = None
-        if self.unstable_b and sync_data.get("status") == "success" and sync_data.get("next_status") != "No next branch":
-            next_ahead = sync_data.get("next_ahead", 0)
-            if next_ahead > 0:
-                _, pr_data = sb.check_repo_pr(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
-        if gen is not None and gen != getattr(self, "scan_generation", 0):
-            return
-        if gen is not None:
-            GLib.idle_add(self.update_forward_row_single, repo, sync_data, pr_data, gen)
-        else:
-            GLib.idle_add(self.update_forward_row_single, repo, sync_data, pr_data)
-
-    def update_forward_row_single(self, name, sync_data, pr_data, gen=None):
-        if gen is not None and gen != getattr(self, "scan_generation", 0):
-            return
-        if name not in self.package_data:
-            return
-        if sync_data.get("status") == "success":
-            self.package_data[name]["sync"] = sync_data
-        if pr_data is not None:
-            self.package_data[name]["pr"] = pr_data
-        self.update_row_ui(name)
-        if getattr(self, "current_selected_package", None) == name:
-            self.update_detail_sync_ui(name)
-            self.update_detail_title(name)
-            self.update_detail_pr_ui(name)
 
     def update_row_ui(self, name):
         row = self.package_rows.get(name)
@@ -5263,6 +5235,19 @@ class SyncWindow(Adw.ApplicationWindow):
             self.refresh_all()
             return True
 
+        # F12: Toggle terminal console drawer
+        if keyval == Gdk.KEY_F12:
+            if hasattr(self, "terminal_drawer"):
+                is_vis = self.terminal_drawer.get_visible()
+                self.terminal_drawer.set_visible(not is_vis)
+                if not is_vis and hasattr(self, "terminal_tabs") and self.terminal_tabs:
+                    active_page = self.notebook.get_current_page()
+                    if active_page >= 0 and active_page < len(self.terminal_tabs):
+                        t_widget = self.terminal_tabs[active_page].get("terminal")
+                        if t_widget:
+                            self.idle_grab_focus(t_widget)
+            return True
+
         # F5 or Ctrl+R: Refresh currently selected package (or all if none selected)
         if keyval == Gdk.KEY_F5 or (ctrl_pressed and not shift_pressed and keyval in (Gdk.KEY_r, Gdk.KEY_R)):
             if getattr(self, "current_selected_package", None):
@@ -6530,54 +6515,45 @@ class SyncWindow(Adw.ApplicationWindow):
 
         self.update_progress_ui()
 
-    # --- TAB 3 SCAN METHODS ---
-
-    def start_forwarding_scan(self):
-        if not self.repos:
-            return
-
-        self.fwd_completed_count = 0
-        current_gen = getattr(self, "scan_generation", 0)
-        for repo in self.repos:
-            try:
-                self.sync_executor.submit(self.run_bg_forward, repo, current_gen)
-            except RuntimeError:
-                break
-
-    def run_bg_forward(self, repo, gen=None):
+    def run_bg_forward_single(self, repo, gen=None):
         if gen is not None and gen != getattr(self, "scan_generation", 0):
             return
-        sync_data = self.package_data.get(repo, {}).get("sync")
-        if not sync_data or sync_data.get("status") != "success":
-            _, sync_data = sb.check_repo_sync(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
-        pr_data = None
-        if self.unstable_b and sync_data.get("status") == "success" and sync_data.get("next_status") != "No next branch":
-            next_ahead = sync_data.get("next_ahead", 0)
-            if next_ahead > 0:
-                _, pr_data = sb.check_repo_pr(repo, stable_branch=self.stable_b, unstable_branch=self.unstable_b, workspace_path=self.stable_p)
-        if gen is not None and gen != getattr(self, "scan_generation", 0):
-            return
-        if gen is not None:
-            GLib.idle_add(self.add_forward_result, repo, sync_data, pr_data, gen)
-        else:
-            GLib.idle_add(self.add_forward_result, repo, sync_data, pr_data)
+        self.run_bg_sync_single(repo, gen=gen)
 
-    def add_forward_result(self, name, sync_data, pr_data, gen=None):
+    def update_forward_row_single(self, name, sync_data, pr_data=None, gen=None):
         if gen is not None and gen != getattr(self, "scan_generation", 0):
             return
         if name not in self.package_data:
             return
-
-        self.fwd_completed_count += 1
-
-        if sync_data.get("status") == "success":
+        if sync_data and sync_data.get("status") == "success":
             self.package_data[name]["sync"] = sync_data
         if pr_data is not None:
             self.package_data[name]["pr"] = pr_data
         self.update_row_ui(name)
-
         if getattr(self, "current_selected_package", None) == name:
             self.update_detail_sync_ui(name)
+            self.update_detail_worktree_ui(name)
+            self.update_detail_title(name)
+            self.update_detail_pr_ui(name)
+
+    def run_bg_forward(self, repo, gen=None):
+        if gen is not None and gen != getattr(self, "scan_generation", 0):
+            return
+        self.run_bg_sync(repo, gen=gen)
+
+    def add_forward_result(self, name, sync_data, pr_data=None, gen=None):
+        if gen is not None and gen != getattr(self, "scan_generation", 0):
+            return
+        if name not in self.package_data:
+            return
+        if sync_data and sync_data.get("status") == "success":
+            self.package_data[name]["sync"] = sync_data
+        if pr_data is not None:
+            self.package_data[name]["pr"] = pr_data
+        self.update_row_ui(name)
+        if getattr(self, "current_selected_package", None) == name:
+            self.update_detail_sync_ui(name)
+            self.update_detail_worktree_ui(name)
             self.update_detail_title(name)
             self.update_detail_pr_ui(name)
 

@@ -2032,5 +2032,53 @@ class TestSyncWindow(unittest.TestCase):
             mock_win.filter_unstable.set_active.assert_called_with(True)
 
 
+    def test_save_profile_cache_async_thread_safe_and_atomic(self):
+        from geckopit import SyncWindow
+        import json
+        import tempfile
+        import time
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cache_file = Path(tmp_dir) / "cache_test.json"
+            mock_win = mock.Mock()
+            mock_win.config.active_workspace = "TestWorkspace"
+            mock_win.get_cache_path.return_value = cache_file
+            mock_win.package_data = {
+                "vlc": {"sync": {"status": "success"}, "pr": {"has_pr": True}}
+            }
+
+            SyncWindow.save_profile_cache_async(mock_win)
+
+            for _ in range(50):
+                if cache_file.exists():
+                    break
+                time.sleep(0.02)
+
+            self.assertTrue(cache_file.exists())
+            with open(cache_file) as f:
+                data = json.load(f)
+            self.assertEqual(data["profile"], "TestWorkspace")
+            self.assertEqual(data["package_data"]["vlc"]["pr"]["has_pr"], True)
+            self.assertFalse(cache_file.with_suffix(".tmp").exists())
+
+    def test_toggle_terminal_drawer_f12_shortcut(self):
+        from geckopit import SyncWindow
+        from gi.repository import Gdk
+
+        mock_win = mock.Mock()
+        mock_win.terminal_drawer.get_visible.return_value = False
+        mock_win.terminal_tabs = [{"terminal": mock.Mock()}]
+        mock_win.notebook.get_current_page.return_value = 0
+
+        res = SyncWindow.on_window_key_pressed(mock_win, None, Gdk.KEY_F12, 0, 0)
+        self.assertTrue(res)
+        mock_win.terminal_drawer.set_visible.assert_called_with(True)
+
+        mock_win.terminal_drawer.get_visible.return_value = True
+        res = SyncWindow.on_window_key_pressed(mock_win, None, Gdk.KEY_F12, 0, 0)
+        self.assertTrue(res)
+        mock_win.terminal_drawer.set_visible.assert_called_with(False)
+
 if __name__ == '__main__':
     unittest.main()
