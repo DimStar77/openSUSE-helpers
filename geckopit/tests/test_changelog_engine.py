@@ -23,6 +23,7 @@ from upgrade.changelog import (
     check_retrospective_news_changes,
     extract_appstream_notes,
     APPSTREAM_XML_REGEX,
+    is_date_line,
 )
 
 class TestChangelogEngine(unittest.TestCase):
@@ -277,6 +278,105 @@ class TestChangelogEngine(unittest.TestCase):
             self.assertIn("[Reader] Fixed selection coordinate calculation", formatted)
             self.assertIn("Updated translations.", formatted)
             self.assertNotIn("Happy reading", formatted)
+
+
+    def test_is_date_line(self):
+        valid_dates = [
+            "Thursday, October 22, 2026",
+            "Monday, October 5, 2026",
+            "Thursday, October 26th, 2017",
+            "Monday, October 23nd, 2017",
+            "Friday, October the 13th, 2017",
+            "Tuesday, Sep 03, 2012",
+            "Released October 2026",
+            "Released February 2026",
+            "Released: 2026-10-22",
+            "Released on October 22, 2026",
+            "Release date: October 22, 2026",
+            "Date: 2026-10-22",
+            "October 22, 2026",
+            "22 October 2026",
+            "22nd October 2026",
+            "22-Oct-2026",
+            "2026-10-22",
+            "22.10.2026",
+            "10/22/2026",
+            "(2026-10-22)",
+            "[October 22, 2026]",
+            "Thu Oct 22 06:45:47 UTC 2026",
+            "2026-10-22 14:30:00",
+            "2026-10-22T14:30:00Z",
+            "2026-09-29  Lars Windolf <lars.windolf@gmx.de>",
+        ]
+        for d in valid_dates:
+            self.assertTrue(is_date_line(d, d.strip()), f"Failed to match date: {d}")
+
+        invalid_dates = [
+            "Web:",
+            "General:",
+            "Support for the new tables and formats",
+            "* Thursday, October 22, 2026",
+            "- 2026-10-22: Release notes",
+            "Fixed bug in October 2026 where something broke",
+        ]
+        for inv in invalid_dates:
+            self.assertFalse(is_date_line(inv, inv.strip()), f"Incorrectly matched non-date: {inv}")
+
+    def test_format_changelog_entry_harfbuzz_multiline_header(self):
+        sample_diff = """
++++ b/NEWS
++Overview of changes leading to 15.0.0
++Thursday, October 22, 2026
++=====================================
++- Support for the new tables and formats in the ISO Open Font Format (OFF) 5th
++  edition is now enabled by default:
++  * New tables and formats for 24-bit glyph indices (a.k.a. beyond-64k): the
++    `GLYF`, `LOCA`, `GVAR`, `MAXP`, `HHEA`, `HMTX`, `VHEA`, and `VMTX` tables
++  * Cubic curves in `GLYF` outlines.
++  * The `DMAP` table, supported since 14.6.0.
++- Support instancing axes not referenced by retained `VARC` data.
++- Rewrite the number parser without Ragel, fixing various edge cases.
+
+Overview of changes leading to 14.6.0
+Monday, October 5, 2026
+=====================================
+- Fix shaping failures caused by out-of-range glyph IDs.
+"""
+        result = format_changelog_entry(sample_diff, "15.0.0")
+        lines = result.splitlines()
+        self.assertEqual(lines[0], "- Update to version 15.0.0:")
+        # Date and release header must be completely stripped
+        self.assertNotIn("Thursday, October 22, 2026", result)
+        self.assertNotIn("Overview of changes", result)
+        self.assertNotIn("Fix shaping failures", result)
+        # Main bullets should start with level 1 indentation (* )
+        self.assertEqual(lines[1], "  * Support for the new tables and formats in the ISO Open Font Format (OFF)")
+        # Nested sub-bullets should be indented with (+ )
+        self.assertTrue(any("    + New tables and formats for 24-bit glyph indices" in l for l in lines))
+        self.assertTrue(any("    + Cubic curves in `GLYF` outlines." in l for l in lines))
+        self.assertTrue(any("    + The `DMAP` table, supported since 14.6.0." in l for l in lines))
+        # Sibling bullets should be level 1 (* )
+        self.assertTrue(any("  * Support instancing axes not referenced by retained `VARC` data." in l for l in lines))
+        self.assertTrue(any("  * Rewrite the number parser without Ragel, fixing various edge cases." in l for l in lines))
+
+    def test_format_changelog_entry_released_month_year_header(self):
+        sample_diff = """
++++ b/NEWS
++feedbackd 0.8.10
++----------------
++Released October 2026
++* Project moved to https://gitlab.freedesktop.org/feedbackd/
++* Allow Phosh to use the important hint (for e.g. cellbroadcasts)
++* Add pmi8998-haptics
++"""
+        result = format_changelog_entry(sample_diff, "0.8.10")
+        self.assertNotIn("feedbackd 0.8.10", result)
+        self.assertNotIn("Released October 2026", result)
+        lines = result.splitlines()
+        self.assertEqual(lines[0], "- Update to version 0.8.10:")
+        self.assertEqual(lines[1], "  * Project moved to https://gitlab.freedesktop.org/feedbackd/")
+        self.assertEqual(lines[2], "  * Allow Phosh to use the important hint (for e.g. cellbroadcasts)")
+        self.assertEqual(lines[3], "  * Add pmi8998-haptics")
 
 
 if __name__ == '__main__':

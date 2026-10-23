@@ -16,7 +16,9 @@ from .changelog import (
     remove_patch_from_spec,
     check_retrospective_news_changes,
     extract_appstream_notes,
-    APPSTREAM_XML_REGEX
+    APPSTREAM_XML_REGEX,
+    is_date_line,
+    is_release_header_line,
 )
 
 # Registry of upgrade helpers in order of evaluation
@@ -63,4 +65,6 @@ __all__ = [
     "check_retrospective_news_changes",
     "extract_appstream_notes",
     "APPSTREAM_XML_REGEX",
+    "is_date_line",
+    "is_release_header_line",
 ]

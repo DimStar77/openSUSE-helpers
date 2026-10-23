@@ -21,9 +21,33 @@ RE_VER_HEADER = re.compile(
     r'^([a-zA-Z0-9_\-]+\s+)?(version\s+)?v?\d+[\d._rcbetalpha+-]*(\s*[-–(:].*|\s+\d{4}[-/.]\d{1,2}[-/.]\d{1,2})?$',
     re.IGNORECASE
 )
-RE_DATE_HEADER = re.compile(r'^(released|date):\s*.*', re.IGNORECASE)
+_MONTHS = r'(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)'
+_DAYS = r'(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Mon|Tue|Wed|Thu|Fri|Sat|Sun)'
+_DATE_PREFIX = r'(?:released\s*(?:on\s+)?|release\s*date\s*|date\s*)[:\-–]?'
+_TIME_TZ = r'(?:[T\s]\d{1,2}:\d{2}(?::\d{2})?(?:\s*(?:UTC|GMT|Z|[+-]\d{2,4}))?)?'
+
+RE_DATE_HEADER = re.compile(
+    rf'^(?:'
+    rf'{_DATE_PREFIX}\s*.*|'
+    rf'{_DAYS}[,\s]+(?:{_MONTHS}[.\s]+(?:the\s+)?\d{{1,2}}(?:st|nd|rd|th)?|\d{{1,2}}(?:st|nd|rd|th)?[-.\s]+(?:of\s+)?{_MONTHS})[-,\s]+\d{{4}}[:.]?|'
+    rf'{_DAYS}\s+{_MONTHS}\s+\d{{1,2}}\s+\d{{1,2}}:\d{{2}}:\d{{2}}(?:\s+[A-Z0-9+-]+)?\s+\d{{4}}|'
+    rf'(?:{_MONTHS}[.\s]+(?:the\s+)?\d{{1,2}}(?:st|nd|rd|th)?[-,\s]+|\d{{1,2}}(?:st|nd|rd|th)?[-.\s]+(?:of\s+)?{_MONTHS}[-,\s]+)\d{{4}}[:.]?|'
+    rf'{_MONTHS}[,\s]+\d{{4}}[:.]?|'
+    rf'\d{{4}}[-/.]\d{{1,2}}[-/.]\d{{1,2}}{_TIME_TZ}[:.]?|'
+    rf'\d{{1,2}}[-/.]\d{{1,2}}[-/.]\d{{4}}{_TIME_TZ}[:.]?|'
+    rf'\d{{4}}[-/.]\d{{1,2}}[-/.]\d{{1,2}}\s+.*<[^>]+>'
+    rf')$',
+    re.IGNORECASE
+)
 RE_UNDERLINE = re.compile(r'^[=\-~_]{2,}$')
 RE_BULLET = re.compile(r'^(\s*)([*•\-+])\s+(.*)')
+
+def is_date_line(line_content: str, stripped_text: str) -> bool:
+    """Detects whether a line in an upstream NEWS diff represents a release date header."""
+    if not stripped_text or RE_BULLET.match(line_content):
+        return False
+    clean = stripped_text.strip("()[]~- ")
+    return bool(RE_DATE_HEADER.match(clean))
 
 def is_release_header_line(line_content: str, stripped_text: str) -> bool:
     """Detects whether a line in an upstream NEWS diff represents a release section header."""
@@ -168,7 +192,7 @@ def format_changelog_entry(
         if not s:
             in_translations = False
             continue
-        if is_release_header_line(line, s) or RE_DATE_HEADER.match(s) or RE_UNDERLINE.match(s):
+        if is_release_header_line(line, s) or is_date_line(line, s) or RE_UNDERLINE.match(s):
             continue
 
         # Standalone translation section header (e.g. 'Translations:' or 'Translation updates:')
