@@ -381,11 +381,15 @@ geckopit-cli libnotify --submit-pool
 # Submit with a custom description
 geckopit-cli libnotify --submit-pool -m "Update to version 0.8.9"
 
+# Filter submission audit specifically to packages with outdated submit requests
+geckopit-cli --outdated
+
 # Interactively submit all unsubmitted packages across the workspace
 geckopit-cli --submit-pool --all
 ```
 
 *   **Pending Request Guard**: Automatically queries OBS submit requests targeting `openSUSE:Factory`. If an SR is already pending in review, Geckopit blocks duplicate submissions and displays the active request ID (`⏳ Pending SR #1385454 (review)`).
+*   **Outdated Submit Request Tracking & Superseding**: Automatically checks if a package's `srcmd5` in its source devel project has moved past a frozen pending SR revision. Geckopit flags outdated requests (`📤 Pending SR #N Outdated`), activates the **`📤 Supersede SR`** button in the Cockpit, and passes `-s <id>` when submitting to supersede with the latest sources.
 *   **Sync Gap Intelligence**: Detects requests that were already accepted in OBS but have not yet finished mirroring into the Gitea pool (`src.opensuse.org/pool/<pkg>.git`), preventing false alarms.
 *   **Git-Managed Pool Guard**: Inspects target project meta for `<scmsync>` tags, ensuring that when Factory transitions to Git, Geckopit cleanly routes to Gitea Pull Requests instead of `osc sr`.
 *   **Automatic Changelog Extraction**: Extracts added `.changes` entries since `refs/pool/factory`, stripping redundant date headers and whitespace noise to prefill the submit description message.
@@ -433,16 +437,18 @@ Click the **`edit-copy-symbolic`** (Copy icon 📋) in the diff viewer or PR dia
 
 ## 🛠️ PART 7: ADVANCED COCKPIT SECRETS (POWER USER GUIDE)
 
-### 🚫 Interactive Version-Ignoring Mouse Gesture
-Some upstream projects have abandoned, broken, or unusable unstable versions reported by release monitoring for years. To prevent these stagnant releases from cluttering your `"⚠️ Needs Action"` list:
+### 🚫 Interactive Version-Ignoring & Candidate Advancement
+Some upstream projects have abandoned, broken, or unusable versions reported by release monitoring for years. Geckopit supports multi-version ignore rules across both stable and unstable streams with instant candidate auto-advancement:
 
-1.  **Trigger the Gesture**:
-    Hold **`Ctrl` + `Alt`** and **right-click** directly on the **Version Alignment** label inside the Unstable Pipeline card.
-2.  **Toggle Ignore State**:
+1.  **Trigger Contextual Popover**:
+    **Right-click** (or hold **`Ctrl` + `Alt`** and right-click) directly on either the **Stable** or **Unstable** version label inside the pipeline cards.
+2.  **Toggle Ignore State & Auto-Advancement**:
     *   In the popup menu, click **`🚫 Ignore Version {Version}`**.
-    *   The version label transitions to an italicized gray **`(Ignored)`** badge, and the update button disables (displaying **`Ignored Unstable Update`**).
-    *   The package smoothly slides out of your filtered sidebar list in real time.
-3.  **To Unignore**:
-    Perform the same gesture (**`Ctrl` + `Alt` + Right Click**) on the ignored label and select **`🔄 Unignore Version {Version}`**.
+    *   Geckopit immediately re-evaluates historical release history from release-monitoring.org and auto-advances to the next eligible candidate version in memory without requiring a manual refresh.
+    *   If all candidate releases newer than local are ignored, the label transitions to an italicized gray **`(Ignored)`** badge, and the package slides out of your filtered sidebar list.
+3.  **Quick Unignoring**:
+    Right-click the version label again to unignore any previously ignored versions listed in the popover menu (or click **`🔄 Unignore All Versions`** to clear all ignore rules for the package).
+4.  **CLI Management & Inotify Sync**:
+    Manage ignore rules directly from the terminal with `geckopit-cli --ignore [VER] [pkg]`, `geckopit-cli --unignore <VER|all> [pkg]`, and `geckopit-cli --list-ignored`. External edits to `~/.config/geckopit.json` are automatically detected via inotify and live-synchronized across the GUI in real time.
 
-*Note: Ignored states are saved in active profile configuration under `ignored_unstable_versions` in `~/.config/geckopit.json`. Both the GUI and CLI (`geckopit-cli -v`) respect these rules seamlessly.*
+*Note: Ignored states are saved in active profile configuration under `ignored_versions` in `~/.config/geckopit.json`. Both the GUI and CLI respect these rules seamlessly.*

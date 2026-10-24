@@ -90,6 +90,7 @@ Geckopit manages multiple independent packaging checkouts via Workspace Profiles
 | `No Pool` | Package is not hosted in central Gitea pool. | Informational (suppressed from default sync table). |
 | `Conflict` | Automated sync encountered git merge conflicts. | Resolve in console drawer shell. |
 | `SR #N` | Active OBS submit request under review in Factory staging (or awaiting pool sync). | Inspect in OBS (`osc request show N`) or wait for sync. |
+| `SR #N (outdated)` | Pending submit request has outdated sources (newer changes in devel project). | Click '📤 Supersede SR' or run `geckopit-cli --submit-pool` to supersede. |
 
 ---
 
@@ -110,8 +111,11 @@ The linked toolbar at the top of the sidebar lets you switch between focused wor
   * The four track filter buttons are automatically dimmed (`sensitive=False`), and track shortcuts (`Ctrl+2`..`Ctrl+5`) are ignored.
   * Your previous track selections are remembered and immediately restored when you toggle `⚠️ Needs` back on.
 * **Ignoring Stagnant Versions**:
-  * If an upstream project has an abandoned pre-release tag cluttering your queue, hold **`Ctrl` + `Alt`** and **right-click** directly on the version label in the Unstable Pipeline card.
-  * Select **`🚫 Ignore Version {Version}`**. The package will slide out of your filtered sidebar list. (Repeat and click **`🔄 Unignore`** to restore).
+  * If an upstream project has an abandoned pre-release tag cluttering your queue, **right-click** (or hold **`Ctrl` + `Alt`** and right-click) directly on either the **Stable** or **Unstable** version label in the pipeline cards.
+  * Select **`🚫 Ignore Version {Version}`**. Geckopit immediately re-evaluates upstream release history and auto-advances to the next eligible candidate version in memory without requiring a manual refresh.
+  * If all candidate releases newer than local are ignored, the version is displayed as `(Ignored)` and the package slides out of your filtered sidebar list.
+  * **Quick Unignoring**: Right-click the version label again to unignore any previously ignored versions listed in the popover menu (or click **`🔄 Unignore All Versions`** to clear all ignore rules for the package).
+  * **Live Config Sync**: If you add or remove ignore rules using the CLI (`geckopit-cli --ignore` / `--unignore`), the running GUI automatically detects the changes via inotify and live-synchronizes active rules, candidates, and row badges in real time.
 
 ---
 
@@ -188,6 +192,14 @@ geckopit-cli --todo
 
 # Central pool submission audit: Check which packages need submission to openSUSE:Factory
 geckopit-cli --check-pool
+
+# Filter submission audit specifically to packages with outdated submit requests
+geckopit-cli --outdated
+
+# Manage version ignore rules from the CLI
+geckopit-cli --ignore 0.99.11 telepathy-glib
+geckopit-cli --unignore 0.99.11 telepathy-glib
+geckopit-cli --list-ignored
 
 # Submit package changes to openSUSE:Factory (dry-run preview)
 geckopit-cli libnotify --submit-pool --dry-run
@@ -395,7 +407,7 @@ Geckopit unifies **Gitea Pull Requests** and **OBS Submit Requests (SRs)** into 
   * `📥 ACTIVE SUBMIT REQUEST (1)`: When an in-flight OBS submit request is under evaluation in Factory.
   * `📥 ACTIVE PULL REQUESTS (N)`: When open Gitea pull requests are present.
 * **OBS Submit Request Cards**:
-  * Displays the SR number (`SR #1385454`), submit message subject, creator (`@author`), target project (`openSUSE:Factory`), source project (`GNOME:Factory`), and status pill (`[Review - OBS SR]` in amber or `[Accepted - OBS SR]` in soft green).
+  * Displays the SR number (`SR #1385454`), submit message subject, creator (`@author`), target project (`openSUSE:Factory`), source project (`GNOME:Factory`), and status pill (`[Review - OBS SR]` in amber, `[Accepted - OBS SR]` in soft green, or `[📤 Outdated SR - Supersede Ready]` in blue).
   * **Interactive Double-Click**: Double-clicking an SR card directly launches `https://build.opensuse.org/request/show/<ID>` in your default browser, accompanied by an in-app `Adw.Toast` confirmation banner.
   * **Tooltip**: Displays the exact command to inspect the request in your terminal (`osc request show <ID>`).
 * **Gitea Pull Request Cards**:
@@ -477,6 +489,9 @@ When developmental updates on `factory` are ready for integration into the distr
 # Workspace-wide audit: Identify which packages truly need submission to openSUSE:Factory
 geckopit-cli --check-pool
 
+# Filter specifically for packages whose pending submit requests are outdated
+geckopit-cli --outdated
+
 # Inspect pending submit requests for an individual package
 geckopit-cli libnotify --check-pool
 
@@ -496,6 +511,7 @@ geckopit-cli --submit-pool --all
 **Key Submission Capabilities**:
 * **Sub-2-Second Distribution Audit**: Queries the project-wide OBS submit request collection (`/request?view=collection&project=openSUSE:Factory&states=review,new&types=submit`) in ~1.8 seconds total, cross-referencing all 500+ packages in memory.
 * **Existing SR Guard**: Prevents redundant submissions when a request is already under evaluation in Factory staging (e.g. `⏳ Pending SR #1385454 (review)`).
+* **Outdated Request Tracking & Automated Superseding**: Compares the devel package's `srcmd5` against the frozen request revision in OBS. If newer changes were committed to the source devel project while an SR was pending (such as `loupe` or `glycin`), Geckopit flags the request as outdated (`📤 Pending SR #<id> Outdated`), enables the **`📤 Supersede SR`** action button on the pipeline card, and automatically passes `-s <id>` to `osc sr` when superseding via `geckopit-cli --submit-pool`.
 * **Sync Gap Intelligence**: Audits recently accepted submit requests within a sliding window to catch packages accepted in OBS that have not yet finished backend mirroring to `src.opensuse.org/pool/<pkg>.git`.
 * **Safe Workspace Crossover**: When invoked from an unstable worktree (such as `GNOME:Next` on `next`), Geckopit automatically notifies you and routes the submission to your configured stable checkout (`GNOME` on `factory`), preventing developmental code from leaking into Factory.
 * **Future Git-Pool Readiness**: Inspects target project meta for `<scmsync>` tags, automatically guiding maintainers toward Gitea Pull Requests once `openSUSE:Factory` migrates to Git.
