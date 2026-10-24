@@ -2276,5 +2276,96 @@ class TestSyncWindow(unittest.TestCase):
         self.assertFalse(ver["is_ignored_unstable"])
         self.assertTrue(ver["needs_update"])
 
+    def test_on_config_file_changed_ignores_internal_saves(self):
+        from geckopit import SyncWindow
+        from gi.repository import Gio
+        import time
+
+        mock_win = mock.Mock()
+        mock_win.config._last_save_time = time.time()
+        mock_win._config_reload_timeout_id = None
+
+        # Event fired right after internal save -> ignored
+        SyncWindow.on_config_file_changed(mock_win, None, None, None, Gio.FileMonitorEvent.CHANGED)
+        self.assertIsNone(mock_win._config_reload_timeout_id)
+
+    @mock.patch("geckopit.GLib.timeout_add")
+    def test_on_config_file_changed_schedules_reload_on_external_change(self, mock_timeout_add):
+        from geckopit import SyncWindow
+        from gi.repository import Gio
+
+        mock_win = mock.Mock()
+        mock_win.config._last_save_time = 0.0  # Old save / external modification
+        mock_win._config_reload_timeout_id = None
+
+        mock_timeout_add.return_value = 999
+        SyncWindow.on_config_file_changed(mock_win, None, None, None, Gio.FileMonitorEvent.CHANGED)
+
+        mock_timeout_add.assert_called_with(150, mock_win.on_config_file_reload)
+        self.assertEqual(mock_win._config_reload_timeout_id, 999)
+
+    def test_on_config_file_reload_synchronizes_ignore_rules_and_ui(self):
+        from geckopit import SyncWindow
+        mock_win = mock.Mock()
+        mock_win._config_reload_timeout_id = 999
+        mock_win.package_data = {
+            "telepathy-glib": {
+                "version": {
+                    "factory_ver": "0.24.2",
+                    "next_ver": "0.24.2",
+                    "upstream_stable": "0.24.2",
+                    "upstream_latest": "0.99.7",
+                    "raw_upstream_stable": "0.24.2",
+                    "raw_upstream_latest": "0.99.11",
+                    "stable_versions": ["0.24.2"],
+                    "all_versions": ["0.99.11", "0.99.10", "0.99.9", "0.99.8", "0.99.7", "0.99.6", "0.24.2"],
+                }
+            }
+        }
+        mock_win.stable_b = "factory"
+        mock_win.unstable_b = "next"
+        mock_win.current_selected_package = "telepathy-glib"
+
+        # Simulating external tool added 0.99.7 to ignored_versions
+        old_prof = {
+            "stable_path": "/path",
+            "unstable_path": "/path",
+            "stable_branch": "factory",
+            "unstable_branch": "next",
+            "ignored_versions": {"telepathy-glib": "0.99.11, 0.99.10, 0.99.9, 0.99.8"},
+            "filters": {"needs_action": True}
+        }
+        new_prof = {
+            "stable_path": "/path",
+            "unstable_path": "/path",
+            "stable_branch": "factory",
+            "unstable_branch": "next",
+            "ignored_versions": {"telepathy-glib": "0.99.11, 0.99.10, 0.99.9, 0.99.8, 0.99.7"},
+            "filters": {"needs_action": True}
+        }
+
+        mock_win.config.active_workspace = "Default"
+        mock_win.config.get_active_profile.side_effect = [old_prof, new_prof]
+        def fake_get_ign(pkg):
+            return new_prof.get("ignored_versions", {}).get(pkg)
+        mock_win.get_ignored_version.side_effect = fake_get_ign
+
+        SyncWindow.on_config_file_reload(mock_win)
+
+        self.assertIsNone(mock_win._config_reload_timeout_id)
+        mock_win.config.load.assert_called_once()
+        self.assertEqual(mock_win.ignored_versions, new_prof["ignored_versions"])
+
+        # Upstream latest should automatically advance to 0.99.6!
+        ver = mock_win.package_data["telepathy-glib"]["version"]
+        self.assertEqual(ver["upstream_latest"], "0.99.6")
+        self.assertTrue(ver["unstable_needs_update"])
+        self.assertFalse(ver["is_ignored_unstable"])
+
+        mock_win.update_row_ui.assert_called_with("telepathy-glib")
+        mock_win.update_detail_version_ui.assert_called_with("telepathy-glib")
+        mock_win.master_list_box.invalidate_filter.assert_called_once()
+        mock_win.toast_overlay.add_toast.assert_called_once()
+
 if __name__ == '__main__':
     unittest.main()

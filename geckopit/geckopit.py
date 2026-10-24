@@ -860,6 +860,7 @@ class SyncDiffDialog(Gtk.Window):
 
 class WorkspaceConfig:
     def __init__(self):
+        self._last_save_time = 0.0
         self.active_workspace = "Default"
         self.max_workers = 16
         self.sidebar_width = 500
@@ -892,6 +893,7 @@ class WorkspaceConfig:
             return
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
+            self._last_save_time = time.time()
             with open(path, "w", encoding="utf-8") as f:
                 json.dump({
                     "active_workspace": self.active_workspace,
@@ -1817,6 +1819,9 @@ class SyncWindow(Adw.ApplicationWindow):
         self.unstable_b = active_prof.get("unstable_branch") if self.unstable_p else None
         self.ignored_versions = active_prof.get("ignored_versions") or active_prof.get("ignored_unstable_versions", {})
         self.ignored_unstable_versions = dict(self.ignored_versions)
+        self.config_file_monitor = None
+        self._config_reload_timeout_id = None
+        self.setup_config_file_monitor()
 
         # Core data
         self.repos = []
@@ -2082,6 +2087,20 @@ class SyncWindow(Adw.ApplicationWindow):
         if isinstance(diff_timer, int) and diff_timer != 0:
             GLib.Source.remove(diff_timer)
             self.diff_debounce_id = 0
+
+        if getattr(self, "config_file_monitor", None):
+            try:
+                self.config_file_monitor.cancel()
+            except Exception:
+                pass
+            self.config_file_monitor = None
+
+        if getattr(self, "_config_reload_timeout_id", None):
+            try:
+                GLib.source_remove(self._config_reload_timeout_id)
+            except Exception:
+                pass
+            self._config_reload_timeout_id = None
 
         sb.cleanup_ssh_multiplexing()
 
@@ -2688,6 +2707,123 @@ class SyncWindow(Adw.ApplicationWindow):
         except Exception:
             pass
         return sorted(branches)
+
+    def setup_config_file_monitor(self):
+        """Attaches a Gio.FileMonitor to ~/.config/geckopit.json to detect external changes (e.g. from geckopit-cli)."""
+        if getattr(self, "config_file_monitor", None):
+            try:
+                self.config_file_monitor.cancel()
+            except Exception:
+                pass
+            self.config_file_monitor = None
+
+        cfg_path = getattr(self.config, "config_path", None) or (Path.home() / ".config" / "geckopit.json")
+        try:
+            gfile = Gio.File.new_for_path(str(cfg_path))
+            monitor = gfile.monitor_file(Gio.FileMonitorFlags.NONE, None)
+            monitor.connect("changed", self.on_config_file_changed)
+            self.config_file_monitor = monitor
+        except Exception:
+            self.config_file_monitor = None
+
+    def on_config_file_changed(self, monitor, f1, f2, event_type):
+        """Triggered via inotify whenever ~/.config/geckopit.json is modified on disk."""
+        if event_type == Gio.FileMonitorEvent.DELETED:
+            return
+        last_save = getattr(self.config, "_last_save_time", 0.0)
+        if time.time() - last_save < 1.0:
+            return
+        # Debounce multiple rapid file events into a single reload pass
+        if getattr(self, "_config_reload_timeout_id", None):
+            try:
+                GLib.source_remove(self._config_reload_timeout_id)
+            except Exception:
+                pass
+        self._config_reload_timeout_id = GLib.timeout_add(150, self.on_config_file_reload)
+
+    def on_config_file_reload(self):
+        """Reloads configuration from disk and synchronizes ignore rules across GUI state."""
+        self._config_reload_timeout_id = None
+
+        old_active_ws = self.config.active_workspace
+        old_prof = dict(self.config.get_active_profile())
+        old_ignored = dict(old_prof.get("ignored_versions") or old_prof.get("ignored_unstable_versions", {}))
+
+        self.config.load()
+
+        new_prof = dict(self.config.get_active_profile())
+        new_ignored = dict(new_prof.get("ignored_versions") or new_prof.get("ignored_unstable_versions", {}))
+
+        # Check if workspace paths, branches, or active profile switched externally
+        if (
+            self.config.active_workspace != old_active_ws
+            or new_prof.get("stable_path") != old_prof.get("stable_path")
+            or new_prof.get("unstable_path") != old_prof.get("unstable_path")
+            or new_prof.get("stable_branch") != old_prof.get("stable_branch")
+            or new_prof.get("unstable_branch") != old_prof.get("unstable_branch")
+        ):
+            self.reload_workspace()
+            return False
+
+        # Update window-level branch state mappings
+        self.ignored_versions = dict(new_ignored)
+        self.ignored_unstable_versions = dict(self.ignored_versions)
+
+        # Restore profile filters if changed externally
+        if new_prof.get("filters") != old_prof.get("filters"):
+            self.restore_active_profile_filters()
+
+        if new_ignored != old_ignored:
+            all_pkgs = set(old_ignored.keys()) | set(new_ignored.keys())
+            affected_pkgs = [p for p in all_pkgs if old_ignored.get(p) != new_ignored.get(p)]
+
+            for pkg in affected_pkgs:
+                if pkg in self.package_data:
+                    ver_data = self.package_data[pkg].get("version") or {}
+                    factory_ver = ver_data.get("factory_ver", "N/A")
+                    next_ver = ver_data.get("next_ver", "—")
+                    raw_upstream_stable = ver_data.get("raw_upstream_stable") or ver_data.get("upstream_stable", "N/A")
+                    raw_upstream_latest = ver_data.get("raw_upstream_latest") or ver_data.get("upstream_latest", "—")
+                    stable_versions = ver_data.get("stable_versions") or []
+                    all_versions = ver_data.get("all_versions") or []
+                    ignored_ver = self.get_ignored_version(pkg)
+
+                    resolved = sb.resolve_best_upstream_versions(
+                        raw_upstream_stable,
+                        raw_upstream_latest,
+                        factory_ver,
+                        next_ver=next_ver,
+                        ignored_ver=ignored_ver,
+                        repo_name=pkg,
+                        stable_versions=stable_versions,
+                        all_versions=all_versions,
+                        branch=None,
+                        stable_branch=self.stable_b,
+                        unstable_branch=self.unstable_b,
+                    )
+
+                    ver_data.update(resolved)
+                    ver_data["raw_upstream_stable"] = raw_upstream_stable
+                    ver_data["raw_upstream_latest"] = raw_upstream_latest
+                    ver_data["stable_versions"] = stable_versions
+                    ver_data["all_versions"] = all_versions
+
+                    self.update_row_ui(pkg)
+                    if getattr(self, "current_selected_package", None) == pkg:
+                        self.update_detail_version_ui(pkg)
+                        self.update_detail_title(pkg)
+
+                    if not all_versions:
+                        threading.Thread(target=self.run_bg_version_single, args=(pkg,), daemon=True).start()
+
+            self.master_list_box.invalidate_filter()
+            self.queue_save_profile_cache()
+
+            if hasattr(self, "toast_overlay"):
+                toast = Adw.Toast.new("⚙️ Workspace configuration reloaded from disk.")
+                self.toast_overlay.add_toast(toast)
+
+        return False
 
     def setup_active_package_head_monitor(self, package_name):
         if getattr(self, "active_pkg_head_monitor", None):
