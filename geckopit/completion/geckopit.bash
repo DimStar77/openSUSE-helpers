@@ -165,7 +165,7 @@ _geckopit_completion() {
         prev="${COMP_WORDS[COMP_CWORD-1]}"
     fi
 
-    local options="--ignore --unignore --list-ignored --check-patches --verbose --sle --rebase-patch --shell --list-prs --merge-pr --squash --no-commit --upgrade -u --commit -c --no-edit --audit-deps -d --fix-deps --sync -s --fetch --force -f --jobs -j --version -v --branch -b --profile -p --package --not-in-pool --include-not-in-pool --check-pool --submit-pool --pending-sr --pending-requests --message -m --all -a --yes -y --guide --docs --check-setup --setup --dry-run -n --help -h --bash-completion"
+    local options="--ignore --unignore --list-ignored --check-patches --verbose --sle --rebase-patch --shell --list-prs --merge-pr --squash --no-commit --upgrade -u --commit -c --no-edit --audit-deps -d --fix-deps --sync -s --fetch --force -f --jobs -j --version -v --branch -b --profile -p --package --not-in-pool --include-not-in-pool --check-pool --submit-pool --pending-sr --pending-requests --outdated --supersede --message -m --all -a --yes -y --guide --docs --check-setup --setup --dry-run -n --help -h --bash-completion"
     local branches="factory next stable unstable"
 
     case "$prev" in

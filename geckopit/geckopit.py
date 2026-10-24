@@ -67,6 +67,8 @@ FLAG_ALIASES = {
     "nopool": "nopool", "not-in-pool": "nopool", "no-pool": "nopool",
     "pool": "pool",
     "update": "update", "updates": "update", "needs-update": "update",
+    "outdated": "outdated", "supersede": "outdated", "outdated-sr": "outdated", "outdated_sr": "outdated",
+    "sr": "sr", "pending-sr": "sr", "pendingsr": "sr", "obs-sr": "sr",
 }
 
 def parse_filter_query(query: str):
@@ -3646,6 +3648,8 @@ class SyncWindow(Adw.ApplicationWindow):
                 "chk_filter_pr": "pr",
                 "chk_filter_nopr": "nopr",
                 "chk_filter_nopool": "nopool",
+                "chk_filter_outdated": "outdated",
+                "chk_filter_sr": "sr",
             }
             for attr, flag in pop_mapping.items():
                 chk = getattr(self, attr, None)
@@ -3827,10 +3831,20 @@ class SyncWindow(Adw.ApplicationWindow):
         sep2 = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
         main_box.append(sep2)
 
-        # 3. Central Gitea Pool Section
-        pool_lbl = Gtk.Label(label="<small><b>CENTRAL GITEA POOL</b></small>", use_markup=True, halign=Gtk.Align.START)
+        # 3. Central Gitea Pool & OBS Submissions Section
+        pool_lbl = Gtk.Label(label="<small><b>CENTRAL GITEA POOL &amp; SUBMISSIONS</b></small>", use_markup=True, halign=Gtk.Align.START)
         pool_lbl.add_css_class("dim-label")
         main_box.append(pool_lbl)
+
+        self.chk_filter_outdated = Gtk.CheckButton.new_with_label("Outdated Submit Requests (Supersede ready)")
+        self.chk_filter_outdated.set_tooltip_text("Packages with pending submit requests in openSUSE:Factory where source devel project has newer changes (@outdated, @supersede)")
+        self.chk_filter_outdated.connect("toggled", self.on_filter_toggled)
+        main_box.append(self.chk_filter_outdated)
+
+        self.chk_filter_sr = Gtk.CheckButton.new_with_label("Active OBS Submit Requests")
+        self.chk_filter_sr.set_tooltip_text("Packages with an active pending or accepted submit request against openSUSE:Factory (@sr, @pending-sr)")
+        self.chk_filter_sr.connect("toggled", self.on_filter_toggled)
+        main_box.append(self.chk_filter_sr)
 
         self.chk_filter_nopool = Gtk.CheckButton.new_with_label("Missing from Pool (Not in Pool)")
         self.chk_filter_nopool.set_tooltip_text("Packages not hosted in the central Gitea pool repository (@nopool)")
@@ -3844,7 +3858,7 @@ class SyncWindow(Adw.ApplicationWindow):
         for attr in (
             "chk_filter_dirty", "chk_filter_unpushed", "chk_filter_pull", "chk_filter_conflict",
             "chk_filter_diverged", "chk_filter_catchup", "chk_filter_promote", "chk_filter_pr", "chk_filter_nopr",
-            "chk_filter_nopool"
+            "chk_filter_nopool", "chk_filter_outdated", "chk_filter_sr"
         ):
             chk = getattr(self, attr, None)
             if chk:
@@ -4090,6 +4104,9 @@ class SyncWindow(Adw.ApplicationWindow):
                            isinstance(unstable_wt, dict) and unstable_wt.get("has_conflict"))
         is_nopool = bool(pool_status == "Not in Pool")
         is_pool = bool(pool_behind > 0 or pool_ahead > 0 or is_nopool or pool_status in ("Fetch failed", "Error"))
+        sr_info = sync.get("pool_sr") if isinstance(sync, dict) else None
+        is_sr = bool(sr_info and sr_info.get("status") in ("pending", "pending_outdated", "accepted_pending_sync"))
+        is_outdated_sr = bool(sr_info and (sr_info.get("status") == "pending_outdated" or sr_info.get("is_outdated")))
 
         # Version tracking flags
         ignored_ver = self.get_ignored_version(package_name)
@@ -4126,6 +4143,8 @@ class SyncWindow(Adw.ApplicationWindow):
                 "nopool": is_nopool,
                 "pool": is_pool,
                 "update": is_update,
+                "outdated": is_outdated_sr,
+                "sr": is_sr,
             }
             for flag in active_flags:
                 if not flag_predicates.get(flag, False):

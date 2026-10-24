@@ -147,6 +147,8 @@ Type tokens directly into the search bar, with or without package name fragments
 | | `@nopr` *(or `@unsubmitted`)* | Packages forwardable from `next` to `factory` without an open PR. |
 | | `@pool` | Packages that are ahead or behind the central openSUSE Gitea pool. |
 | | `@nopool` *(or `@not-in-pool`)* | Packages not hosted in the central Gitea pool. |
+| | `@outdated` *(or `@supersede`, `@outdated-sr`)* | Packages with outdated pending submit requests ready to supersede via osc sr. |
+| | `@sr` *(or `@pending-sr`)* | Packages with active pending or accepted OBS submit requests in openSUSE:Factory. |
 | | `@update` *(or `@updates`, `@needs-update`)* | Packages with newer upstream releases on release-monitoring.org. |
 
 * **Compound Queries**: Combine package names with multiple tokens freely (e.g. `gnome @pr`, `gtk @dirty`, `lib @update @pool`).

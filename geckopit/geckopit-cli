@@ -1393,26 +1393,34 @@ def run_pool_audit_cli(workspace_path="."):
     ahead_total = len(res["ahead_packages"])
     pending_total = len(res["pending_sr_packages"])
     accepted_total = len(res["accepted_sync_packages"])
+    outdated_total = len(res.get("outdated_sr_packages", []))
     unsub_total = len(res["unsubmitted_packages"])
 
     print("")
     print(f"Total Workspace Packages: {sb.BOLD}{total}{sb.RESET}")
     print(f"Packages Ahead of Pool:   {sb.BOLD}{ahead_total}{sb.RESET}")
     print(f"  • Active Pending SRs:   {sb.YELLOW}{pending_total}{sb.RESET} (under review in Factory)")
+    if outdated_total > 0:
+        print(f"  • Outdated SRs:         {sb.CYAN}{outdated_total}{sb.RESET} (supersede ready)")
     print(f"  • Accepted (Syncing):   {sb.GREEN}{accepted_total}{sb.RESET} (landed in Factory, awaiting pool sync)")
     print(f"  • Truly Unsubmitted:    {sb.CYAN}{unsub_total}{sb.RESET} (action required)")
     print("")
 
-    if unsub_total > 0:
-        print(f"### 📦 Packages Requiring Submission ({sb.BOLD}{unsub_total}{sb.RESET})")
+    only_outdated = "--outdated" in sys.argv or "--supersede" in sys.argv
+    target_unsub = res.get("outdated_sr_packages", []) if only_outdated else res["unsubmitted_packages"]
+
+    if target_unsub:
+        sec_title = f"Packages with Outdated Submit Requests ({sb.BOLD}{len(target_unsub)}{sb.RESET})" if only_outdated else f"Packages Requiring Submission ({sb.BOLD}{unsub_total}{sb.RESET})"
+        print(f"### 📦 {sec_title}")
         print("")
         headers = ["Package", "Ahead", "Action", "Latest Changes Summary"]
         rows = []
-        for u in res["unsubmitted_packages"]:
+        for u in target_unsub:
+            act = "📤 Supersede SR" if u.get("status") == "pending_outdated" else "📤 Submit Pool"
             rows.append((
                 u["package"],
                 str(u["pool_ahead"]),
-                "📤 Submit Pool",
+                act,
                 u.get("summary", "")[:50]
             ))
         w1 = max(sb.visual_len(headers[0]), max(sb.visual_len(r[0]) for r in rows) if rows else 0)
@@ -1503,7 +1511,7 @@ KNOWN_OPTIONS = {
     "--audit-deps", "-d", "--fix-deps",
     "--list-prs", "--merge-pr", "--squash", "--no-commit",
     "--ignore", "--unignore", "--list-ignored",
-    "--submit-pool", "--check-pool", "--pending-sr", "--pending-requests",
+    "--submit-pool", "--check-pool", "--pending-sr", "--pending-requests", "--outdated", "--supersede",
     "--message", "-m", "--all", "-a", "--yes", "-y",
     "--check-setup", "--setup",
     "--guide", "--docs",
@@ -1914,7 +1922,7 @@ def main():
     yes_arg = "--yes" in sys.argv or "-y" in sys.argv or "--no-edit" in sys.argv
 
     # Execute check-pool / pending-sr audit mode
-    if any(arg in sys.argv for arg in ("--check-pool", "--pending-sr", "--pending-requests")):
+    if any(arg in sys.argv for arg in ("--check-pool", "--pending-sr", "--pending-requests", "--outdated", "--supersede")):
         if target_pkg_dir:
             effective_dir, _, crossed = resolve_pool_workspace_context(target_pkg_dir=target_pkg_dir)
             if crossed:

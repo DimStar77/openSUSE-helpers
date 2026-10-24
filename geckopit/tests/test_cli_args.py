@@ -55,6 +55,8 @@ class TestCliArgs(unittest.TestCase):
             ["gnome-shell", "--commit", "--no-edit"],
             ["--check-pool"],
             ["--pending-sr"],
+            ["--outdated"],
+            ["--supersede"],
             ["--submit-pool"],
             ["libnotify", "--submit-pool", "--dry-run"],
             ["--submit-pool", "--all", "--yes"],

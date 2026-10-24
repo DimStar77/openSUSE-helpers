@@ -742,6 +742,10 @@ class TestSyncWindow(unittest.TestCase):
         self.assertEqual(names2, [])
         self.assertEqual(flags2, {"catchup", "promote", "pr", "nopr", "nopool"})
 
+        names3, flags3 = parse_filter_query("@outdated @supersede @sr is:pending-sr")
+        self.assertEqual(names3, [])
+        self.assertEqual(flags3, {"outdated", "sr"})
+
     def test_sidebar_filter_advanced_search_tokens(self):
         from geckopit import SyncWindow
 
@@ -825,6 +829,19 @@ class TestSyncWindow(unittest.TestCase):
         self.assertTrue(SyncWindow.sidebar_filter_func(mock_win, row_has_pr))
         self.assertFalse(SyncWindow.sidebar_filter_func(mock_win, row_promote))
 
+        # 8. @outdated matches packages with outdated pending submit requests
+        row_outdated = mock.Mock(package_name="loupe")
+        mock_win.package_data["loupe"] = {
+            "sync": {"pool_ahead": 5, "pool_sr": {"status": "pending_outdated", "is_outdated": True}}
+        }
+        mock_win._filter_active_flags = {"outdated"}
+        self.assertTrue(SyncWindow.sidebar_filter_func(mock_win, row_outdated))
+        self.assertFalse(SyncWindow.sidebar_filter_func(mock_win, row_clean))
+
+        # 9. @sr matches packages with active pending submit requests
+        mock_win._filter_active_flags = {"sr"}
+        self.assertTrue(SyncWindow.sidebar_filter_func(mock_win, row_outdated))
+        self.assertFalse(SyncWindow.sidebar_filter_func(mock_win, row_clean))
 
     def test_sidebar_filter_action_queue_generalization(self):
         from geckopit import SyncWindow
@@ -2392,6 +2409,29 @@ class TestSyncWindow(unittest.TestCase):
             self.assertEqual(mock_win.obs_accepted_requests, {})
             mock_idle.assert_any_call(mock_win.update_detail_sync_ui, "loupe")
             mock_idle.assert_any_call(mock_win.update_detail_pr_ui, "loupe")
+
+    def test_build_filter_popover_markup_validity(self):
+        from geckopit import SyncWindow
+        from gi.repository import Gtk, Pango
+
+        mock_win = mock.Mock()
+        mock_win.on_filter_toggled = mock.Mock()
+        mock_win.on_clear_advanced_filters = mock.Mock()
+
+        popover = SyncWindow.build_filter_popover(mock_win)
+        main_box = popover.get_child()
+
+        child = main_box.get_first_child()
+        validated_count = 0
+        while child:
+            if isinstance(child, Gtk.Label) and child.get_use_markup():
+                txt = child.get_label()
+                # Must parse without throwing GLib.GError / Pango markup parse error
+                Pango.parse_markup(txt, -1, chr(0))
+                validated_count += 1
+            child = child.get_next_sibling()
+
+        self.assertGreaterEqual(validated_count, 3)
 
 if __name__ == '__main__':
     unittest.main()

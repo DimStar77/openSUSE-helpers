@@ -1461,6 +1461,7 @@ def audit_workspace_pool_submissions(
         "pending_sr_packages": [],
         "accepted_sync_packages": [],
         "unsubmitted_packages": [],
+        "outdated_sr_packages": [],
     }
 
     if not os.path.isdir(workspace_path):
@@ -1539,6 +1540,9 @@ def audit_workspace_pool_submissions(
                 results["pending_sr_packages"].append(pkg_info)
             elif status_info["status"] == "accepted_pending_sync":
                 results["accepted_sync_packages"].append(pkg_info)
+            elif status_info["status"] == "pending_outdated":
+                results["unsubmitted_packages"].append(pkg_info)
+                results["outdated_sr_packages"].append(pkg_info)
             else:
                 results["unsubmitted_packages"].append(pkg_info)
 
