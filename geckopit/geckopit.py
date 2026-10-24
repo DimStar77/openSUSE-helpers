@@ -344,7 +344,8 @@ class PackageRow(Gtk.ListBoxRow):
             next_ver = version_data.get("next_ver", "—")
             upstream_latest = version_data.get("upstream_latest", "—")
 
-            if is_version_newer(upstream_stable, factory_ver, self.package_name):
+            stable_update = version_data.get("stable_needs_update") if "stable_needs_update" in version_data else is_version_newer(upstream_stable, factory_ver, self.package_name)
+            if stable_update:
                 subtitle_parts.append("Stable Update")
                 tt = (
                     f"<b>Stable Upstream Release</b>\n"
@@ -353,7 +354,8 @@ class PackageRow(Gtk.ListBoxRow):
                 )
                 self.badges_box.append(self.create_badge("Stable 🔺", "green", tooltip=tt))
 
-            if getattr(self.parent_window, "unstable_b", None) and is_version_newer(upstream_latest, next_ver, self.package_name):
+            unstable_update = version_data.get("unstable_needs_update") if "unstable_needs_update" in version_data else (getattr(self.parent_window, "unstable_b", None) and is_version_newer(upstream_latest, next_ver, self.package_name))
+            if getattr(self.parent_window, "unstable_b", None) and unstable_update:
                 subtitle_parts.append("Unstable Update")
                 tt = (
                     f"<b>Unstable Upstream Release</b>\n"
@@ -3474,6 +3476,7 @@ class SyncWindow(Adw.ApplicationWindow):
             if getattr(self, "current_selected_package", None) == name:
                 self.update_detail_version_ui(name)
                 self.update_detail_title(name)
+            self.queue_save_profile_cache()
 
     def update_row_ui(self, name):
         row = self.package_rows.get(name)
@@ -5021,6 +5024,9 @@ class SyncWindow(Adw.ApplicationWindow):
     def on_unstable_ver_clicked(self, gesture, n_press, x, y):
         self.on_ver_clicked(gesture, n_press, x, y, is_unstable=True)
 
+    def on_stable_ver_clicked(self, gesture, n_press, x, y):
+        self.on_ver_clicked(gesture, n_press, x, y, is_unstable=False)
+
     def on_ver_clicked(self, gesture, n_press, x, y, is_unstable=False):
         state = gesture.get_current_event_state()
         button = gesture.get_current_button()
@@ -5028,7 +5034,7 @@ class SyncWindow(Adw.ApplicationWindow):
         ctrl_pressed = (state & Gdk.ModifierType.CONTROL_MASK) != 0
         alt_pressed = (state & Gdk.ModifierType.ALT_MASK) != 0
 
-        if ctrl_pressed and alt_pressed and button == 3:
+        if button == 3 or (ctrl_pressed and alt_pressed and button == 3):
             package_name = getattr(self, "current_selected_package", None)
             if not package_name:
                 return
@@ -5055,11 +5061,32 @@ class SyncWindow(Adw.ApplicationWindow):
             if is_ignored:
                 btn = Gtk.Button(label=f"🔄 Unignore Version {target_version}")
                 btn.connect("clicked", self.on_toggle_ignore_clicked, popover, package_name, target_version, False)
+                box.append(btn)
             else:
                 btn = Gtk.Button(label=f"🚫 Ignore Version {target_version}")
                 btn.connect("clicked", self.on_toggle_ignore_clicked, popover, package_name, target_version, True)
+                box.append(btn)
 
-            box.append(btn)
+            # Also offer quick unignore for any previously ignored versions
+            if ignored_ver:
+                ignored_list = [v.strip() for v in str(ignored_ver).split(",") if v.strip()]
+                unignore_candidates = [v for v in ignored_list if not sb.is_version_equal(target_version, v, package_name)]
+                if unignore_candidates:
+                    sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+                    sep.set_margin_top(4)
+                    sep.set_margin_bottom(4)
+                    box.append(sep)
+
+                    for ign_v in unignore_candidates:
+                        u_btn = Gtk.Button(label=f"🔄 Unignore Version {ign_v}")
+                        u_btn.connect("clicked", self.on_toggle_ignore_clicked, popover, package_name, ign_v, False)
+                        box.append(u_btn)
+
+                    if len(ignored_list) > 1:
+                        all_btn = Gtk.Button(label=f"🔄 Unignore All Versions")
+                        all_btn.connect("clicked", self.on_toggle_ignore_clicked, popover, package_name, "all", False)
+                        box.append(all_btn)
+
             popover.set_child(box)
             popover.popup()
 
@@ -5082,20 +5109,27 @@ class SyncWindow(Adw.ApplicationWindow):
             active_prof["ignored_unstable_versions"] = dict(active_prof["ignored_versions"])
             toast_text = f"🚫 Version {version} is now ignored for {package_name}."
         else:
-            cur_ign = active_prof.get("ignored_versions", {}).get(package_name)
-            if cur_ign:
-                existing = [v.strip() for v in str(cur_ign).split(",") if v.strip()]
-                remaining = [e for e in existing if not sb.is_version_equal(version, e, package_name)]
-                if remaining:
-                    active_prof["ignored_versions"][package_name] = ", ".join(remaining)
-                else:
-                    if package_name in active_prof["ignored_versions"]:
-                        del active_prof["ignored_versions"][package_name]
-            else:
-                if package_name in active_prof.get("ignored_versions", {}):
+            if version == "all":
+                if package_name in active_prof["ignored_versions"]:
                     del active_prof["ignored_versions"][package_name]
-            active_prof["ignored_unstable_versions"] = dict(active_prof.get("ignored_versions", {}))
-            toast_text = f"🔄 Version {version} is no longer ignored for {package_name}."
+                if package_name in active_prof.get("ignored_unstable_versions", {}):
+                    del active_prof["ignored_unstable_versions"][package_name]
+                toast_text = f"🔄 All ignored versions cleared for {package_name}."
+            else:
+                cur_ign = active_prof.get("ignored_versions", {}).get(package_name)
+                if cur_ign:
+                    existing = [v.strip() for v in str(cur_ign).split(",") if v.strip()]
+                    remaining = [e for e in existing if not sb.is_version_equal(version, e, package_name)]
+                    if remaining:
+                        active_prof["ignored_versions"][package_name] = ", ".join(remaining)
+                    else:
+                        if package_name in active_prof["ignored_versions"]:
+                            del active_prof["ignored_versions"][package_name]
+                else:
+                    if package_name in active_prof.get("ignored_versions", {}):
+                        del active_prof["ignored_versions"][package_name]
+                active_prof["ignored_unstable_versions"] = dict(active_prof.get("ignored_versions", {}))
+                toast_text = f"🔄 Version {version} is no longer ignored for {package_name}."
 
         # 1. Save config to disk immediately!
         self.config.save()
@@ -5108,17 +5142,33 @@ class SyncWindow(Adw.ApplicationWindow):
         pkg_data = self.package_data.get(package_name, {})
         ver_data = pkg_data.get("version") or {}
         factory_ver = ver_data.get("factory_ver", "N/A")
-        upstream_stable = ver_data.get("upstream_stable", "N/A")
         next_ver = ver_data.get("next_ver", "—")
-        upstream_latest = ver_data.get("upstream_latest", "—")
+        raw_upstream_stable = ver_data.get("raw_upstream_stable") or ver_data.get("upstream_stable", "N/A")
+        raw_upstream_latest = ver_data.get("raw_upstream_latest") or ver_data.get("upstream_latest", "—")
+        stable_versions = ver_data.get("stable_versions") or []
+        all_versions = ver_data.get("all_versions") or []
 
         ignored_ver = self.get_ignored_version(package_name)
-        is_ignored_stable = bool(ignored_ver and sb.is_version_ignored(upstream_stable, ignored_ver, package_name))
-        is_ignored_unstable = bool(ignored_ver and sb.is_version_ignored(upstream_latest, ignored_ver, package_name))
 
-        ver_data["stable_needs_update"] = bool(is_version_newer(upstream_stable, factory_ver, package_name) and not is_ignored_stable)
-        ver_data["unstable_needs_update"] = bool(self.unstable_b and is_version_newer(upstream_latest, next_ver, package_name) and not is_ignored_unstable)
-        ver_data["needs_update"] = bool(ver_data["stable_needs_update"] or ver_data["unstable_needs_update"])
+        resolved = sb.resolve_best_upstream_versions(
+            raw_upstream_stable,
+            raw_upstream_latest,
+            factory_ver,
+            next_ver=next_ver,
+            ignored_ver=ignored_ver,
+            repo_name=package_name,
+            stable_versions=stable_versions,
+            all_versions=all_versions,
+            branch=None,
+            stable_branch=self.stable_b,
+            unstable_branch=self.unstable_b,
+        )
+
+        ver_data.update(resolved)
+        ver_data["raw_upstream_stable"] = raw_upstream_stable
+        ver_data["raw_upstream_latest"] = raw_upstream_latest
+        ver_data["stable_versions"] = stable_versions
+        ver_data["all_versions"] = all_versions
 
         # 4. Save profile cache so state is preserved across launches instantly
         self.save_profile_cache()
@@ -5133,6 +5183,9 @@ class SyncWindow(Adw.ApplicationWindow):
         # 7. Display floating confirmation toast
         toast = Adw.Toast.new(toast_text)
         self.toast_overlay.add_toast(toast)
+
+        # 8. Start background thread to refresh upstream versions from Anitya
+        threading.Thread(target=self.run_bg_version_single, args=(package_name,), daemon=True).start()
 
     def get_visible_package_rows(self):
         """Returns all currently visible (non-filtered) ListBoxRow children in master_list_box."""

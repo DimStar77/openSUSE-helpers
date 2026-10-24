@@ -988,6 +988,99 @@ def is_version_ignored(version, ignored_entry, repo_name=""):
     ignored_items = [v.strip() for v in str(ignored_entry).split(",") if v.strip()]
     return any(is_version_equal(version, ign, repo_name) for ign in ignored_items)
 
+def resolve_stream_candidate(raw_upstream, local_ver, ignored_ver, cand_list=None, repo_name=""):
+    """
+    Given a stream's baseline upstream version, local version on disk, active ignore rules,
+    and historical release list from Anitya, resolves the best upstream version to suggest.
+
+    Returns (target_ver, is_ignored, needs_update).
+    - If an unignored candidate newer than local exists, returns (candidate, False, True).
+    - If all newer candidates are ignored, returns (max_version, True, False).
+    - If local is up-to-date with upstream, returns (upstream, False, False).
+    """
+    all_list = list(cand_list) if cand_list else []
+
+    max_ver = raw_upstream
+    for v in all_list:
+        if max_ver is None or max_ver in ("—", "N/A") or is_version_newer(v, max_ver, repo_name):
+            max_ver = v
+
+    best_unignored = None
+    if local_ver and local_ver not in ("—", "N/A"):
+        for v in all_list:
+            if is_version_ignored(v, ignored_ver, repo_name):
+                continue
+            if is_version_newer(v, local_ver, repo_name):
+                if best_unignored is None or is_version_newer(v, best_unignored, repo_name):
+                    best_unignored = v
+
+    if best_unignored:
+        target_ver = best_unignored
+        is_ignored = False
+        needs_update = True
+    else:
+        if raw_upstream and raw_upstream not in ("—", "N/A") and not is_version_ignored(raw_upstream, ignored_ver, repo_name) and is_version_newer(raw_upstream, local_ver, repo_name):
+            target_ver = raw_upstream
+            is_ignored = False
+            needs_update = True
+        else:
+            target_ver = max_ver or raw_upstream
+            is_ignored = bool(ignored_ver and target_ver and is_version_ignored(target_ver, ignored_ver, repo_name))
+            needs_update = False
+
+    return target_ver, is_ignored, needs_update
+
+
+def resolve_best_upstream_versions(
+    raw_upstream_stable,
+    raw_upstream_latest,
+    factory_ver,
+    next_ver=None,
+    ignored_ver=None,
+    repo_name="",
+    stable_versions=None,
+    all_versions=None,
+    branch=None,
+    stable_branch="factory",
+    unstable_branch="next",
+):
+    """
+    Evaluates both stable and unstable streams against local checkout versions and ignore rules.
+    """
+    stable_cand_list = list(stable_versions) if stable_versions else list(all_versions) if all_versions else []
+    all_cand_list = list(all_versions) if all_versions else []
+
+    # 1. Resolve stable stream candidate
+    target_stable, is_ignored_stable, stable_needs_update = resolve_stream_candidate(
+        raw_upstream_stable, factory_ver, ignored_ver, stable_cand_list, repo_name
+    )
+
+    if branch is not None and branch != stable_branch and branch != "factory":
+        stable_needs_update = False
+
+    # 2. Resolve unstable stream candidate
+    if unstable_branch and (branch is None or branch == unstable_branch or branch == "next") and next_ver and next_ver != "—":
+        target_latest, is_ignored_unstable, unstable_needs_update = resolve_stream_candidate(
+            raw_upstream_latest, next_ver, ignored_ver, all_cand_list, repo_name
+        )
+    else:
+        target_latest = raw_upstream_latest or "—"
+        is_ignored_unstable = bool(ignored_ver and target_latest and is_version_ignored(target_latest, ignored_ver, repo_name))
+        unstable_needs_update = False
+
+    needs_update = bool(stable_needs_update or unstable_needs_update)
+
+    return {
+        "upstream_stable": target_stable or "N/A",
+        "upstream_latest": target_latest or "—",
+        "is_ignored_stable": is_ignored_stable,
+        "is_ignored_unstable": is_ignored_unstable,
+        "stable_needs_update": stable_needs_update,
+        "unstable_needs_update": unstable_needs_update,
+        "needs_update": needs_update,
+    }
+
+
 def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable_branch="next", workspace_path=".", ignored_unstable_versions=None, skip_fetch=False, ignored_versions=None):
     repo_path = os.path.join(workspace_path, repo_name)
 
@@ -1073,9 +1166,11 @@ def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable
             save_geckopit_profile_ignored_versions(cleaned_dict, workspace_dir=workspace_path)
 
     # 5. Query release-monitoring.org for upstream versions (spoofing curl User-Agent)
-    upstream_stable = None
-    upstream_latest = None
+    raw_upstream_stable = None
+    raw_upstream_latest = None
     exact_item = None
+    stable_vers = []
+    all_vers = []
 
     lookup_name = get_package_name_from_dir(repo_path) or os.path.basename(repo_name)
     url = f"https://release-monitoring.org/api/v2/packages/?name={lookup_name}&distribution=openSUSE"
@@ -1094,14 +1189,13 @@ def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable
                 if not exact_item:
                     exact_item = items[0]
 
-                upstream_stable = exact_item.get("stable_version") or exact_item.get("version")
-                upstream_latest = exact_item.get("version")
+                raw_upstream_stable = exact_item.get("stable_version") or exact_item.get("version")
+                raw_upstream_latest = exact_item.get("version")
 
-                # Fallback: if the latest upstream version matches an active ignore rule,
-                # inspect the project's historical releases to find the highest unignored release
-                # that is newer than local (e.g. maintenance branch releases like 0.4.5 when 0.6.0 is ignored).
-                is_stable_ignored = bool(ignored_ver and upstream_stable and is_version_ignored(upstream_stable, ignored_ver, repo_name))
-                is_latest_ignored = bool(ignored_ver and upstream_latest and is_version_ignored(upstream_latest, ignored_ver, repo_name))
+                # Fallback: if baseline upstream versions match active ignore rules,
+                # inspect historical releases to discover the next unignored candidate.
+                is_stable_ignored = bool(ignored_ver and raw_upstream_stable and is_version_ignored(raw_upstream_stable, ignored_ver, repo_name))
+                is_latest_ignored = bool(ignored_ver and raw_upstream_latest and is_version_ignored(raw_upstream_latest, ignored_ver, repo_name))
 
                 if (is_stable_ignored or is_latest_ignored) and exact_item.get("project"):
                     project_name = exact_item.get("project")
@@ -1115,30 +1209,6 @@ def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable
                                 p_item = p_items[0]
                                 stable_vers = p_item.get("stable_versions", [])
                                 all_vers = p_item.get("versions", [])
-
-                                # Look for highest unignored stable release newer than local factory_ver
-                                if is_stable_ignored and factory_ver:
-                                    best_stable = None
-                                    for v in stable_vers:
-                                        if is_version_ignored(v, ignored_ver, repo_name):
-                                            continue
-                                        if is_version_newer(v, factory_ver, repo_name):
-                                            if best_stable is None or is_version_newer(v, best_stable, repo_name):
-                                                best_stable = v
-                                    if best_stable:
-                                        upstream_stable = best_stable
-
-                                # Look for highest unignored latest release newer than local next_ver
-                                if is_latest_ignored and next_ver and next_ver != "—":
-                                    best_latest = None
-                                    for v in all_vers:
-                                        if is_version_ignored(v, ignored_ver, repo_name):
-                                            continue
-                                        if is_version_newer(v, next_ver, repo_name):
-                                            if best_latest is None or is_version_newer(v, best_latest, repo_name):
-                                                best_latest = v
-                                    if best_latest:
-                                        upstream_latest = best_latest
                     except Exception:
                         pass
     except Exception:
@@ -1150,36 +1220,35 @@ def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable
             "next_ver": next_ver or "—"
         }
 
-    # Compare versions using semantic RPM rules: only trigger if upstream is newer than local
-    needs_update = False
-    stable_needs_update = False
-    unstable_needs_update = False
-
-    if (branch is None or branch == stable_branch or branch == "factory") and factory_ver and upstream_stable:
-        if is_version_newer(upstream_stable, factory_ver, repo_name):
-            is_ignored_stable = bool(ignored_ver and is_version_ignored(upstream_stable, ignored_ver, repo_name))
-            if not is_ignored_stable:
-                stable_needs_update = True
-                needs_update = True
-
-    if unstable_branch and (branch is None or branch == unstable_branch or branch == "next") and next_ver and next_ver != "—" and upstream_latest:
-        if is_version_newer(upstream_latest, next_ver, repo_name):
-            is_ignored_unstable = bool(ignored_ver and is_version_ignored(upstream_latest, ignored_ver, repo_name))
-            if not is_ignored_unstable:
-                unstable_needs_update = True
-                needs_update = True
+    resolved = resolve_best_upstream_versions(
+        raw_upstream_stable,
+        raw_upstream_latest,
+        factory_ver,
+        next_ver=next_ver,
+        ignored_ver=ignored_ver,
+        repo_name=repo_name,
+        stable_versions=stable_vers,
+        all_versions=all_vers,
+        branch=branch,
+        stable_branch=stable_branch,
+        unstable_branch=unstable_branch,
+    )
 
     return repo_name, {
         "status": "success",
         "factory_ver": factory_ver or "N/A",
         "next_ver": next_ver or "—",
-        "upstream_stable": upstream_stable or "N/A",
-        "upstream_latest": upstream_latest or "—",
-        "needs_update": needs_update,
-        "stable_needs_update": stable_needs_update,
-        "unstable_needs_update": unstable_needs_update,
-        "is_ignored_stable": bool(ignored_ver and upstream_stable and is_version_ignored(upstream_stable, ignored_ver, repo_name)),
-        "is_ignored_unstable": bool(ignored_ver and upstream_latest and is_version_ignored(upstream_latest, ignored_ver, repo_name)),
+        "upstream_stable": resolved["upstream_stable"] or "N/A",
+        "upstream_latest": resolved["upstream_latest"] or "—",
+        "raw_upstream_stable": raw_upstream_stable or "N/A",
+        "raw_upstream_latest": raw_upstream_latest or "—",
+        "stable_versions": stable_vers,
+        "all_versions": all_vers,
+        "needs_update": resolved["needs_update"],
+        "stable_needs_update": resolved["stable_needs_update"],
+        "unstable_needs_update": resolved["unstable_needs_update"],
+        "is_ignored_stable": resolved["is_ignored_stable"],
+        "is_ignored_unstable": resolved["is_ignored_unstable"],
         "project": exact_item.get("project") if exact_item else repo_name
     }
 

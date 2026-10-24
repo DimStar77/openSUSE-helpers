@@ -2144,5 +2144,137 @@ class TestSyncWindow(unittest.TestCase):
         # lasem must NOT appear in the action queue
         self.assertFalse(SyncWindow.sidebar_filter_func(mock_win, row_lasem))
 
+    def test_on_toggle_ignore_clicked_advances_to_next_candidate(self):
+        from geckopit import SyncWindow
+        mock_win = mock.Mock()
+        mock_win.package_data = {
+            "telepathy-glib": {
+                "version": {
+                    "factory_ver": "0.24.2",
+                    "next_ver": "0.24.2",
+                    "upstream_stable": "0.24.2",
+                    "upstream_latest": "0.99.10",
+                    "raw_upstream_stable": "0.24.2",
+                    "raw_upstream_latest": "0.99.11",
+                    "stable_versions": ["0.24.2"],
+                    "all_versions": ["0.99.11", "0.99.10", "0.99.9", "0.99.8", "0.24.2"],
+                }
+            }
+        }
+        active_prof = {
+            "ignored_versions": {"telepathy-glib": "0.99.11"},
+            "ignored_unstable_versions": {"telepathy-glib": "0.99.11"}
+        }
+        mock_win.config.get_active_profile.return_value = active_prof
+        def fake_get_ign(pkg):
+            return active_prof.get("ignored_versions", {}).get(pkg)
+        mock_win.get_ignored_version.side_effect = fake_get_ign
+        mock_win.stable_b = "factory"
+        mock_win.unstable_b = "next"
+
+        mock_popover = mock.Mock()
+        mock_btn = mock.Mock()
+
+        # User ignores 0.99.10
+        SyncWindow.on_toggle_ignore_clicked(mock_win, mock_btn, mock_popover, "telepathy-glib", "0.99.10", should_ignore=True)
+
+        mock_popover.popdown.assert_called_once()
+        mock_win.config.save.assert_called_once()
+        self.assertIn("0.99.10", active_prof["ignored_versions"]["telepathy-glib"])
+
+        ver = mock_win.package_data["telepathy-glib"]["version"]
+        # Must immediately advance to 0.99.9 instead of staying on 0.99.10 (Ignored)!
+        self.assertEqual(ver["upstream_latest"], "0.99.9")
+        self.assertTrue(ver["unstable_needs_update"])
+        self.assertFalse(ver["is_ignored_unstable"])
+        self.assertTrue(ver["needs_update"])
+
+        mock_win.update_row_ui.assert_called_with("telepathy-glib")
+        mock_win.update_detail_version_ui.assert_called_with("telepathy-glib")
+        mock_win.master_list_box.invalidate_filter.assert_called_once()
+        mock_win.toast_overlay.add_toast.assert_called_once()
+
+    def test_on_toggle_ignore_clicked_all_exhausted_shows_ignored(self):
+        from geckopit import SyncWindow
+        mock_win = mock.Mock()
+        mock_win.package_data = {
+            "telepathy-glib": {
+                "version": {
+                    "factory_ver": "0.24.2",
+                    "next_ver": "0.24.2",
+                    "upstream_stable": "0.24.2",
+                    "upstream_latest": "0.99.8",
+                    "raw_upstream_stable": "0.24.2",
+                    "raw_upstream_latest": "0.99.11",
+                    "stable_versions": ["0.24.2"],
+                    "all_versions": ["0.99.11", "0.99.10", "0.99.9", "0.99.8", "0.24.2"],
+                }
+            }
+        }
+        active_prof = {
+            "ignored_versions": {"telepathy-glib": "0.99.11, 0.99.10, 0.99.9"},
+            "ignored_unstable_versions": {"telepathy-glib": "0.99.11, 0.99.10, 0.99.9"}
+        }
+        mock_win.config.get_active_profile.return_value = active_prof
+        def fake_get_ign(pkg):
+            return active_prof.get("ignored_versions", {}).get(pkg)
+        mock_win.get_ignored_version.side_effect = fake_get_ign
+        mock_win.stable_b = "factory"
+        mock_win.unstable_b = "next"
+
+        mock_popover = mock.Mock()
+        mock_btn = mock.Mock()
+
+        # User ignores the last candidate 0.99.8
+        SyncWindow.on_toggle_ignore_clicked(mock_win, mock_btn, mock_popover, "telepathy-glib", "0.99.8", should_ignore=True)
+
+        ver = mock_win.package_data["telepathy-glib"]["version"]
+        # All newer versions exhausted -> falls back to max version with is_ignored_unstable True
+        self.assertEqual(ver["upstream_latest"], "0.99.11")
+        self.assertFalse(ver["unstable_needs_update"])
+        self.assertTrue(ver["is_ignored_unstable"])
+        self.assertFalse(ver["needs_update"])
+
+    def test_on_toggle_ignore_clicked_unignore_all(self):
+        from geckopit import SyncWindow
+        mock_win = mock.Mock()
+        mock_win.package_data = {
+            "telepathy-glib": {
+                "version": {
+                    "factory_ver": "0.24.2",
+                    "next_ver": "0.24.2",
+                    "upstream_stable": "0.24.2",
+                    "upstream_latest": "0.99.11",
+                    "raw_upstream_stable": "0.24.2",
+                    "raw_upstream_latest": "0.99.11",
+                    "stable_versions": ["0.24.2"],
+                    "all_versions": ["0.99.11", "0.99.10", "0.99.9", "0.99.8", "0.24.2"],
+                }
+            }
+        }
+        active_prof = {
+            "ignored_versions": {"telepathy-glib": "0.99.11, 0.99.10, 0.99.9, 0.99.8"},
+            "ignored_unstable_versions": {"telepathy-glib": "0.99.11, 0.99.10, 0.99.9, 0.99.8"}
+        }
+        mock_win.config.get_active_profile.return_value = active_prof
+        def fake_get_ign(pkg):
+            return active_prof.get("ignored_versions", {}).get(pkg)
+        mock_win.get_ignored_version.side_effect = fake_get_ign
+        mock_win.stable_b = "factory"
+        mock_win.unstable_b = "next"
+
+        mock_popover = mock.Mock()
+        mock_btn = mock.Mock()
+
+        # User clicks "Unignore All Versions"
+        SyncWindow.on_toggle_ignore_clicked(mock_win, mock_btn, mock_popover, "telepathy-glib", "all", should_ignore=False)
+
+        self.assertNotIn("telepathy-glib", active_prof["ignored_versions"])
+        ver = mock_win.package_data["telepathy-glib"]["version"]
+        self.assertEqual(ver["upstream_latest"], "0.99.11")
+        self.assertTrue(ver["unstable_needs_update"])
+        self.assertFalse(ver["is_ignored_unstable"])
+        self.assertTrue(ver["needs_update"])
+
 if __name__ == '__main__':
     unittest.main()

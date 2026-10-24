@@ -594,5 +594,79 @@ class TestSyncBackend(unittest.TestCase):
         self.assertEqual(pruned5, ["0.5.2"])
         self.assertEqual(new_d5, {"lasem": "0.6.0"})
 
+    def test_resolve_stream_candidate_successive_ignores(self):
+        import sync_backend as sb
+        vers = ['0.99.11', '0.99.10', '0.99.9', '0.99.8', '0.24.2']
+
+        # Baseline: none ignored -> suggests 0.99.11
+        t_ver, is_ign, needs_up = sb.resolve_stream_candidate('0.99.11', '0.24.2', None, vers, 'telepathy-glib')
+        self.assertEqual(t_ver, '0.99.11')
+        self.assertFalse(is_ign)
+        self.assertTrue(needs_up)
+
+        # Ignore 0.99.11 -> suggests 0.99.10
+        t_ver, is_ign, needs_up = sb.resolve_stream_candidate('0.99.11', '0.24.2', '0.99.11', vers, 'telepathy-glib')
+        self.assertEqual(t_ver, '0.99.10')
+        self.assertFalse(is_ign)
+        self.assertTrue(needs_up)
+
+        # Ignore 0.99.10 as well -> suggests 0.99.9
+        t_ver, is_ign, needs_up = sb.resolve_stream_candidate('0.99.11', '0.24.2', '0.99.11, 0.99.10', vers, 'telepathy-glib')
+        self.assertEqual(t_ver, '0.99.9')
+        self.assertFalse(is_ign)
+        self.assertTrue(needs_up)
+
+        # Ignore all newer versions -> reports 0.99.11 as ignored, needs_update False
+        t_ver, is_ign, needs_up = sb.resolve_stream_candidate('0.99.11', '0.24.2', '0.99.11, 0.99.10, 0.99.9, 0.99.8', vers, 'telepathy-glib')
+        self.assertEqual(t_ver, '0.99.11')
+        self.assertTrue(is_ign)
+        self.assertFalse(needs_up)
+
+        # Unignore 0.99.10 -> brings back 0.99.10
+        t_ver, is_ign, needs_up = sb.resolve_stream_candidate('0.99.11', '0.24.2', '0.99.11, 0.99.9, 0.99.8', vers, 'telepathy-glib')
+        self.assertEqual(t_ver, '0.99.10')
+        self.assertFalse(is_ign)
+        self.assertTrue(needs_up)
+
+    def test_resolve_best_upstream_versions_dual_and_single_stream(self):
+        import sync_backend as sb
+
+        # Dual stream: stable is 0.24.2 (up-to-date), unstable has 0.99.x
+        res = sb.resolve_best_upstream_versions(
+            raw_upstream_stable='0.24.2',
+            raw_upstream_latest='0.99.11',
+            factory_ver='0.24.2',
+            next_ver='0.24.2',
+            ignored_ver='0.99.11, 0.99.10',
+            repo_name='telepathy-glib',
+            stable_versions=['0.24.2'],
+            all_versions=['0.99.11', '0.99.10', '0.99.9', '0.99.8', '0.24.2'],
+            unstable_branch='next'
+        )
+        self.assertEqual(res['upstream_stable'], '0.24.2')
+        self.assertFalse(res['stable_needs_update'])
+        self.assertEqual(res['upstream_latest'], '0.99.9')
+        self.assertTrue(res['unstable_needs_update'])
+        self.assertFalse(res['is_ignored_unstable'])
+        self.assertTrue(res['needs_update'])
+
+        # Single stream: stable_versions empty, all_versions has maintenance releases
+        res_single = sb.resolve_best_upstream_versions(
+            raw_upstream_stable='0.6.0',
+            raw_upstream_latest='0.6.0',
+            factory_ver='0.4.4',
+            next_ver=None,
+            ignored_ver='0.6.0',
+            repo_name='lasem',
+            stable_versions=[],
+            all_versions=['0.6.0', '0.4.5', '0.4.4', '0.4.3'],
+            unstable_branch=None
+        )
+        self.assertEqual(res_single['upstream_stable'], '0.4.5')
+        self.assertTrue(res_single['stable_needs_update'])
+        self.assertFalse(res_single['is_ignored_stable'])
+        self.assertFalse(res_single['unstable_needs_update'])
+        self.assertTrue(res_single['needs_update'])
+
 if __name__ == '__main__':
     unittest.main()
