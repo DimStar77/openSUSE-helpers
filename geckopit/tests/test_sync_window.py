@@ -825,6 +825,7 @@ class TestSyncWindow(unittest.TestCase):
         self.assertTrue(SyncWindow.sidebar_filter_func(mock_win, row_has_pr))
         self.assertFalse(SyncWindow.sidebar_filter_func(mock_win, row_promote))
 
+
     def test_sidebar_filter_action_queue_generalization(self):
         from geckopit import SyncWindow
 
@@ -1570,6 +1571,7 @@ class TestSyncWindow(unittest.TestCase):
             "status": "accepted_pending_sync",
             "request": {"id": "1384945", "state": "accepted"}
         }):
+            mock_win.package_data["testpkg"]["sync"].pop("pool_sr", None)
             SyncWindow.update_detail_sync_ui(mock_win, "testpkg")
             markup = mock_win.stable_pool_lbl.set_markup.call_args[0][0]
             self.assertIn("Submit Request #1384945 Accepted", markup)
@@ -1580,16 +1582,28 @@ class TestSyncWindow(unittest.TestCase):
             "status": "pending_outdated",
             "request": {"id": "1387152", "state": "review", "source_project": "multimedia:libs"}
         }):
+            # Ensure fresh query when pool_sr not present
+            mock_win.package_data["testpkg"]["sync"].pop("pool_sr", None)
             SyncWindow.update_detail_sync_ui(mock_win, "testpkg")
             markup = mock_win.stable_pool_lbl.set_markup.call_args[0][0]
             self.assertIn("Pending SR #1387152 Outdated", markup)
             mock_win.submit_pool_btn.set_sensitive.assert_called_with(True)
             mock_win.submit_pool_btn.set_label.assert_called_with("📤 Supersede SR")
 
+        # 3b. When pool_sr is already in memory/cache, get_package_pool_submission_status is NOT called
+        with patch("pool_submit.get_package_pool_submission_status") as mock_should_not_call:
+            mock_win.package_data["testpkg"]["sync"]["pool_sr"] = {
+                "status": "pending_outdated",
+                "request": {"id": "1387152", "state": "review", "source_project": "multimedia:libs"}
+            }
+            SyncWindow.update_detail_sync_ui(mock_win, "testpkg")
+            mock_should_not_call.assert_not_called()
+
         # 4. Unsubmitted -> button enabled
         with patch("pool_submit.get_package_pool_submission_status", return_value={
             "status": "unsubmitted"
         }):
+            mock_win.package_data["testpkg"]["sync"].pop("pool_sr", None)
             SyncWindow.update_detail_sync_ui(mock_win, "testpkg")
             markup = mock_win.stable_pool_lbl.set_markup.call_args[0][0]
             self.assertIn("Ahead of Gitea Pool by 2 commits", markup)
@@ -2366,6 +2380,18 @@ class TestSyncWindow(unittest.TestCase):
         mock_win.update_detail_version_ui.assert_called_with("telepathy-glib")
         mock_win.master_list_box.invalidate_filter.assert_called_once()
         mock_win.toast_overlay.add_toast.assert_called_once()
+
+    def test_load_obs_requests_cache_refreshes_detail_views(self):
+        from unittest.mock import patch
+        mock_win = mock.Mock()
+        mock_win.current_selected_package = "loupe"
+
+        with patch("pool_submit.get_pending_obs_requests", return_value={"loupe": [{"id": "1385453"}]}),              patch("pool_submit.get_recently_accepted_obs_requests", return_value={}),              patch("geckopit.GLib.idle_add") as mock_idle:
+            SyncWindow.load_obs_requests_cache(mock_win)
+            self.assertEqual(mock_win.obs_pending_requests, {"loupe": [{"id": "1385453"}]})
+            self.assertEqual(mock_win.obs_accepted_requests, {})
+            mock_idle.assert_any_call(mock_win.update_detail_sync_ui, "loupe")
+            mock_idle.assert_any_call(mock_win.update_detail_pr_ui, "loupe")
 
 if __name__ == '__main__':
     unittest.main()

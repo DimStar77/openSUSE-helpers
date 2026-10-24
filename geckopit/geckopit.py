@@ -1836,8 +1836,8 @@ class SyncWindow(Adw.ApplicationWindow):
         self.init_executors()
 
         # OBS Pending and Accepted Requests cache
-        self.obs_pending_requests = {}
-        self.obs_accepted_requests = {}
+        self.obs_pending_requests = None
+        self.obs_accepted_requests = None
 
         # Open tab registry for active monitoring and deduplication
         self.terminal_tabs = []
@@ -3444,6 +3444,7 @@ class SyncWindow(Adw.ApplicationWindow):
             curr = getattr(self, "current_selected_package", None)
             if curr:
                 GLib.idle_add(self.update_detail_sync_ui, curr)
+                GLib.idle_add(self.update_detail_pr_ui, curr)
         except Exception:
             self.obs_pending_requests = {}
             self.obs_accepted_requests = {}
@@ -5839,19 +5840,21 @@ class SyncWindow(Adw.ApplicationWindow):
                     self.submit_pool_btn.set_sensitive(False)
             elif pool_ahead > 0:
                 self.pull_pool_btn.set_sensitive(False)
-                sr_status = pool_submit.get_package_pool_submission_status(
-                    package_name,
-                    target_project="openSUSE:Factory",
-                    pending_requests=getattr(self, "obs_pending_requests", None),
-                    accepted_requests=getattr(self, "obs_accepted_requests", None),
-                    pkg_dir=repo_path,
-                    stable_branch=getattr(self, "stable_b", "factory"),
-                    check_srcmd5=False
-                )
-                if package_name in self.package_data and "sync" in self.package_data[package_name]:
-                    self.package_data[package_name]["sync"]["pool_sr"] = sr_status
-                    if hasattr(self, "update_row_ui"):
-                        self.update_row_ui(package_name)
+                sr_status = sync.get("pool_sr")
+                if not sr_status:
+                    sr_status = pool_submit.get_package_pool_submission_status(
+                        package_name,
+                        target_project="openSUSE:Factory",
+                        pending_requests=getattr(self, "obs_pending_requests", None),
+                        accepted_requests=getattr(self, "obs_accepted_requests", None),
+                        pkg_dir=repo_path,
+                        stable_branch=getattr(self, "stable_b", "factory"),
+                        check_srcmd5=False
+                    )
+                    if package_name in self.package_data and "sync" in self.package_data[package_name]:
+                        self.package_data[package_name]["sync"]["pool_sr"] = sr_status
+                        if hasattr(self, "update_row_ui"):
+                            self.update_row_ui(package_name)
 
                 if sr_status.get("status") == "pending_outdated":
                     req = sr_status.get("request", {})
