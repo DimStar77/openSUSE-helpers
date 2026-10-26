@@ -735,12 +735,20 @@ def check_pool_stream_sync(
     name = pkg_name or os.path.basename(os.path.abspath(pkg_dir))
     pool_url = f"https://src.opensuse.org/pool/{name}.git"
 
+    target_pool_branch = branch
+    if branch.startswith("for-"):
+        suffix = branch.removeprefix("for-")
+        if suffix.startswith("leap-") or suffix.startswith("slfo-"):
+            target_pool_branch = suffix
+        else:
+            target_pool_branch = "factory"
+
     if not skip_fetch:
         env = dict(os.environ)
         env["GIT_TERMINAL_PROMPT"] = "0"
         try:
             fetch_res = subprocess.run(
-                ["git", "-C", pkg_dir, "fetch", "--quiet", pool_url, f"+refs/heads/{branch}:refs/pool/{branch}"],
+                ["git", "-C", pkg_dir, "fetch", "--quiet", pool_url, f"+refs/heads/{target_pool_branch}:refs/pool/{target_pool_branch}"],
                 env=env, capture_output=True, text=True, timeout=10
             )
             if fetch_res.returncode != 0:
@@ -754,9 +762,10 @@ def check_pool_stream_sync(
 
     ahead = 0
     behind = 0
+    local_ref = branch if branch.startswith("for-") else f"origin/{branch}"
     try:
         cnt_a = subprocess.run(
-            ["git", "-C", pkg_dir, "rev-list", f"refs/pool/{branch}..origin/{branch}", "--count"],
+            ["git", "-C", pkg_dir, "rev-list", f"refs/pool/{target_pool_branch}..{local_ref}", "--count"],
             capture_output=True, text=True
         )
         if cnt_a.returncode == 0:
@@ -766,7 +775,7 @@ def check_pool_stream_sync(
 
     try:
         cnt_b = subprocess.run(
-            ["git", "-C", pkg_dir, "rev-list", f"origin/{branch}..refs/pool/{branch}", "--count"],
+            ["git", "-C", pkg_dir, "rev-list", f"{local_ref}..refs/pool/{target_pool_branch}", "--count"],
             capture_output=True, text=True
         )
         if cnt_b.returncode == 0:
@@ -774,7 +783,7 @@ def check_pool_stream_sync(
     except Exception:
         pass
 
-    res = {"exists": True, "ahead": ahead, "behind": behind}
+    res = {"exists": True, "ahead": ahead, "behind": behind, "target_pool_branch": target_pool_branch}
     _STREAM_SYNC_CACHE[cache_key] = (now, res)
     return res
 

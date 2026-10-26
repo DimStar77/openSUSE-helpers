@@ -578,7 +578,10 @@ def check_repo_sync(repo_name, stable_branch="factory", unstable_branch="next", 
 
     # 4. Fetch from pool/repo_name.git {stable_branch} branch (src.opensuse.org/pool/<repo>)
     gitea_name = get_gitea_repo_name(repo_path, repo_name)
-    pool_url = f"https://src.opensuse.org/pool/{gitea_name}.git"
+    # In central openSUSE pool, repositories are strictly named by package name (repo_name)
+    pool_url = f"https://src.opensuse.org/pool/{repo_name}.git"
+    # Central pool always tracks 'factory' for Factory stream, even if devel branch is master or custom
+    pool_branch = "factory" if (stable_branch in ("factory", "main", "master") or not stable_branch) else stable_branch
     pool_status = "unknown"
     pool_ahead = 0
     pool_behind = 0
@@ -587,13 +590,40 @@ def check_repo_sync(repo_name, stable_branch="factory", unstable_branch="next", 
         pool_status = "Not in Pool"
     else:
         try:
-            run_tracked(
-                ['git', '-C', repo_path, 'fetch', '--quiet', pool_url, f'+refs/heads/{stable_branch}:refs/pool/{stable_branch}'],
-                check=True, capture_output=True, text=True
-            )
-            # Compare origin/{stable_branch} and isolated refs/pool/{stable_branch}
+            try:
+                run_tracked(
+                    ['git', '-C', repo_path, 'fetch', '--quiet', pool_url, f'+refs/heads/{pool_branch}:refs/pool/{pool_branch}'],
+                    check=True, capture_output=True, text=True
+                )
+            except subprocess.CalledProcessError:
+                if gitea_name != repo_name:
+                    pool_url_alt = f"https://src.opensuse.org/pool/{gitea_name}.git"
+                    run_tracked(
+                        ['git', '-C', repo_path, 'fetch', '--quiet', pool_url_alt, f'+refs/heads/{pool_branch}:refs/pool/{pool_branch}'],
+                        check=True, capture_output=True, text=True
+                    )
+                else:
+                    raise
+
+            # Resolve comparison reference (origin/<branch>, upstream/<branch>, tracking @{u}, or HEAD)
+            compare_ref = None
+            for r in (f'origin/{stable_branch}', f'refs/remotes/upstream/{stable_branch}'):
+                if has_git_ref(repo_path, r):
+                    compare_ref = r
+                    break
+            if not compare_ref:
+                try:
+                    res_u = run_tracked(['git', '-C', repo_path, 'rev-parse', '--abbrev-ref', '@{u}'], capture_output=True, text=True)
+                    if res_u.returncode == 0 and res_u.stdout.strip():
+                        compare_ref = res_u.stdout.strip()
+                except Exception:
+                    pass
+            if not compare_ref:
+                compare_ref = "HEAD"
+
+            # Compare compare_ref and isolated refs/pool/{pool_branch}
             res = run_tracked(
-                ['git', '-C', repo_path, 'rev-list', '--left-right', '--count', f'origin/{stable_branch}...refs/pool/{stable_branch}'],
+                ['git', '-C', repo_path, 'rev-list', '--left-right', '--count', f'{compare_ref}...refs/pool/{pool_branch}'],
                 check=True, capture_output=True, text=True
             )
             output = res.stdout.strip()
@@ -1000,6 +1030,19 @@ def resolve_stream_candidate(raw_upstream, local_ver, ignored_ver, cand_list=Non
     """
     all_list = list(cand_list) if cand_list else []
 
+    # Pin slotted packages (e.g. ffmpeg-8, clang-18, python311) to their major release series
+    m_slot = re.search(r'[-_]?(\d+)$', repo_name)
+    if m_slot and local_ver and local_ver not in ("—", "N/A"):
+        slot = m_slot.group(1)
+        if local_ver.split(".")[0] == slot:
+            all_list = [v for v in all_list if v.split(".")[0] == slot]
+            if raw_upstream and raw_upstream not in ("—", "N/A") and raw_upstream.split(".")[0] != slot:
+                highest_in_slot = local_ver
+                for v in all_list:
+                    if is_version_newer(v, highest_in_slot, repo_name):
+                        highest_in_slot = v
+                raw_upstream = highest_in_slot
+
     max_ver = raw_upstream
     for v in all_list:
         if max_ver is None or max_ver in ("—", "N/A") or is_version_newer(v, max_ver, repo_name):
@@ -1197,7 +1240,15 @@ def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable
                 is_stable_ignored = bool(ignored_ver and raw_upstream_stable and is_version_ignored(raw_upstream_stable, ignored_ver, repo_name))
                 is_latest_ignored = bool(ignored_ver and raw_upstream_latest and is_version_ignored(raw_upstream_latest, ignored_ver, repo_name))
 
-                if (is_stable_ignored or is_latest_ignored) and exact_item.get("project"):
+                # Also detect if a slotted package (e.g. ffmpeg-8) needs historical release query
+                m_slot = re.search(r'[-_]?(\d+)$', repo_name)
+                is_slotted = bool(
+                    m_slot and factory_ver and factory_ver not in ("—", "N/A")
+                    and factory_ver.split(".")[0] == m_slot.group(1)
+                    and raw_upstream_stable and raw_upstream_stable.split(".")[0] != m_slot.group(1)
+                )
+
+                if (is_stable_ignored or is_latest_ignored or is_slotted) and exact_item.get("project"):
                     project_name = exact_item.get("project")
                     try:
                         p_url = f"https://release-monitoring.org/api/v2/projects/?name={project_name}"

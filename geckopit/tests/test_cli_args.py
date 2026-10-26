@@ -67,6 +67,15 @@ class TestCliArgs(unittest.TestCase):
             ["--unignore=all"],
             ["--list-ignored"],
             ["lasem", "--ignore", "0.6.0"],
+            ["--fork", "ibus"],
+            ["--fork=ibus", "-t", "home:dimstar:Factory"],
+            ["--fork", "mutter", "--stream=factory"],
+            ["--fork", "vlc", "--stream", "leap-16.1", "--no-build"],
+            ["--branch-pkg", "ibus"],
+            ["--submit"],
+            ["--submit", "-m", "Fix CVE-2026-1234"],
+            ["--prune", "ibus"],
+            ["--prune", "--force"],
         ]
         for args in valid_cases:
             err = geckopit_cli.validate_cli_options(args)

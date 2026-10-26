@@ -882,10 +882,13 @@ class WorkspaceConfig:
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
+                    self.data = data
                     self.active_workspace = data.get("active_workspace", "Default")
                     self.max_workers = data.get("max_workers", 16)
                     self.sidebar_width = data.get("sidebar_width", 500)
                     self.workspaces = data.get("workspaces", self.workspaces)
+                    self.scratch_dir = data.get("scratch_dir")
+                    self.default_target_project = data.get("default_target_project")
             except Exception:
                 pass
 
@@ -896,13 +899,19 @@ class WorkspaceConfig:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             self._last_save_time = time.time()
+            out_data = dict(getattr(self, "data", {}) or {})
+            out_data.update({
+                "active_workspace": self.active_workspace,
+                "max_workers": self.max_workers,
+                "sidebar_width": self.sidebar_width,
+                "workspaces": self.workspaces,
+            })
+            if getattr(self, "scratch_dir", None):
+                out_data["scratch_dir"] = self.scratch_dir
+            if getattr(self, "default_target_project", None):
+                out_data["default_target_project"] = self.default_target_project
             with open(path, "w", encoding="utf-8") as f:
-                json.dump({
-                    "active_workspace": self.active_workspace,
-                    "max_workers": self.max_workers,
-                    "sidebar_width": self.sidebar_width,
-                    "workspaces": self.workspaces
-                }, f, indent=2)
+                json.dump(out_data, f, indent=2)
         except Exception:
             pass
 
@@ -1428,11 +1437,17 @@ class WorkspaceManagerDialog(Gtk.Window):
         self.grid.attach(lbl_unstable_br, 0, 4, 1, 1)
         self.grid.attach(self.unstable_br_entry, 1, 4, 2, 1)
 
+        self.btn_browse_unstable = btn_browse_unstable
+
+        self.is_scratch_check = Gtk.CheckButton(label="Scratchpad Workspace (ad-hoc branched packages)")
+        self.is_scratch_check.connect("toggled", self.on_is_scratch_toggled)
+        self.grid.attach(self.is_scratch_check, 1, 5, 2, 1)
+
         lbl_concurrency = Gtk.Label(label="Background Concurrency:", halign=Gtk.Align.START)
         adj = Gtk.Adjustment.new(self.config.max_workers, 4, 20, 2, 4, 0)
         self.concurrency_spin = Gtk.SpinButton(adjustment=adj, numeric=True)
-        self.grid.attach(lbl_concurrency, 0, 5, 1, 1)
-        self.grid.attach(self.concurrency_spin, 1, 5, 2, 1)
+        self.grid.attach(lbl_concurrency, 0, 6, 1, 1)
+        self.grid.attach(self.concurrency_spin, 1, 6, 2, 1)
 
         main_box.append(self.grid)
 
@@ -1566,6 +1581,13 @@ class WorkspaceManagerDialog(Gtk.Window):
             self.add_ignore_ver_entry.set_text("")
             self.update_ignored_list_ui()
 
+    def on_is_scratch_toggled(self, btn=None):
+        is_sc = self.is_scratch_check.get_active()
+        self.unstable_path_entry.set_sensitive(not is_sc)
+        self.unstable_br_entry.set_sensitive(not is_sc)
+        if hasattr(self, "btn_browse_unstable"):
+            self.btn_browse_unstable.set_sensitive(not is_sc)
+
     def load_profile_to_fields(self, ws_name):
         prof = self.config.workspaces.get(ws_name, {})
         self.is_adding_new = False
@@ -1575,6 +1597,8 @@ class WorkspaceManagerDialog(Gtk.Window):
         self.stable_br_entry.set_text(prof.get("stable_branch", "factory") or "factory")
         self.unstable_path_entry.set_text(prof.get("unstable_path", "") or "")
         self.unstable_br_entry.set_text(prof.get("unstable_branch", "next") or "next")
+        self.is_scratch_check.set_active(bool(prof.get("is_scratch", False)))
+        self.on_is_scratch_toggled()
         self.del_btn.set_sensitive(len(self.config.workspaces) > 1)
         self.current_ignored_versions = dict(prof.get("ignored_versions") or prof.get("ignored_unstable_versions", {}))
         self.update_ignored_list_ui()
@@ -1699,6 +1723,8 @@ class WorkspaceManagerDialog(Gtk.Window):
         self.stable_br_entry.set_text("factory")
         self.unstable_path_entry.set_text("")
         self.unstable_br_entry.set_text("")
+        self.is_scratch_check.set_active(False)
+        self.on_is_scratch_toggled()
         self.current_ignored_versions = {}
         self.update_ignored_list_ui()
         self.del_btn.set_sensitive(False)
@@ -1774,11 +1800,17 @@ class WorkspaceManagerDialog(Gtk.Window):
         if not self.is_adding_new and self.editing_ws_name and self.editing_ws_name in self.config.workspaces:
             existing_filters = self.config.workspaces[self.editing_ws_name].get("filters", {})
 
+        is_scratch = self.is_scratch_check.get_active()
+        if is_scratch:
+            unstable_p = None
+            unstable_b = None
+
         self.config.workspaces[ws_name] = {
             "stable_path": stable_p,
             "stable_branch": stable_b,
             "unstable_path": unstable_p,
             "unstable_branch": unstable_b,
+            "is_scratch": is_scratch,
             "ignored_unstable_versions": dict(getattr(self, "current_ignored_versions", {})),
             "ignored_versions": dict(getattr(self, "current_ignored_versions", {})),
             "filters": existing_filters or {"needs_action": True, "pool": False, "stable": False, "unstable": False, "forwarding": False}
@@ -1789,6 +1821,148 @@ class WorkspaceManagerDialog(Gtk.Window):
         self.config.save()
         self.destroy()
         self.callback_on_save()
+
+
+
+class ForkPackageDialog(Gtk.Window):
+    def __init__(self, parent_window, config, callback_on_success=None):
+        super().__init__(transient_for=parent_window, modal=True, title="Branch Package for Contribution")
+        self.set_default_size(520, 360)
+        self.parent_window = parent_window
+        self.config = config
+        self.callback_on_success = callback_on_success
+
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        main_box.set_margin_start(20)
+        main_box.set_margin_end(20)
+        main_box.set_margin_top(20)
+        main_box.set_margin_bottom(20)
+
+        title_lbl = Gtk.Label(halign=Gtk.Align.START)
+        title_lbl.set_markup("<span size='large' weight='bold'>Branch Package for Contribution</span>")
+        main_box.append(title_lbl)
+
+        desc_lbl = Gtk.Label(
+            label="Branches or forks an upstream openSUSE package into your scratch workspace for fly-by packaging and testing.",
+            halign=Gtk.Align.START,
+            wrap=True
+        )
+        desc_lbl.add_css_class("dim-label")
+        main_box.append(desc_lbl)
+
+        grid = Gtk.Grid(column_spacing=14, row_spacing=12)
+        grid.set_margin_top(8)
+
+        lbl_pkg = Gtk.Label(label="Package Name:", halign=Gtk.Align.START)
+        self.pkg_entry = Gtk.Entry(placeholder_text="e.g. ibus, mutter, fwupd, vlc")
+        self.pkg_entry.set_hexpand(True)
+        self.pkg_entry.connect("activate", lambda e: self.on_fork_clicked(None))
+        grid.attach(lbl_pkg, 0, 0, 1, 1)
+        grid.attach(self.pkg_entry, 1, 0, 1, 1)
+
+        lbl_stream = Gtk.Label(label="Release Stream:", halign=Gtk.Align.START)
+        self.stream_model = Gtk.StringList.new([
+            "Factory (Devel Project / OBS)",
+            "openSUSE Leap 16.1 (Central Pool)",
+            "openSUSE Leap 16.0 (Central Pool)",
+        ])
+        self.stream_combo = Gtk.DropDown.new(self.stream_model, None)
+        self.stream_combo.set_selected(0)
+        grid.attach(lbl_stream, 0, 1, 1, 1)
+        grid.attach(self.stream_combo, 1, 1, 1, 1)
+
+        # Target OBS project default from config
+        default_target_prj = ""
+        try:
+            cfg_data = getattr(self.config, "data", {}) or {}
+            default_target_prj = cfg_data.get("default_target_project", "")
+        except Exception:
+            pass
+        if not default_target_prj:
+            default_target_prj = "home:dimstar:Factory"
+
+        lbl_target_prj = Gtk.Label(label="Target OBS Project:", halign=Gtk.Align.START)
+        self.target_prj_entry = Gtk.Entry(text=default_target_prj)
+        self.target_prj_entry.set_placeholder_text("home:<user>:Factory")
+        grid.attach(lbl_target_prj, 0, 2, 1, 1)
+        grid.attach(self.target_prj_entry, 1, 2, 1, 1)
+
+        self.build_check = Gtk.CheckButton(label="Enable OBS Cloud Build (<scmsync> bridge)")
+        self.build_check.set_active(True)
+        grid.attach(self.build_check, 1, 3, 1, 1)
+
+        main_box.append(grid)
+
+        spacer = Gtk.Label()
+        spacer.set_vexpand(True)
+        main_box.append(spacer)
+
+        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        footer.set_halign(Gtk.Align.END)
+
+        cancel_btn = Gtk.Button(label="Cancel")
+        cancel_btn.connect("clicked", lambda b: self.destroy())
+        footer.append(cancel_btn)
+
+        self.fork_btn = Gtk.Button(label="➕ Branch Package")
+        self.fork_btn.add_css_class("suggested-action")
+        self.fork_btn.connect("clicked", self.on_fork_clicked)
+        footer.append(self.fork_btn)
+
+        main_box.append(footer)
+        self.set_child(main_box)
+
+    def on_fork_clicked(self, btn):
+        pkg_name = self.pkg_entry.get_text().strip()
+        if not pkg_name:
+            if hasattr(self.parent_window, "toast_overlay"):
+                self.parent_window.toast_overlay.add_toast(Adw.Toast.new("Package name cannot be empty."))
+            return
+
+        stream_idx = self.stream_combo.get_selected()
+        stream_map = {0: "factory", 1: "leap-16.1", 2: "leap-16.0"}
+        stream_val = stream_map.get(stream_idx, "factory")
+        target_prj = self.target_prj_entry.get_text().strip() or None
+        no_build = not self.build_check.get_active()
+
+        # Destination in active scratch workspace
+        active_prof = self.config.get_active_profile()
+        stable_p = active_prof.get("stable_path")
+        dest_dir = os.path.join(stable_p, pkg_name) if stable_p else None
+
+        self.destroy()
+
+        if hasattr(self.parent_window, "toast_overlay"):
+            self.parent_window.toast_overlay.add_toast(Adw.Toast.new(f"Branching '{pkg_name}' ({stream_val})..."))
+
+        def worker():
+            try:
+                import fork_helper
+            except ImportError:
+                from helpers import fork_helper
+            ok, msg, path = fork_helper.fork_package(
+                package_name=pkg_name,
+                stream=stream_val,
+                target_project=target_prj,
+                dest_dir=dest_dir,
+                no_build=no_build
+            )
+            GLib.idle_add(self._on_fork_completed, ok, msg, pkg_name, path)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_fork_completed(self, ok, msg, pkg_name, path):
+        if hasattr(self.parent_window, "toast_overlay"):
+            if ok:
+                self.parent_window.toast_overlay.add_toast(Adw.Toast.new(f"✅ Successfully branched '{pkg_name}'!"))
+            else:
+                self.parent_window.toast_overlay.add_toast(Adw.Toast.new(f"✗ Failed to branch '{pkg_name}': {msg}"))
+
+        if ok and hasattr(self.parent_window, "reload_workspace"):
+            self.parent_window.reload_workspace()
+            if hasattr(self.parent_window, "select_package_by_name"):
+                self.parent_window.select_package_by_name(pkg_name)
+        return False
 
 
 class SyncWindow(Adw.ApplicationWindow):
@@ -1910,6 +2084,13 @@ class SyncWindow(Adw.ApplicationWindow):
         settings_btn.set_tooltip_text("Workspace Profile Manager Settings")
         settings_btn.connect("clicked", self.on_settings_clicked)
         self.header_bar.pack_start(settings_btn)
+
+        # Left: Branch / Fork Package Button (for scratchpad workspaces)
+        self.fork_pkg_btn = Gtk.Button.new_from_icon_name("list-add-symbolic")
+        self.fork_pkg_btn.set_focusable(False)
+        self.fork_pkg_btn.set_tooltip_text("Branch or Fork Package into Scratchpad (Ctrl+Shift+B)")
+        self.fork_pkg_btn.connect("clicked", self.on_fork_package_clicked)
+        self.header_bar.pack_start(self.fork_pkg_btn)
 
         # Left: Workspace SCM Sync Button (git-project-sync)
         self.sync_btn = Gtk.Button()
@@ -2295,13 +2476,19 @@ class SyncWindow(Adw.ApplicationWindow):
     def apply_active_profile_ui(self):
         active_prof = self.config.get_active_profile()
         unstable_p = active_prof.get("unstable_path")
+        is_scratch = bool(active_prof.get("is_scratch"))
 
         # Update window title to show active workspace profile name
-        self.set_title(f"Geckopit - Profile: {self.config.active_workspace}")
+        scratch_tag = " [Scratchpad]" if is_scratch else ""
+        self.set_title(f"Geckopit - Profile: {self.config.active_workspace}{scratch_tag}")
 
-        # If it is a Single-Pipeline workspace, hide Unstable Card completely
-        is_dual = unstable_p is not None and os.path.exists(unstable_p)
+        # If it is a Single-Pipeline workspace or scratchpad, hide Unstable Card completely
+        is_dual = not is_scratch and unstable_p is not None and os.path.exists(unstable_p)
         self.unstable_card.set_visible(is_dual)
+
+        # Show Fork Package button on HeaderBar if scratchpad
+        if hasattr(self, "fork_pkg_btn"):
+            self.fork_pkg_btn.set_visible(is_scratch)
 
         # Hide unstable filter buttons in sidebar
         self.filter_unstable.set_visible(is_dual)
@@ -2365,6 +2552,18 @@ class SyncWindow(Adw.ApplicationWindow):
     def on_settings_clicked(self, btn):
         dialog = WorkspaceManagerDialog(self, self.config, self.reload_workspace)
         dialog.present()
+
+    def on_fork_package_clicked(self, btn=None):
+        dialog = ForkPackageDialog(self, self.config, callback_on_success=self.reload_workspace)
+        dialog.present()
+
+    def select_package_by_name(self, pkg_name):
+        for row in getattr(self, "package_rows", {}).values():
+            if getattr(row, "package_name", None) == pkg_name:
+                self.master_list_box.select_row(row)
+                row.grab_focus()
+                self.load_package_detail(pkg_name)
+                break
 
     def reload_workspace(self):
         self.scan_generation = getattr(self, "scan_generation", 0) + 1
@@ -4272,6 +4471,13 @@ class SyncWindow(Adw.ApplicationWindow):
         self.osc_ci_btn.set_visible(False)
         actions_box.append(self.osc_ci_btn)
 
+        self.prune_scratch_btn = Gtk.Button(label="🗑️ Prune")
+        self.prune_scratch_btn.add_css_class("destructive-action")
+        self.prune_scratch_btn.set_tooltip_text("Retire this scratchpad package: remove local directory, OBS package, and topic branch")
+        self.prune_scratch_btn.connect("clicked", self.on_prune_scratch_clicked)
+        self.prune_scratch_btn.set_visible(False)
+        actions_box.append(self.prune_scratch_btn)
+
         self.update_factory_btn = Gtk.Button(label="⚙️ Run SCM Update")
         self.update_factory_btn.connect("clicked", self.on_detail_update_factory_clicked)
         actions_box.append(self.update_factory_btn)
@@ -5145,13 +5351,63 @@ class SyncWindow(Adw.ApplicationWindow):
     def on_submit_pool_clicked(self, btn):
         if getattr(self, "current_selected_package", None):
             pkg = self.current_selected_package
-            command = "geckopit-cli --submit-pool"
+            repo_path = self.get_mapped_worktree_path(pkg, "factory")
+            head_file = SyncWindow.get_git_head_file(repo_path) if repo_path else None
+            active_br = SyncWindow.read_git_branch_from_head_file(head_file) if head_file else ""
+            if active_br and active_br.startswith("for-"):
+                command = "geckopit-cli --submit"
+            else:
+                command = "geckopit-cli --submit-pool"
             self.allocate_terminal(pkg, "factory", command)
 
     def on_osc_ci_clicked(self, btn):
         if getattr(self, "current_selected_package", None):
             pkg = self.current_selected_package
             self.allocate_terminal(pkg, "factory", "osc ci")
+
+    def on_prune_scratch_clicked(self, btn):
+        pkg = getattr(self, "current_selected_package", None)
+        if not pkg:
+            return
+        repo_path = self.get_mapped_worktree_path(pkg, "factory")
+        if not repo_path or not os.path.exists(repo_path):
+            return
+
+        body_msg = f"Are you sure you want to retire '{pkg}' from scratchpad?\n\nThis will remove the local directory on disk, delete the OBS staging package, and delete the topic branch on Gitea."
+        dialog = Adw.MessageDialog.new(self, f"Prune '{pkg}'?", body_msg)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("prune", "🗑️ Prune Package")
+        dialog.set_response_appearance("prune", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+
+        def on_response(d, response_id):
+            if response_id == "prune":
+                if hasattr(self, "toast_overlay"):
+                    self.toast_overlay.add_toast(Adw.Toast.new(f"Pruning '{pkg}'..."))
+
+                def worker():
+                    try:
+                        import fork_helper
+                    except ImportError:
+                        from helpers import fork_helper
+                    ok, msg = fork_helper.prune_package(repo_path, force=True)
+                    GLib.idle_add(self._on_prune_completed, ok, msg, pkg)
+
+                threading.Thread(target=worker, daemon=True).start()
+
+        dialog.connect("response", on_response)
+        dialog.present()
+
+    def _on_prune_completed(self, ok, msg, pkg):
+        if hasattr(self, "toast_overlay"):
+            if ok:
+                self.toast_overlay.add_toast(Adw.Toast.new(f"✅ Successfully pruned '{pkg}'!"))
+            else:
+                self.toast_overlay.add_toast(Adw.Toast.new(f"✗ Failed to prune '{pkg}': {msg}"))
+        if ok:
+            self.reload_workspace()
+        return False
 
     def on_catchup_merge_clicked(self, btn):
         if getattr(self, "current_selected_package", None):
@@ -5489,6 +5745,11 @@ class SyncWindow(Adw.ApplicationWindow):
             self.on_workspace_sync_clicked()
             return True
 
+        # Ctrl+Shift+B: Branch/Fork Package into Scratchpad
+        if ctrl_pressed and shift_pressed and keyval in (Gdk.KEY_b, Gdk.KEY_B):
+            self.on_fork_package_clicked()
+            return True
+
         # Ctrl+Shift+R: Rescan all packages in workspace
         if ctrl_pressed and shift_pressed and keyval in (Gdk.KEY_r, Gdk.KEY_R):
             self.refresh_all()
@@ -5784,6 +6045,11 @@ class SyncWindow(Adw.ApplicationWindow):
         if hasattr(self, "pull_pool_btn"):
             self.pull_pool_btn.set_visible(not is_osc)
 
+        active_prof = self.config.get_active_profile()
+        is_scratch = bool(active_prof.get("is_scratch"))
+        if hasattr(self, "prune_scratch_btn"):
+            self.prune_scratch_btn.set_visible(is_scratch)
+
         pool_status = sync.get("pool_status", "unknown")
         pool_behind = sync.get("pool_behind", 0)
         pool_ahead = sync.get("pool_ahead", 0)
@@ -5828,7 +6094,15 @@ class SyncWindow(Adw.ApplicationWindow):
                 stream_info = pool_submit.check_pool_stream_sync(repo_path, branch=active_br, pkg_name=short_name, skip_fetch=True)
                 str_ahead = stream_info.get("ahead", 0)
                 str_behind = stream_info.get("behind", 0)
-                if str_ahead > 0:
+                if active_br.startswith("for-"):
+                    c_s = 's' if str_ahead != 1 else ''
+                    p1_text = f"🌱 <span weight='bold' foreground='#3584e4'>Contributor topic branch '{active_br}'</span> (ahead of pool by {str_ahead} commit{c_s})"
+                    self.pull_pool_btn.set_sensitive(False)
+                    if hasattr(self, "submit_pool_btn"):
+                        self.submit_pool_btn.set_sensitive(True)
+                        self.submit_pool_btn.set_label("📤 Submit to Upstream")
+                        self.submit_pool_btn.set_tooltip_text("Submit changes back to upstream maintainer via geckopit-cli --submit")
+                elif str_ahead > 0:
                     c_s = 's' if str_ahead != 1 else ''
                     p1_text = f"📤 <span weight='bold' foreground='#3584e4'>Ahead of Central Pool ({active_br}) by {str_ahead} commit{c_s}</span> (PR needed)"
                     self.pull_pool_btn.set_sensitive(False)

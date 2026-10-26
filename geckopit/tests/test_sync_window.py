@@ -2433,5 +2433,82 @@ class TestSyncWindow(unittest.TestCase):
 
         self.assertGreaterEqual(validated_count, 3)
 
+    def test_workspace_manager_dialog_scratchpad_support(self):
+        from gi.repository import Gtk
+        from geckopit import WorkspaceManagerDialog
+
+        win = Gtk.Window()
+        win.toast_overlay = mock.MagicMock()
+
+        config = mock.MagicMock()
+        config.workspaces = {
+            "GNOME": {
+                "stable_path": "/tmp",
+                "stable_branch": "factory",
+                "unstable_path": "/tmp/next",
+                "unstable_branch": "next",
+                "is_scratch": False
+            }
+        }
+        config.active_workspace = "GNOME"
+        config.max_workers = 20
+
+        callback = mock.MagicMock()
+        dlg = WorkspaceManagerDialog(win, config, callback)
+
+        # Initially False
+        self.assertFalse(dlg.is_scratch_check.get_active())
+        self.assertTrue(dlg.unstable_path_entry.get_sensitive())
+
+        # Toggle is_scratch to True
+        dlg.is_scratch_check.set_active(True)
+        self.assertFalse(dlg.unstable_path_entry.get_sensitive())
+        self.assertFalse(dlg.unstable_br_entry.get_sensitive())
+
+        # Save profile
+        dlg.on_save_clicked(None)
+        saved_prof = config.workspaces["GNOME"]
+        self.assertTrue(saved_prof.get("is_scratch"))
+        self.assertIsNone(saved_prof.get("unstable_path"))
+
+    def test_fork_package_dialog_initialization(self):
+        from gi.repository import Gtk
+        from geckopit import ForkPackageDialog
+
+        win = Gtk.Window()
+        config = mock.MagicMock()
+        config.get_active_profile.return_value = {"stable_path": "/tmp/scratch"}
+        config.data = {"default_target_project": "home:dimstar:Factory"}
+
+        dlg = ForkPackageDialog(win, config)
+        self.assertEqual(dlg.stream_combo.get_selected(), 0)
+        self.assertEqual(dlg.target_prj_entry.get_text(), "home:dimstar:Factory")
+        self.assertTrue(dlg.build_check.get_active())
+        dlg.destroy()
+
+    def test_apply_active_profile_ui_scratchpad_visibility(self):
+        from geckopit import SyncWindow
+
+        mock_win = mock.Mock()
+        mock_win.config = mock.Mock()
+        mock_win.config.active_workspace = "Scratchpad"
+        mock_win.config.get_active_profile.return_value = {
+            "stable_path": "/tmp/scratch",
+            "unstable_path": None,
+            "is_scratch": True
+        }
+        mock_win.unstable_card = mock.Mock()
+        mock_win.fork_pkg_btn = mock.Mock()
+        mock_win.filter_unstable = mock.Mock()
+        mock_win.filter_forwarding = mock.Mock()
+        mock_win.diff_selector = mock.Mock()
+
+        SyncWindow.apply_active_profile_ui(mock_win)
+
+        mock_win.fork_pkg_btn.set_visible.assert_called_with(True)
+        mock_win.unstable_card.set_visible.assert_called_with(False)
+        mock_win.set_title.assert_called_with("Geckopit - Profile: Scratchpad [Scratchpad]")
+
+
 if __name__ == '__main__':
     unittest.main()

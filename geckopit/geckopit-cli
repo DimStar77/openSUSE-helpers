@@ -33,6 +33,7 @@ import meson_drift
 import pr_helper
 import patch_checker
 import pool_submit
+import fork_helper
 
 
 def render_single_package_dashboard(data):
@@ -42,6 +43,8 @@ def render_single_package_dashboard(data):
     ver = data['version']
     pr = data['pr']
     branch = data['active_branch']
+    st_branch = data.get('stable_branch', 'factory') or 'factory'
+    unst_branch = data.get('unstable_branch', 'next') or 'next'
 
     print(f"{sb.BOLD}{'='*72}{sb.RESET}")
     print(f"📦 {sb.BOLD}GECKOPIT PACKAGE DASHBOARD: {sb.CYAN}{repo}{sb.RESET}")
@@ -123,10 +126,13 @@ def render_single_package_dashboard(data):
                 print()
             else:
                 cand_prj = pool_submit.get_git_obs_meta_project(data.get('pkg_dir'), branch=head)
-                if cand_prj:
-                    pool_str = f"{sb.CYAN}ℹ️ Configured for {cand_prj} via git-obs{sb.RESET}"
+                if not cand_prj:
+                    if head.startswith("for-"):
+                        pool_str = f"{sb.CYAN}🌱 Contributor topic branch '{head}' (ready to submit via geckopit-cli --submit){sb.RESET}"
+                    else:
+                        pool_str = f"{sb.YELLOW}⚠️ Checked out on '{head}' (not tracked in central pool){sb.RESET}"
                 else:
-                    pool_str = f"{sb.YELLOW}⚠️ Checked out on '{head}' (not tracked in central pool){sb.RESET}"
+                    pool_str = f"{sb.CYAN}📦 Git Devel [{cand_prj}]{sb.RESET}"
                 print(f"  Gitea Pool:    {pool_str}")
                 print(f"  Branch Sync:   — (Central pool tracks '{st_branch}')")
                 print()
@@ -318,7 +324,10 @@ def render_single_package_dashboard(data):
             else:
                 cand_prj = pool_submit.get_git_obs_meta_project(data.get('pkg_dir'), branch=head)
                 if not cand_prj:
-                    actions.append(f"ℹ️  Current branch '{head}' has no OBS submission target. Switch to '{st_branch}' to submit to openSUSE:Factory: {sb.BOLD}git checkout {st_branch}{sb.RESET}")
+                    if head.startswith("for-"):
+                        actions.append(f"📤 Submit changes back to upstream maintainer: {sb.BOLD}geckopit-cli --submit{sb.RESET}")
+                    else:
+                        actions.append(f"ℹ️  Current branch '{head}' has no OBS submission target. Switch to '{st_branch}' to submit to openSUSE:Factory: {sb.BOLD}git checkout {st_branch}{sb.RESET}")
         else:
             if pool_behind > 0:
                 actions.append(f"📥 Pull upstream changes from Pool: {sb.BOLD}git fetch https://src.opensuse.org/pool/{repo}.git factory && git merge FETCH_HEAD{sb.RESET}")
@@ -1521,6 +1530,13 @@ KNOWN_OPTIONS = {
     "--branch", "-b",
     "--jobs", "-j",
     "--profile", "--package",
+    "--fork", "--branch-pkg", "--branch-package",
+    "--target-project", "-t",
+    "--stream",
+    "--dest-dir",
+    "--no-build",
+    "--submit",
+    "--prune",
     "--help", "-h"
 }
 
@@ -1704,6 +1720,16 @@ def print_help():
     print(f"\n{sb.BOLD}Pull Request Management:{sb.RESET}")
     print(f"  {sb.BOLD}--list-prs{sb.RESET}         Lists open PRs with target branches and _ObsPrj forwarding status.")
     print(f"  {sb.BOLD}--merge-pr <ID>{sb.RESET}     Fetches and merges Gitea PR <ID> onto HEAD, redating changelog to now.")
+    print(f"\n{sb.BOLD}Contributor Branching & Submissions:{sb.RESET}")
+    print(f"  {sb.BOLD}--fork, --branch-pkg <pkg>{sb.RESET}")
+    print("                     Branches or forks package into scratch workspace (auto-detects Git vs OBS).")
+    print(f"  {sb.BOLD}-t, --target-project <prj>{sb.RESET}")
+    print("                     Target OBS staging project (defaults to config or home:<user>:branches:<devel>).")
+    print(f"  {sb.BOLD}--stream <stream>{sb.RESET}   Target stream ('factory', 'leap-16.1', 'leap-16.0'; default: 'factory').")
+    print(f"  {sb.BOLD}--dest-dir <path>{sb.RESET}   Destination directory on disk (defaults to scratch_dir/<pkg>).")
+    print(f"  {sb.BOLD}--no-build{sb.RESET}         Skip creating the OBS <scmsync> cloud build package for Git forks.")
+    print(f"  {sb.BOLD}--submit{sb.RESET}           Universal submit: routes OBS branches to 'osc sr' and Git forks to Gitea PR.")
+    print(f"  {sb.BOLD}--prune <pkg>{sb.RESET}        Retires a scratchpad package: removes local checkout, OBS package, and topic branch.")
     print(f"\n{sb.BOLD}Setup & Documentation:{sb.RESET}")
     print(f"  {sb.BOLD}--check-setup{sb.RESET}      Verifies readiness of Git identity, SSH keys, OBS, and Gitea.")
     print(f"  {sb.BOLD}--setup{sb.RESET}            Interactively configures missing packaging tools and credentials.")
@@ -1847,6 +1873,100 @@ def main():
     if show_sync:
         sys.exit(run_sync_action(target_pkg_dir, force=force_sync, jobs=jobs_count))
 
+    # Parse submission message (-m / --message)
+    custom_message = None
+    for idx, arg in enumerate(sys.argv):
+        if arg in ("-m", "--message"):
+            if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("-"):
+                custom_message = sys.argv[idx + 1]
+        elif arg.startswith("--message="):
+            custom_message = arg.split("=", 1)[1]
+
+    # Contributor fork / branch action
+    is_fork_action = any(
+        arg in sys.argv or arg.startswith(("--fork=", "--branch-pkg=", "--branch-package="))
+        for arg in ("--fork", "--branch-pkg", "--branch-package")
+    )
+    if is_fork_action:
+        fork_target = None
+        for idx, arg in enumerate(sys.argv):
+            if arg in ("--fork", "--branch-pkg", "--branch-package"):
+                if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("-"):
+                    fork_target = sys.argv[idx + 1]
+            elif arg.startswith(("--fork=", "--branch-pkg=", "--branch-package=")):
+                fork_target = arg.split("=", 1)[1]
+        if not fork_target:
+            fork_target = target_arg
+
+        if not fork_target:
+            print(f"{sb.RED}[Error]{sb.RESET} Must specify a package name to fork: geckopit-cli --fork <package>", file=sys.stderr)
+            sys.exit(1)
+
+        # Parse target-project
+        target_proj_val = None
+        for idx, arg in enumerate(sys.argv):
+            if arg in ("-t", "--target-project") and idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("-"):
+                target_proj_val = sys.argv[idx + 1]
+            elif arg.startswith("--target-project="):
+                target_proj_val = arg.split("=", 1)[1]
+
+        # Parse stream
+        stream_val = "factory"
+        for idx, arg in enumerate(sys.argv):
+            if arg in ("--stream",) and idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("-"):
+                stream_val = sys.argv[idx + 1]
+            elif arg.startswith("--stream="):
+                stream_val = arg.split("=", 1)[1]
+
+        # Parse dest-dir
+        dest_dir_val = None
+        for idx, arg in enumerate(sys.argv):
+            if arg in ("--dest-dir",) and idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("-"):
+                dest_dir_val = sys.argv[idx + 1]
+            elif arg.startswith("--dest-dir="):
+                dest_dir_val = arg.split("=", 1)[1]
+
+        no_build_val = "--no-build" in sys.argv
+
+        ok, msg, path = fork_helper.fork_package(
+            package_name=fork_target,
+            stream=stream_val,
+            target_project=target_proj_val,
+            dest_dir=dest_dir_val,
+            no_build=no_build_val
+        )
+        if ok:
+            print(f"\n{sb.GREEN}✅ {msg}{sb.RESET}")
+            if path:
+                print(f"   Ready to work in: {sb.BOLD}{path}{sb.RESET}\n")
+            sys.exit(0)
+        else:
+            print(f"\n{sb.RED}✗ {msg}{sb.RESET}\n", file=sys.stderr)
+            sys.exit(1)
+
+    # Universal submit action
+    if "--submit" in sys.argv:
+        eff_dir = target_pkg_dir or "."
+        ok, msg = fork_helper.submit_flyby_package(eff_dir, message=custom_message)
+        if ok:
+            print(f"\n{sb.GREEN}✅ {msg}{sb.RESET}\n")
+            sys.exit(0)
+        else:
+            print(f"\n{sb.RED}✗ {msg}{sb.RESET}\n", file=sys.stderr)
+            sys.exit(1)
+
+    # Prune scratchpad package action
+    if "--prune" in sys.argv:
+        prune_target = target_arg or target_pkg_dir or "."
+        force_prune = "--force" in sys.argv or "-f" in sys.argv
+        ok, msg = fork_helper.prune_package(prune_target, force=force_prune)
+        if ok:
+            print(f"\n{sb.GREEN}✅ {msg}{sb.RESET}\n")
+            sys.exit(0)
+        else:
+            print(f"\n{sb.RED}✗ {msg}{sb.RESET}\n", file=sys.stderr)
+            sys.exit(1)
+
     # Check setup / onboarding options
     if "--check-setup" in sys.argv:
         sys.exit(run_check_setup_action())
@@ -1909,14 +2029,7 @@ def main():
         sle_mode = "--sle" in sys.argv
         sys.exit(0 if patch_checker.rebase_patch_cli(target_pkg_dir, patch_name=patch_arg, shell_mode=shell_mode, sle_mode=sle_mode) else 1)
 
-    # Parse pool submission options
-    custom_message = None
-    for idx, arg in enumerate(sys.argv):
-        if arg in ("-m", "--message"):
-            if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("-"):
-                custom_message = sys.argv[idx + 1]
-        elif arg.startswith("--message="):
-            custom_message = arg.split("=", 1)[1]
+    # Pool submission options
 
     all_submit = "--all" in sys.argv or "-a" in sys.argv
     yes_arg = "--yes" in sys.argv or "-y" in sys.argv or "--no-edit" in sys.argv
