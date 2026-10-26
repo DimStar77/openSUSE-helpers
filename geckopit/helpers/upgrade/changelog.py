@@ -12,6 +12,29 @@ from typing import Optional, List, Tuple
 CHANGELOG_WRAP_WIDTH = 79
 APPSTREAM_XML_REGEX = re.compile(r'(metainfo|appdata)\.xml(?:\.in)*$', re.IGNORECASE)
 
+CHANGELOG_CANDIDATES = [
+    "NEWS",
+    "NEWS.md",
+    "NEWS.rst",
+    "NEWS.txt",
+    "RELEASES.md",
+    "RELEASE_NOTES.md",
+    "releasenotes.txt",
+    "CHANGELOG.md",
+    "CHANGELOG.rst",
+    "CHANGELOG",
+    "ChangeLog",
+    "HISTORY.md",
+    "HISTORY.rst",
+    "HISTORY.txt",
+    "HISTORY",
+]
+
+RE_DOC_TITLE = re.compile(
+    r'^#*\s*(history(?:\s+of\s+versions?)?|changelog|news|release\s*notes|releases)\s*#*$',
+    re.IGNORECASE
+)
+
 # Pre-compiled regular expressions for detecting release section headers in NEWS/ChangeLog files
 RE_RELEASE_HEADER = re.compile(
     r"^(news|new|what'?s\s+new|changes|overview\s+of\s+changes)\s+(in|leading\s+to)\s+.*|^release\s+(in|of|\d+).*",
@@ -50,10 +73,20 @@ def is_date_line(line_content: str, stripped_text: str) -> bool:
     return bool(RE_DATE_HEADER.match(clean))
 
 def is_release_header_line(line_content: str, stripped_text: str) -> bool:
-    """Detects whether a line in an upstream NEWS diff represents a release section header."""
-    if not stripped_text or RE_BULLET.match(line_content):
+    """Detects whether a line in an upstream NEWS/ChangeLog/HISTORY diff represents a release section header."""
+    if not stripped_text:
         return False
-    return bool(RE_RELEASE_HEADER.match(stripped_text) or RE_VER_HEADER.match(stripped_text))
+    if RE_DOC_TITLE.match(stripped_text):
+        return False
+    if not RE_BULLET.match(line_content):
+        clean_markdown = stripped_text.strip("# ").strip()
+        if RE_RELEASE_HEADER.match(clean_markdown) or RE_VER_HEADER.match(clean_markdown):
+            return True
+    # Support markdown bulleted or bracketed version headers, e.g.
+    # '* Version 51.0.9 (2026-10-11)', '## [51.0.9] - 2026-10-11'
+    clean_ver = re.sub(r"^(?:[#*•\-+]+\s*)+", "", stripped_text).strip("# ")
+    clean_ver_bracket = re.sub(r"^\[([^\]]+)\]", r"\g<1>", clean_ver)
+    return bool(RE_VER_HEADER.match(clean_ver) or RE_VER_HEADER.match(clean_ver_bracket))
 
 
 def wrap_bullet(text: str, level: int = 1, width: int = CHANGELOG_WRAP_WIDTH) -> str:
@@ -99,6 +132,8 @@ def check_retrospective_news_changes(diff_text: str) -> bool:
             continue
         line_content = line[1:] if len(line) > 1 else ""
         s = line_content.strip()
+        if RE_DOC_TITLE.match(s):
+            continue
         if (line.startswith(" ") or line.startswith("+")) and is_release_header_line(line_content, s):
             if seen_first:
                 past_first = True
@@ -192,7 +227,7 @@ def format_changelog_entry(
         if not s:
             in_translations = False
             continue
-        if is_release_header_line(line, s) or is_date_line(line, s) or RE_UNDERLINE.match(s):
+        if is_release_header_line(line, s) or is_date_line(line, s) or RE_UNDERLINE.match(s) or RE_DOC_TITLE.match(s):
             continue
 
         # Standalone translation section header (e.g. 'Translations:' or 'Translation updates:')
@@ -236,7 +271,7 @@ def format_changelog_entry(
                 if current_bullets or current_header:
                     sections.append((current_header, current_bullets))
                     current_bullets = []
-                current_header = s.rstrip(":").strip()
+                current_header = s.strip("# ").rstrip(":").strip()
                 current_parent_bullet = None
                 i += 1
                 continue

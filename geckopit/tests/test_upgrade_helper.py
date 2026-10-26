@@ -207,6 +207,13 @@ Release:        0
             with open(news_md, "w") as f: f.write("test")
             self.assertEqual(helper.find_upstream_changelog_target(tmpdir), "NEWS.md")
 
+            # With HISTORY.md discovered when no NEWS or ChangeLog exists
+            os.remove(news_md)
+            os.remove(cl_path)
+            history_md = os.path.join(tmpdir, "HISTORY.md")
+            with open(history_md, "w") as f: f.write("test")
+            self.assertEqual(helper.find_upstream_changelog_target(tmpdir), "HISTORY.md")
+
     def test_find_upstream_changelog_target_git_activity(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             # Initialize a real git repo

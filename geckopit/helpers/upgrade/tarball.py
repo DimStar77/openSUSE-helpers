@@ -17,7 +17,7 @@ import tarfile
 from typing import Optional, Dict, List, Tuple, Callable
 
 from .base import BaseUpgradeHelper, UpgradeResult
-from .changelog import format_changelog_entry, remove_patch_from_spec, check_retrospective_news_changes
+from .changelog import format_changelog_entry, remove_patch_from_spec, check_retrospective_news_changes, CHANGELOG_CANDIDATES
 
 ARCHIVE_EXTENSIONS = (
     ".tar.xz",
@@ -29,14 +29,7 @@ ARCHIVE_EXTENSIONS = (
     ".zip",
 )
 
-NEWS_CANDIDATES = [
-    "NEWS",
-    "ChangeLog",
-    "CHANGELOG.md",
-    "CHANGELOG",
-    "RELEASES.md",
-    "RELEASE_NOTES.md",
-]
+NEWS_CANDIDATES = CHANGELOG_CANDIDATES
 
 BUILD_CANDIDATES = [
     "meson.build",

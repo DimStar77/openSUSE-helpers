@@ -17,6 +17,7 @@ from typing import Optional, Callable, Dict, Tuple, List
 from .base import BaseUpgradeHelper, UpgradeResult
 from .changelog import (
     CHANGELOG_WRAP_WIDTH,
+    CHANGELOG_CANDIDATES,
     wrap_bullet,
     format_changelog_entry,
     remove_patch_from_spec,
@@ -449,11 +450,7 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
         If multiple exist and old_rev is provided, prioritizes the highest-precedence file
         that was actually modified in this release. Also checks for AppStream metainfo/appdata XML.
         """
-        candidates = [
-            "NEWS", "NEWS.md", "NEWS.rst", "NEWS.txt",
-            "RELEASES.md", "releasenotes.txt",
-            "CHANGELOG.md", "CHANGELOG.rst", "ChangeLog"
-        ]
+        candidates = CHANGELOG_CANDIDATES
 
         # 1. If old_rev is available, check which candidates actually changed in git
         rev_range = f"{old_rev}..{new_rev or 'HEAD'}" if old_rev else None

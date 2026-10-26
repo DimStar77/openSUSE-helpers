@@ -169,6 +169,54 @@ class TestChangelogEngine(unittest.TestCase):
         self.assertNotIn("Evolution 3.62.1", res2)
         self.assertIn("* Address book sync improvements", res2)
 
+    def test_format_changelog_entry_markdown_history_header(self):
+        diff = """--- a/HISTORY.md
++++ b/HISTORY.md
+@@ -1,3 +1,14 @@
++# History of versions #
++
++* Version 51.0.9 (2026-10-11)
++  * Updated french translation
++  * Updated Occitan translation
++  * Drop dead X11 code (Thanks to Marco Trevisan)
++  * Added CI checks
++  * Added new open/close emblems to stacks
++  * Don't show for a brief moment a window icon in Dash (Marco Trevisan)
++  * Use org.freedesktop.FileManager1 interface to open folders
++  * Use sandboxing by default in .appimage files
++
+ * Version 51.0.8 (2026-09-09)
+"""
+        res = format_changelog_entry(diff, "51.0.9")
+        self.assertIn("- Update to version 51.0.9:", res)
+        self.assertNotIn("History of versions", res)
+        self.assertNotIn("Version 51.0.9", res)
+        self.assertNotIn("Version 51.0.8", res)
+        self.assertIn("  * Drop dead X11 code (Thanks to Marco Trevisan)", res)
+        self.assertIn("  * Added CI checks", res)
+        self.assertIn("  * Updated translations.", res)
+        self.assertNotIn("Updated french translation", res)
+
+    def test_format_changelog_entry_keep_a_changelog_markdown(self):
+        diff = """--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,12 @@
+ # Changelog
+
++## [1.2.0] - 2026-10-20
++### Added
++- New user onboarding flow
++- Support for dark mode
++
+ ## [1.1.0] - 2026-08-15
+"""
+        res = format_changelog_entry(diff, "1.2.0")
+        self.assertIn("- Update to version 1.2.0:", res)
+        self.assertNotIn("Changelog", res)
+        self.assertIn("  * Added:", res)
+        self.assertIn("    + New user onboarding flow", res)
+        self.assertIn("    + Support for dark mode", res)
+
     def test_check_retrospective_news_changes(self):
         from upgrade.changelog import check_retrospective_news_changes
         diff_no_retro = '--- NEWS.old\n+++ NEWS.new\n@@ -1,5 +1,10 @@\n+Changes in 1.1\n+==============\n+* Feature A\n+\n Changes in 1.0\n'
