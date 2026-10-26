@@ -95,6 +95,25 @@ class TestMesonDriftAuditor(unittest.TestCase):
         self.assertIn("libxml2-devel", spec_deps)
         self.assertEqual(spec_deps["libxml2-devel"][1], "2.10.0")
 
+    def test_parse_spec_build_requires_regex_and_continuation_macros(self):
+        """Tests that macros containing regex backreferences (e.g. sed \1) or line-continuation backslashes do not cause regex template errors."""
+        spec = r"""
+        Name: libsoup
+        Version: 3.8.0
+        Release: 0
+        %define compile_schemas \
+        %define hicolor_dir_list {{actions,\
+        %global gnome_version %(echo %{version} | sed -E 's/^([0-9]+\.[0-9]+).*/\1/')
+        %define min_glib 2.70.0
+        BuildRequires:  pkgconfig(glib-2.0) >= %{min_glib}
+        BuildRequires:  pkgconfig(soup-3.0) >= %{version}
+        """
+        spec_deps = meson_drift.parse_spec_build_requires(spec)
+        self.assertIn("glib-2.0", spec_deps)
+        self.assertEqual(spec_deps["glib-2.0"][1], "2.70.0")
+        self.assertIn("soup-3.0", spec_deps)
+        self.assertEqual(spec_deps["soup-3.0"][1], "3.8.0")
+
     def test_audit_meson_drift_bump_and_missing(self):
         meson_code = """
         dependency('gtk4', version: '>= 4.16.0')

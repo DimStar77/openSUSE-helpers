@@ -617,7 +617,7 @@ def parse_spec_build_requires(spec_content: str) -> Dict[str, Tuple[str, str, st
                 if k == ok:
                     continue
                 pat = r"%\{?" + re.escape(ok) + r"\}?"
-                nv = re.sub(pat, ov, v, flags=re.IGNORECASE)
+                nv = re.sub(pat, lambda m, repl=ov: repl, v, flags=re.IGNORECASE)
                 if nv != v:
                     macros[k] = nv
                     v = nv
