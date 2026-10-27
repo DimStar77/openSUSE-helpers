@@ -150,7 +150,11 @@ def render_single_package_dashboard(data):
                     pool_str = f"{sb.YELLOW}📥 Behind central pool ({head}) by {s_behind} commit{b_s} (Pull needed){sb.RESET}"
                 elif s_ahead > 0:
                     a_s = 's' if s_ahead != 1 else ''
-                    pool_str = f"{sb.CYAN}📤 Ahead of central pool ({head}) by {s_ahead} commit{a_s} (PR needed){sb.RESET}"
+                    matching_pr = next((p for p in pr.get('prs', []) if p.get('base') == head), None)
+                    if matching_pr:
+                        pool_str = f"{sb.CYAN}📤 Ahead of central pool ({head}) by {s_ahead} commit{a_s} [PR #{matching_pr['number']} pending]{sb.RESET}"
+                    else:
+                        pool_str = f"{sb.CYAN}📤 Ahead of central pool ({head}) by {s_ahead} commit{a_s} (PR needed){sb.RESET}"
                 else:
                     pool_str = f"{sb.GREEN}✅ In Sync with central pool ({head}){sb.RESET}"
                 print(f"  Gitea Pool:    {pool_str}")
@@ -398,7 +402,9 @@ def render_single_package_dashboard(data):
                 if s_behind > 0:
                     actions.append(f"📥 Pull upstream changes from central pool ({head}): {sb.BOLD}git pull https://src.opensuse.org/pool/{repo}.git {head}{sb.RESET}")
                 if s_ahead > 0:
-                    actions.append(f"📤 Create Gitea Pull Request to central pool ({head}): {sb.BOLD}https://src.opensuse.org/pool/{repo}/pulls{sb.RESET}")
+                    matching_pr = next((p for p in pr.get('prs', []) if p.get('base') == head), None)
+                    if not matching_pr:
+                        actions.append(f"📤 Create Gitea Pull Request to central pool ({head}): {sb.BOLD}https://src.opensuse.org/pool/{repo}/pulls{sb.RESET}")
             else:
                 cand_prj = pool_submit.get_git_obs_meta_project(data.get('pkg_dir'), branch=head)
                 if not cand_prj:
@@ -478,7 +484,12 @@ def render_single_package_dashboard(data):
                 pkg_dir=data.get('pkg_dir'),
                 stable_branch=data.get('stable_branch', 'factory')
             )
-        if pool_sub and pool_sub.get("status") == "accepted_pending_sync":
+        matching_pr = next((p for p in pr.get('prs', []) if p.get('base') == (wt.get('head') or branch)), None)
+        head = wt.get('head') or branch
+        if head not in (st_branch, unst_branch) and matching_pr:
+            tgt_repo = matching_pr.get("target_repo") or f"pool/{repo}"
+            print(f"  {sb.GREEN}✅ Package is in sync. No action needed (PR #{matching_pr['number']} in-flight to {tgt_repo}).{sb.RESET}")
+        elif pool_sub and pool_sub.get("status") == "accepted_pending_sync":
             req_id = pool_sub.get("request_id") or (pool_sub.get("request") or {}).get("id")
             tgt = pool_sub.get("target_project") or (pool_sub.get("request") or {}).get("target_project") or "openSUSE:Factory"
             print(f"  {sb.GREEN}✅ Package is in sync. No action needed (SR #{req_id} accepted, awaiting sync to {tgt}).{sb.RESET}")
@@ -487,6 +498,9 @@ def render_single_package_dashboard(data):
             tgt = pool_sub.get("target_project") or (pool_sub.get("request") or {}).get("target_project") or "openSUSE:Factory"
             st = pool_sub.get("state") or (pool_sub.get("request") or {}).get("state", "review")
             print(f"  {sb.GREEN}✅ Package is in sync. No action needed (SR #{req_id} in {st} in {tgt}).{sb.RESET}")
+        elif matching_pr:
+            tgt_repo = matching_pr.get("target_repo") or f"pool/{repo}"
+            print(f"  {sb.GREEN}✅ Package is in sync. No action needed (PR #{matching_pr['number']} in-flight to {tgt_repo}).{sb.RESET}")
         elif pr.get("has_forward_pr"):
             f_num = pr.get("forward_pr_id") or (pr.get("prs", [{}])[0].get("number") if pr.get("prs") else "")
             f_s = f" #{f_num}" if f_num else ""

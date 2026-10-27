@@ -321,7 +321,45 @@ class TestSinglePackageDashboardFormatting(unittest.TestCase):
             self.assertIn("M17N", out)
             self.assertIn("No action needed (SR #1393059 in new in M17N)", out)
 
+    def test_dashboard_stream_branch_with_pending_pr(self):
+        """Verifies that a stream branch with pending PR displays [PR #N pending] and avoids redundant PR actions."""
+        import io
+        from unittest.mock import patch
+
+        pr_info = {
+            'number': 4,
+            'title': 'Update vlc for leap-16.0',
+            'url': 'https://src.opensuse.org/pool/vlc/pulls/4',
+            'author': 'dimstar',
+            'base': 'leap-16.0',
+            'head': 'leap-16.0',
+            'target_repo': 'pool/vlc'
+        }
+        data = {
+            'repo_name': 'vlc',
+            'pkg_dir': '/path/to/vlc',
+            'active_branch': 'leap-16.0',
+            'stable_branch': 'factory',
+            'unstable_branch': None,
+            'worktree': {'ahead': 0, 'behind': 0, 'dirty': False, 'untracked': False, 'head': 'leap-16.0'},
+            'sync': {'pool_ahead': 0, 'pool_behind': 0, 'pool_status': 'In Sync', 'is_osc': False, 'needs_action': False},
+            'version': {'status': 'success', 'is_metadata': False, 'factory_ver': '3.0.24', 'upstream_stable': '3.0.24', 'needs_update': False},
+            'pr': {'has_pr': True, 'has_forward_pr': False, 'count': 1, 'prs': [pr_info]}
+        }
+
+        with patch('pool_submit.check_pool_stream_sync', return_value={'exists': True, 'ahead': 410, 'behind': 0}):
+            buf = io.StringIO()
+            with patch('sys.stdout', buf):
+                self.cli.render_single_package_dashboard(data)
+            out = buf.getvalue()
+
+            self.assertIn("Ahead of central pool (leap-16.0) by 410 commits [PR #4 pending]", out)
+            self.assertNotIn("(PR needed)", out)
+            self.assertNotIn("Create Gitea Pull Request to central pool", out)
+            self.assertIn("No action needed (PR #4 in-flight to pool/vlc)", out)
+
 if __name__ == '__main__':
+
 
 
     unittest.main()

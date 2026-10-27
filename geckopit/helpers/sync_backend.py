@@ -2128,18 +2128,13 @@ def check_single_package_full(pkg_dir=".", stable_branch=None, unstable_branch=N
     except Exception:
         pass
 
-    # 2. Concurrently check version (reusing origin refs without refetching) and conditional PR check
+    # 2. Concurrently check version (reusing origin refs without refetching) and PR status
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
         f_ver = ex.submit(check_repo_version, repo_name, None, st_branch, unst_branch, parent_dir, ignored_vers, True)
-        f_pr = None
-        if unst_branch and sync.get("status") == "success" and sync.get("next_status") != "No next branch" and sync.get("next_ahead", 0) > 0:
-            f_pr = ex.submit(check_repo_pr, repo_name, st_branch, unst_branch, parent_dir)
+        f_pr = ex.submit(check_repo_pr, repo_name, st_branch, unst_branch, parent_dir)
 
         ver = f_ver.result()[1]
-        if f_pr:
-            pr = f_pr.result()[1]
-        else:
-            pr = {"has_pr": False, "url": None, "number": None}
+        pr = f_pr.result()[1]
 
     # Resolve local on-disk version and re-evaluate needs_update against upstream
     local_ver = get_local_package_version(pkg_dir)
