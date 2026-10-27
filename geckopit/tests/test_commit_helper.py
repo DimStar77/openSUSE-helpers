@@ -180,5 +180,35 @@ Wed Sep 23 16:00:00 UTC 2026 - User <user@example.com>
             calls = [c[0][0] for c in mock_run.call_args_list]
             self.assertFalse(any("feedbackd-0.8.10.obscpio" in str(c) for c in calls))
 
+    @mock.patch("subprocess.run")
+    def test_execute_package_commit_metadata_package_without_changes(self, mock_run):
+        """Verifies committing a metadata package without a .changes file uses staged files fallback."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, 'groups.yml'), 'w') as f:
+                f.write('patterns: [base]\n')
+
+            def fake_run(cmd, *args, **kwargs):
+                cmd_str = ' '.join(str(c) for c in cmd)
+                m = mock.MagicMock()
+                m.returncode = 0
+                if 'diff --cached --name-only' in cmd_str:
+                    m.stdout = 'groups.yml\n'
+                elif 'diff --name-only' in cmd_str:
+                    m.stdout = ''
+                elif 'ls-files' in cmd_str:
+                    m.stdout = ''
+                else:
+                    m.stdout = ''
+                return m
+
+            mock_run.side_effect = fake_run
+
+            logs = []
+            ok, msg = ch.execute_package_commit(tmpdir, interactive=False, on_log=logs.append)
+            self.assertTrue(ok)
+            self.assertIn('committed', msg.lower())
+            self.assertTrue(any('No .changes file found' in log for log in logs))
+
 if __name__ == '__main__':
+
     unittest.main()

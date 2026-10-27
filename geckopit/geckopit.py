@@ -5969,7 +5969,13 @@ class SyncWindow(Adw.ApplicationWindow):
             self.update_factory_btn.set_label("Run SCM Update")
             self.detail_web_btn.set_sensitive(False)
         else:
-            self.detail_web_btn.set_sensitive(True)
+            is_metadata = bool(ver.get("is_metadata", False))
+            self.detail_web_btn.set_sensitive(not is_metadata)
+            if is_metadata:
+                self.detail_web_btn.set_tooltip_text("Upstream release tracking not applicable for pure metadata packages")
+            else:
+                self.detail_web_btn.set_tooltip_text("Open upstream project on release-monitoring.org")
+
             is_osc = (self.package_data.get(package_name, {}).get("sync", {}).get("is_osc") or
                       self.package_data.get(package_name, {}).get("worktree", {}).get("is_osc", False))
             ignored_ver = self.get_ignored_version(package_name)
@@ -5989,6 +5995,10 @@ class SyncWindow(Adw.ApplicationWindow):
                             self.update_factory_btn.set_label(f"Update Package to {upstream_stable}")
                     else:
                         self.update_factory_btn.set_label(f"Update {self.stable_b.capitalize()} to {upstream_stable}")
+            elif is_metadata:
+                self.stable_ver_lbl.set_text("N/A (Metadata Package)")
+                self.update_factory_btn.set_sensitive(False)
+                self.update_factory_btn.set_label("Metadata Package")
             else:
                 self.stable_ver_lbl.set_text(f"{factory_ver} (Up-To-Date)")
                 self.update_factory_btn.set_sensitive(False)

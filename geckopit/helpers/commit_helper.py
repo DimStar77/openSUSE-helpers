@@ -24,6 +24,13 @@ TEXT_FILE_EXTENSIONS = (
     ".json",
     ".conf",
     ".sh",
+    ".in",
+    ".include",
+    ".yml",
+    ".yaml",
+    ".group",
+    ".product",
+    ".kiwi",
 )
 
 try:
@@ -269,14 +276,7 @@ def execute_package_commit(
     if not ok:
         return False, msg
 
-    # 3. Pre-check: Ensure .changes file exists and has staged changes
-    changes_files = glob.glob(os.path.join(package_dir, "*.changes"))
-    if not changes_files:
-        return False, "No .changes file found in package directory"
-
-    changes_file = changes_files[0]
-    changes_basename = os.path.basename(changes_file)
-
+    # 3. Pre-check: Verify staged changes
     try:
         diff_cached = subprocess.run(
             ["git", "-C", package_dir, "diff", "--cached", "--name-only"],
@@ -290,18 +290,28 @@ def execute_package_commit(
     if not diff_cached:
         return False, "No staged changes to commit in this package"
 
-    if changes_basename not in diff_cached:
-        log(f"Warning: {changes_basename} has no staged changes (did you run 'osc vc'?)")
+    changes_files = glob.glob(os.path.join(package_dir, "*.changes"))
+    if not changes_files:
+        log("Notice: No .changes file found (metadata package). Generating commit message from staged changes.")
+        pkg_name = os.path.basename(package_dir)
+        subject = f"Update {pkg_name} metadata"
+        body = chr(10).join(f"- Modify {f}" for f in diff_cached)
+    else:
+        changes_file = changes_files[0]
+        changes_basename = os.path.basename(changes_file)
 
-    # 4. Extract changelog entry and construct commit message
-    with open(changes_file, "r", encoding="utf-8", errors="replace") as f:
-        changes_content = f.read()
+        if changes_basename not in diff_cached:
+            log(f"Warning: {changes_basename} has no staged changes (did you run 'osc vc'?)")
 
-    entry = extract_latest_changes_entry(changes_content)
-    if not entry:
-        return False, f"Could not extract latest changelog entry from {changes_basename}"
+        # 4. Extract changelog entry and construct commit message
+        with open(changes_file, "r", encoding="utf-8", errors="replace") as f:
+            changes_content = f.read()
 
-    subject, body = format_commit_message_from_entry(entry)
+        entry = extract_latest_changes_entry(changes_content)
+        if not entry:
+            return False, f"Could not extract latest changelog entry from {changes_basename}"
+
+        subject, body = format_commit_message_from_entry(entry)
 
     # 5. Commit Phase
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as tf:

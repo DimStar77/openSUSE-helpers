@@ -56,8 +56,12 @@ def render_single_package_dashboard(data):
     else:
         upstream_ref = wt.get('upstream') or f"origin/{branch}"
         print(f"  Checked Out:   {sb.BOLD}{branch}{sb.RESET} (tracking {upstream_ref})")
-    project = ver.get('project', repo)
-    print(f"  Upstream URL:  https://release-monitoring.org/project/{project}/")
+    is_metadata = bool(ver.get('is_metadata', False))
+    if not is_metadata:
+        project = ver.get('project', repo)
+        print(f"  Upstream URL:  https://release-monitoring.org/project/{project}/")
+    else:
+        print(f"  Package Type:  {sb.CYAN}Pure Metadata Package (No .spec file){sb.RESET}")
     print()
 
     # Section 1: Local Worktree Status
@@ -241,49 +245,53 @@ def render_single_package_dashboard(data):
 
     # Section 3: Upstream Release Versions
     print(f"── {sb.BOLD}📦 Upstream Release Versions{sb.RESET} {'─'*41}")
-    f_ver = ver.get('factory_ver', 'N/A')
-    u_stable = ver.get('upstream_stable', 'N/A')
-    n_ver = ver.get('next_ver', '—')
-    u_latest = ver.get('upstream_latest', '—')
-
-    is_ignored_stable = ver.get('is_ignored_stable', False)
-    is_ignored_unstable = ver.get('is_ignored_unstable', False)
-
-    head = wt.get('head') or branch
-    if head not in (st_branch, unst_branch):
-        lbl = f"Release ({head}):"
-        if sb.is_version_newer(u_stable, f_ver, repo):
-            if is_ignored_stable:
-                status = f"{sb.DIM}⏸️  Ignored: {f_ver} ➔ {u_stable}{sb.RESET}"
-            else:
-                matching_pr = next((p for p in pr.get('prs', []) if p.get('base') == head), None)
-                pr_annot = f" {sb.CYAN}[PR #{matching_pr['number']} pending]{sb.RESET}" if matching_pr else ""
-                status = f"{sb.YELLOW}🔺 Update available: {f_ver} ➔ {u_stable}{sb.RESET}{pr_annot}"
-        else:
-            status = f"{sb.GREEN}✅ Up-to-date ({f_ver}){sb.RESET}"
-        print(f"  {lbl:<15} {status}")
+    if is_metadata:
+        print(f"  Release:       {sb.GREEN}ℹ️  Metadata Package (No .spec / Upstream tracking N/A){sb.RESET}")
+        print()
     else:
-        if sb.is_version_newer(u_stable, f_ver, repo):
-            if is_ignored_stable:
-                f_status = f"{sb.DIM}⏸️  Ignored: {f_ver} ➔ {u_stable}{sb.RESET}"
-            else:
-                matching_pr = next((p for p in pr.get('prs', []) if p.get('base') == st_branch), None)
-                pr_annot = f" {sb.CYAN}[PR #{matching_pr['number']} pending]{sb.RESET}" if matching_pr else ""
-                f_status = f"{sb.YELLOW}🔺 Update available: {f_ver} ➔ {u_stable}{sb.RESET}{pr_annot}"
-        else:
-            f_status = f"{sb.GREEN}✅ Up-to-date ({f_ver}){sb.RESET}"
-        print(f"  Stable:        {f_status}")
+        f_ver = ver.get('factory_ver', 'N/A')
+        u_stable = ver.get('upstream_stable', 'N/A')
+        n_ver = ver.get('next_ver', '—')
+        u_latest = ver.get('upstream_latest', '—')
 
-    if n_ver != '—':
-        if sb.is_version_newer(u_latest, n_ver, repo):
-            if is_ignored_unstable:
-                n_status = f"{sb.DIM}⏸️  Ignored: {n_ver} ➔ {u_latest}{sb.RESET}"
+        is_ignored_stable = ver.get('is_ignored_stable', False)
+        is_ignored_unstable = ver.get('is_ignored_unstable', False)
+
+        head = wt.get('head') or branch
+        if head not in (st_branch, unst_branch):
+            lbl = f"Release ({head}):"
+            if sb.is_version_newer(u_stable, f_ver, repo):
+                if is_ignored_stable:
+                    status = f"{sb.DIM}⏸️  Ignored: {f_ver} ➔ {u_stable}{sb.RESET}"
+                else:
+                    matching_pr = next((p for p in pr.get('prs', []) if p.get('base') == head), None)
+                    pr_annot = f" {sb.CYAN}[PR #{matching_pr['number']} pending]{sb.RESET}" if matching_pr else ""
+                    status = f"{sb.YELLOW}🔺 Update available: {f_ver} ➔ {u_stable}{sb.RESET}{pr_annot}"
             else:
-                n_status = f"{sb.YELLOW}🔺 Update available: {n_ver} ➔ {u_latest}{sb.RESET}"
+                status = f"{sb.GREEN}✅ Up-to-date ({f_ver}){sb.RESET}"
+            print(f"  {lbl:<15} {status}")
         else:
-            n_status = f"{sb.GREEN}✅ Up-to-date ({n_ver}){sb.RESET}"
-        print(f"  Unstable:      {n_status}")
-    print()
+            if sb.is_version_newer(u_stable, f_ver, repo):
+                if is_ignored_stable:
+                    f_status = f"{sb.DIM}⏸️  Ignored: {f_ver} ➔ {u_stable}{sb.RESET}"
+                else:
+                    matching_pr = next((p for p in pr.get('prs', []) if p.get('base') == st_branch), None)
+                    pr_annot = f" {sb.CYAN}[PR #{matching_pr['number']} pending]{sb.RESET}" if matching_pr else ""
+                    f_status = f"{sb.YELLOW}🔺 Update available: {f_ver} ➔ {u_stable}{sb.RESET}{pr_annot}"
+            else:
+                f_status = f"{sb.GREEN}✅ Up-to-date ({f_ver}){sb.RESET}"
+            print(f"  Stable:        {f_status}")
+
+        if n_ver != '—':
+            if sb.is_version_newer(u_latest, n_ver, repo):
+                if is_ignored_unstable:
+                    n_status = f"{sb.DIM}⏸️  Ignored: {n_ver} ➔ {u_latest}{sb.RESET}"
+                else:
+                    n_status = f"{sb.YELLOW}🔺 Update available: {n_ver} ➔ {u_latest}{sb.RESET}"
+            else:
+                n_status = f"{sb.GREEN}✅ Up-to-date ({n_ver}){sb.RESET}"
+            print(f"  Unstable:      {n_status}")
+        print()
 
     # Section 4: Recommended Actions
     actions = []

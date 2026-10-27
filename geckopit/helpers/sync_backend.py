@@ -1155,6 +1155,19 @@ def check_repo_version(repo_name, branch=None, stable_branch="factory", unstable
         pass
 
     if not spec_file:
+        if is_package_dir(repo_path):
+            local_ver = get_local_package_version(repo_path)
+            ver_label = local_ver if local_ver else "N/A"
+            return repo_name, {
+                "status": "success",
+                "factory_ver": ver_label,
+                "upstream_stable": ver_label,
+                "upstream_latest": "—",
+                "next_ver": "—",
+                "needs_update": False,
+                "is_metadata": True,
+                "message": "Metadata package (no .spec file)"
+            }
         return repo_name, {
             "status": "error",
             "message": "No spec file found"
@@ -1814,7 +1827,9 @@ def discover_workspace_packages(root_path):
 def is_package_dir(path="."):
     """
     Checks if path is an individual openSUSE package directory
-    (contains packaging files such as .spec, _service, .changes, or .obsinfo).
+    (contains packaging files such as .spec, _service, .changes, .obsinfo,
+    OSC checkout directory .osc, or metadata definitions like .kiwi, .product,
+    groups.yml, or .spec.in).
     Supports Git repositories, legacy OSC checkouts, and standalone package checkouts.
     """
     try:
@@ -1823,13 +1838,24 @@ def is_package_dir(path="."):
         has_service = "_service" in entries
         has_changes = any(f.endswith(".changes") for f in entries)
         has_obsinfo = any(f.endswith(".obsinfo") for f in entries)
-        return has_spec or has_service or has_changes or has_obsinfo
+        has_osc = ".osc" in entries and os.path.isdir(os.path.join(path, ".osc"))
+        has_spec_in = any(f.endswith(".spec.in") for f in entries)
+        has_kiwi = any(f.endswith(".kiwi") or f.endswith(".kiwi.ini") for f in entries)
+        has_product = any(f.endswith(".product") or f.endswith(".product.in") or f.endswith(".productcompose.in") or f.endswith(".productcompose") for f in entries)
+        has_group = any(f.endswith(".group") or f in ("groups.yml", "groups.yaml") for f in entries)
+        has_obs_special = any(f in ("_meta", "_link", "_aggregate", "_patchinfo", "_product", "_pattern") for f in entries)
+
+        return (
+            has_spec or has_service or has_changes or has_obsinfo or
+            has_osc or has_spec_in or has_kiwi or has_product or
+            has_group or has_obs_special
+        )
     except OSError:
         return False
 
 
 def get_package_name_from_dir(path="."):
-    """Extracts package name from spec file, _service, obsinfo, or directory name."""
+    """Extracts package name from spec file, _service, obsinfo, .osc/_package, or directory name."""
     path = os.path.abspath(path)
     base = os.path.basename(path)
     try:
@@ -1838,6 +1864,15 @@ def get_package_name_from_dir(path="."):
                 return f[:-5]
     except OSError:
         pass
+    osc_pkg = os.path.join(path, ".osc", "_package")
+    if os.path.isfile(osc_pkg):
+        try:
+            with open(osc_pkg, "r", encoding="utf-8", errors="replace") as f:
+                name = f.read().strip()
+                if name:
+                    return name
+        except OSError:
+            pass
     service_file = os.path.join(path, "_service")
     if os.path.isfile(service_file):
         try:
@@ -2040,6 +2075,21 @@ def get_local_package_version(repo_path):
                             m = re.match(r"^Version:\s*(\S+)", line, re.IGNORECASE)
                             if m:
                                 return clean_version(m.group(1))
+                except OSError:
+                    pass
+    except OSError:
+        pass
+
+    # 3. Fallback: check kiwi appliance definition
+    try:
+        for f in os.listdir(repo_path):
+            if f.endswith(".kiwi") or f.endswith(".kiwi.ini"):
+                kiwi_path = os.path.join(repo_path, f)
+                try:
+                    with open(kiwi_path, "r", encoding="utf-8", errors="replace") as fh:
+                        m = re.search(r'<version>([^<]+)</version>', fh.read())
+                        if m:
+                            return clean_version(m.group(1).strip())
                 except OSError:
                     pass
     except OSError:

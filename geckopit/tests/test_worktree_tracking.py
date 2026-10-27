@@ -154,9 +154,16 @@ class TestWorktreeTracking(unittest.TestCase):
             with open(os.path.join(tmpdir, 'pkg.spec'), 'w') as f: f.write('Name: pkg\n')
             self.assertTrue(sb.is_package_dir(tmpdir))
 
-            # Legacy OSC checkout without .git is also a package dir
+            # Legacy OSC checkout without .git or .spec is also a package dir
+            os.remove(os.path.join(tmpdir, 'pkg.spec'))
             os.rmdir(os.path.join(tmpdir, '.git'))
             os.makedirs(os.path.join(tmpdir, '.osc'))
+            self.assertTrue(sb.is_package_dir(tmpdir))
+
+            # Spec-less metadata files are also detected as package dirs
+            os.rmdir(os.path.join(tmpdir, '.osc'))
+            self.assertFalse(sb.is_package_dir(tmpdir))
+            with open(os.path.join(tmpdir, 'groups.yml'), 'w') as f: f.write('patterns: []\n')
             self.assertTrue(sb.is_package_dir(tmpdir))
 
     def test_get_package_name_from_dir(self):

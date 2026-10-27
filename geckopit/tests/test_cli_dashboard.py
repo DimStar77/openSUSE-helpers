@@ -250,5 +250,38 @@ class TestSinglePackageDashboardFormatting(unittest.TestCase):
         self.assertIn("1.28.8", out)
         self.assertIn("1.29.2", out)
 
+    def test_dashboard_pure_metadata_package_formatting(self):
+        """Tests single-package dashboard formatting for a spec-less metadata package."""
+        import io
+        import tempfile
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pkg_dir = os.path.join(tmpdir, '000package-groups')
+            os.makedirs(os.path.join(pkg_dir, '.osc'))
+
+            data = {
+                'repo_name': '000package-groups',
+                'pkg_dir': pkg_dir,
+                'active_branch': 'factory',
+                'stable_branch': 'factory',
+                'unstable_branch': None,
+                'worktree': {'ahead': 0, 'behind': 0, 'dirty': False, 'untracked': False, 'is_osc': True},
+                'sync': {'pool_ahead': 0, 'pool_behind': 0, 'pool_status': 'OSC Managed', 'is_osc': True, 'needs_action': False},
+                'version': {'status': 'success', 'is_metadata': True, 'factory_ver': 'N/A', 'upstream_stable': 'N/A', 'needs_update': False},
+                'pr': {'has_pr': False, 'has_forward_pr': False, 'count': 0, 'prs': []}
+            }
+
+            buf = io.StringIO()
+            with patch('sys.stdout', buf):
+                self.cli.render_single_package_dashboard(data)
+            out = buf.getvalue()
+
+            self.assertIn("Pure Metadata Package (No .spec file)", out)
+            self.assertNotIn("https://release-monitoring.org/project/", out)
+            self.assertIn("Metadata Package (No .spec / Upstream tracking N/A)", out)
+            self.assertIn("OSC checkout", out)
+
 if __name__ == '__main__':
+
     unittest.main()

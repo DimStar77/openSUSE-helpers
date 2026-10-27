@@ -668,5 +668,57 @@ class TestSyncBackend(unittest.TestCase):
         self.assertFalse(res_single['unstable_needs_update'])
         self.assertTrue(res_single['needs_update'])
 
+    def test_metadata_package_support(self):
+        """Tests pure metadata package discovery, name resolution, and spec-less version handling."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # 1. Package with .osc directory alone (classic OBS checkout of metadata package)
+            osc_pkg_dir = os.path.join(tmpdir, '000package-groups')
+            os.makedirs(os.path.join(osc_pkg_dir, '.osc'))
+            with open(os.path.join(osc_pkg_dir, '.osc', '_package'), 'w') as f:
+                f.write('000package-groups\n')
+            with open(os.path.join(osc_pkg_dir, 'groups.yml'), 'w') as f:
+                f.write('patterns:\n  - base\n')
+            with open(os.path.join(osc_pkg_dir, 'openSUSE.product.in'), 'w') as f:
+                f.write('<product/>\n')
+
+            self.assertTrue(sb.is_package_dir(osc_pkg_dir))
+            self.assertEqual(sb.get_package_name_from_dir(osc_pkg_dir), '000package-groups')
+
+            # Version check must succeed gracefully with is_metadata=True and no spec
+            name, ver_data = sb.check_repo_version(
+                '000package-groups',
+                workspace_path=tmpdir,
+                skip_fetch=True
+            )
+            self.assertEqual(name, '000package-groups')
+            self.assertEqual(ver_data['status'], 'success')
+            self.assertTrue(ver_data.get('is_metadata'))
+            self.assertEqual(ver_data['factory_ver'], 'N/A')
+            self.assertFalse(ver_data['needs_update'])
+
+            # 2. Package with .kiwi appliance definition
+            kiwi_dir = os.path.join(tmpdir, 'jeos-appliance')
+            os.makedirs(kiwi_dir)
+            with open(os.path.join(kiwi_dir, 'jeos.kiwi'), 'w') as f:
+                f.write('<image name="jeos"><version>2.5.0</version></image>\n')
+
+            self.assertTrue(sb.is_package_dir(kiwi_dir))
+            self.assertEqual(sb.get_local_package_version(kiwi_dir), '2.5.0')
+            _, kiwi_ver = sb.check_repo_version(
+                'jeos-appliance',
+                workspace_path=tmpdir,
+                skip_fetch=True
+            )
+            self.assertEqual(kiwi_ver['status'], 'success')
+            self.assertTrue(kiwi_ver.get('is_metadata'))
+            self.assertEqual(kiwi_ver['factory_ver'], '2.5.0')
+
+            # 3. Workspace package discovery finds both metadata packages
+            discovered = sb.discover_workspace_packages(tmpdir)
+            self.assertIn('000package-groups', discovered)
+            self.assertIn('jeos-appliance', discovered)
+
 if __name__ == '__main__':
+
     unittest.main()
