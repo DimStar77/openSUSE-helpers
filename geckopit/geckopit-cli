@@ -1144,8 +1144,15 @@ def run_forward_check(repos, show_pr=False, only_no_pr=False):
     total = len(repos)
     print(f"Checking {total} packages for forwardable next branches (16 threads)...", file=sys.stderr)
 
+    # Detect superproject _ObsPrj and dispatch single concurrent query in parallel with git checks
+    super_owner, _ = sb.get_gitea_owner_and_repo(".", "_ObsPrj") if hasattr(sb, "get_gitea_owner_and_repo") else (None, None)
+    obsprj_future = None
+
     results = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=17) as executor:
+        if super_owner:
+            obsprj_future = executor.submit(pr_helper.get_obsprj_forwarded_prs, ".", super_owner)
+
         futures = {executor.submit(sb.check_repo_sync, repo): repo for repo in repos}
         completed = 0
         for future in concurrent.futures.as_completed(futures):
@@ -1155,6 +1162,16 @@ def run_forward_check(repos, show_pr=False, only_no_pr=False):
             if completed % 50 == 0 or completed == total:
                 print(f"Progress: {completed}/{total} checked...", end='\r', file=sys.stderr)
     print("", file=sys.stderr)
+
+    pkg_to_obsprj = {}
+    if obsprj_future:
+        try:
+            forwarded_map, _ = obsprj_future.result()
+            for (pkg, _), info in forwarded_map.items():
+                if info.get("obsprj_target") in ("factory", "master", "main"):
+                    pkg_to_obsprj[pkg.lower()] = info["obsprj_pr"]
+        except Exception:
+            pass
 
     forward_candidates = []
     for repo in sorted(results.keys()):
@@ -1167,21 +1184,23 @@ def run_forward_check(repos, show_pr=False, only_no_pr=False):
                 forward_candidates.append(repo)
 
     pr_status = {}
-    if (show_pr or only_no_pr) and forward_candidates:
-        print(f"Checking Gitea pull requests for {len(forward_candidates)} candidates (20 threads)...", file=sys.stderr)
+    unresolved_candidates = [c for c in forward_candidates if c.lower() not in pkg_to_obsprj]
+    if (show_pr or only_no_pr) and unresolved_candidates:
+        print(f"Checking Gitea pull requests for {len(unresolved_candidates)} candidates (20 threads)...", file=sys.stderr)
         with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-            pr_futures = {executor.submit(sb.check_repo_pr, repo): repo for repo in forward_candidates}
+            pr_futures = {executor.submit(sb.check_repo_pr, repo): repo for repo in unresolved_candidates}
             completed_prs = 0
             for future in concurrent.futures.as_completed(pr_futures):
                 repo_name, pr_data = future.result()
                 pr_status[repo_name] = pr_data
                 completed_prs += 1
-                if completed_prs % 10 == 0 or completed_prs == len(forward_candidates):
-                    print(f"PR Progress: {completed_prs}/{len(forward_candidates)} checked...", end='\r', file=sys.stderr)
+                if completed_prs % 10 == 0 or completed_prs == len(unresolved_candidates):
+                    print(f"PR Progress: {completed_prs}/{len(unresolved_candidates)} checked...", end='\r', file=sys.stderr)
         print("", file=sys.stderr)
 
     rows = []
     ready_count = 0
+    in_staging_count = 0
     needs_merge_count = 0
 
     for repo in sorted(results.keys()):
@@ -1193,19 +1212,29 @@ def run_forward_check(repos, show_pr=False, only_no_pr=False):
             next_behind = data["next_behind"]
 
             if next_ahead > 0:
-                pr_info = pr_status.get(repo, {"has_pr": False, "url": None, "number": None})
+                obsprj_pr = pkg_to_obsprj.get(repo.lower())
+                pr_info = pr_status.get(repo, {
+                    "has_pr": bool(obsprj_pr),
+                    "url": f"https://src.opensuse.org/{super_owner}/_ObsPrj/pulls/{obsprj_pr}" if obsprj_pr else None,
+                    "number": obsprj_pr
+                })
                 if only_no_pr and pr_info["has_pr"]:
                     continue
 
-                if next_behind == 0:
-                    status_str = f"{sb.GREEN}✅ Ready (Clean Forward){sb.RESET}"
+                if obsprj_pr:
+                    status_str = f"{sb.CYAN}🟢 In Staging (PR #{obsprj_pr} on {super_owner}/_ObsPrj){sb.RESET}"
+                    in_staging_count += 1
+                elif next_behind == 0:
+                    status_str = f"{sb.GREEN}🚀 Ready (Clean Forward){sb.RESET}"
                     ready_count += 1
                 else:
                     status_str = f"{sb.YELLOW}⚠️ Needs Merge first (Behind {next_behind}){sb.RESET}"
                     needs_merge_count += 1
 
                 if show_pr or only_no_pr:
-                    if pr_info["has_pr"]:
+                    if obsprj_pr:
+                        pr_display = f"{sb.CYAN}Yes (PR #{obsprj_pr} on _ObsPrj){sb.RESET}"
+                    elif pr_info["has_pr"]:
                         pr_display = f"{sb.GREEN}Yes (PR #{pr_info['number']}){sb.RESET}"
                     else:
                         pr_display = f"{sb.RED}No{sb.RESET}"
@@ -1246,7 +1275,11 @@ def run_forward_check(repos, show_pr=False, only_no_pr=False):
         w = max(sb.visual_len(h), max(sb.visual_len(r[i]) for r in rows) if rows else 0)
         widths.append(w)
 
-    print(f"Total Packages: {total} | Ready to Forward: {ready_count} | Needs Merge: {needs_merge_count}\n")
+    summary_parts = [f"Total Packages: {total}", f"Ready to Forward: {ready_count}"]
+    if in_staging_count > 0:
+        summary_parts.append(f"In Staging: {in_staging_count}")
+    summary_parts.append(f"Needs Merge: {needs_merge_count}")
+    print(f"{' | '.join(summary_parts)}\n")
     print(f"### 🔀 Branch Forwarding Table\n")
 
     header_str = " | ".join(sb.pad_left(headers[i], widths[i]) for i in range(len(headers)))

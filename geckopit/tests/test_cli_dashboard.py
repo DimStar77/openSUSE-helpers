@@ -358,7 +358,35 @@ class TestSinglePackageDashboardFormatting(unittest.TestCase):
             self.assertNotIn("Create Gitea Pull Request to central pool", out)
             self.assertIn("No action needed (PR #4 in-flight to pool/vlc)", out)
 
+    def test_forward_check_superproject_staging_detection(self):
+        """Verifies run_forward_check detects superproject _ObsPrj PRs and differentiates staging status."""
+        import io
+        from unittest.mock import patch
+
+        fake_sync_results = {
+            'glycin': {'status': 'success', 'next_status': 'Ahead', 'next_ahead': 1, 'next_behind': 0},
+            'flatpak': {'status': 'success', 'next_status': 'Ahead', 'next_ahead': 5, 'next_behind': 0},
+        }
+
+        forwarded_map = {
+            ('glycin', 11): {'obsprj_pr': 1181, 'obsprj_target': 'factory', 'obsprj_title': 'Update glycin'},
+        }
+
+        with patch('helpers.sync_backend.get_gitea_owner_and_repo', return_value=('GNOME', '_ObsPrj')), \
+             patch('helpers.pr_helper.get_obsprj_forwarded_prs', return_value=(forwarded_map, [])), \
+             patch('helpers.sync_backend.check_repo_sync', side_effect=lambda r: (r, fake_sync_results[r])):
+
+            buf = io.StringIO()
+            with patch('sys.stdout', buf):
+                self.cli.run_forward_check(['glycin', 'flatpak'])
+            out = buf.getvalue()
+
+            self.assertIn("Ready to Forward: 1 | In Staging: 1", out)
+            self.assertIn("In Staging (PR #1181 on GNOME/_ObsPrj)", out)
+            self.assertIn("Ready (Clean Forward)", out)
+
 if __name__ == '__main__':
+
 
 
 
