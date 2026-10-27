@@ -907,7 +907,8 @@ def run_sync_check(repos, include_not_in_pool=False):
                     pending_requests=pending_obs,
                     accepted_requests=accepted_obs,
                     pkg_dir=data.get('pkg_dir'),
-                    stable_branch=data.get('stable_branch', 'factory')
+                    stable_branch=data.get('stable_branch', 'factory'),
+                    check_srcmd5=False
                 )
 
             if data["pool_behind"] > 0 and data["pool_ahead"] > 0:
