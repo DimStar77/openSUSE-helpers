@@ -69,7 +69,7 @@ def has_real_obs_diff(
     pkg_base = package_name.split("/")[-1]
     try:
         res = subprocess.run(
-            ["osc", "rdiff", source_project, pkg_base, target_project],
+            ["osc", "rdiff", target_project, pkg_base, source_project],
             env=get_obs_env(),
             capture_output=True,
             text=True,
@@ -941,6 +941,26 @@ def get_git_obs_meta_project(package_dir: str, branch: Optional[str] = None) -> 
     return None
 
 
+def resolve_package_linkinfo_target_project(pkg_dir: str) -> Optional[str]:
+    """
+    Inspects .osc/_files XML to extract the linked upstream project if package is a branch/link.
+    Returns upstream target project (e.g. 'M17N' or 'openSUSE:Factory') or None.
+    """
+    if not pkg_dir or not os.path.isdir(pkg_dir):
+        return None
+    osc_files = os.path.join(pkg_dir, ".osc", "_files")
+    if os.path.isfile(osc_files):
+        try:
+            with open(osc_files, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read(2048)
+            m = re.search(r'<linkinfo\s+[^>]*project=["\']([^"\']+)["\']', content)
+            if m:
+                return m.group(1).strip()
+        except Exception:
+            pass
+    return None
+
+
 def resolve_source_obs_project(
     package_dir: str,
     default: str = "GNOME:Factory",
@@ -1254,7 +1274,7 @@ def submit_package_to_pool(
         if not force:
             try:
                 rdiff = subprocess.run(
-                    ["osc", "rdiff", source_project, package_name, target_project],
+                    ["osc", "rdiff", target_project, package_name, source_project],
                     capture_output=True, text=True, timeout=15, env=get_obs_env()
                 )
                 if rdiff.returncode == 0 and not rdiff.stdout.strip():

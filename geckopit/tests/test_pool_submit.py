@@ -628,7 +628,28 @@ r367 | unknown | 2026-10-22 14:14:00 | 6341df4d71d5bcfef3f4adb4394a2231 | 3.0.24
             self.assertIn("2", revs)
             self.assertIn("8f34f6a4320cb80591c599118fbbcc54", revs)
 
+    def test_resolve_package_linkinfo_target_project_and_rdiff_order(self):
+        """Verifies extracting linked project from .osc/_files and correct osc rdiff OLDPRJ PKG NEWPRJ order."""
+        from unittest.mock import patch, MagicMock
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, ".osc"))
+            with open(os.path.join(tmpdir, ".osc", "_files"), "w") as f:
+                f.write('<directory><linkinfo project="M17N" package="ibus"/></directory>\n')
+
+            tgt = pool_submit.resolve_package_linkinfo_target_project(tmpdir)
+            self.assertEqual(tgt, "M17N")
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(stdout="", returncode=0)
+            pool_submit.has_real_obs_diff("home:dimstar:Factory", "ibus", target_project="M17N")
+            call_cmd = mock_run.call_args[0][0]
+            # osc rdiff OLDPRJ PKG NEWPRJ -> target_project pkg source_project
+            self.assertEqual(call_cmd, ["osc", "rdiff", "M17N", "ibus", "home:dimstar:Factory"])
+
 if __name__ == "__main__":
+
 
 
     unittest.main()

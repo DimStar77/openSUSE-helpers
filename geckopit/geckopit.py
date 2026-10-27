@@ -5273,14 +5273,31 @@ class SyncWindow(Adw.ApplicationWindow):
 
         if is_osc:
             try:
-                from helpers.pool_submit import get_obs_env, resolve_source_obs_project
+                from helpers.pool_submit import get_obs_env, resolve_source_obs_project, resolve_package_linkinfo_target_project
                 from helpers.sync_backend import check_osc_worktree_fast
             except ImportError:
-                from pool_submit import get_obs_env, resolve_source_obs_project
+                from pool_submit import get_obs_env, resolve_source_obs_project, resolve_package_linkinfo_target_project
                 from sync_backend import check_osc_worktree_fast
 
             dirty, _ = check_osc_worktree_fast(repo_path)
             diff_text = ""
+
+            source_prj = resolve_source_obs_project(repo_path, default="")
+            target_prj = None
+            sync = self.package_data.get(package_name, {}).get("sync") or {}
+            sr = sync.get("pool_sr", {}).get("request") or sync.get("pool_sr") or {}
+            if sr and sr.get("target_project"):
+                target_prj = sr.get("target_project")
+            if not target_prj and repo_path:
+                target_prj = resolve_package_linkinfo_target_project(repo_path)
+            if not target_prj:
+                target_prj = getattr(self, "default_target_project", "openSUSE:Factory") or "openSUSE:Factory"
+
+            if hasattr(self, "diff_perspective_lbl"):
+                if dirty:
+                    self.diff_perspective_lbl.set_markup(f"<span weight='bold' foreground='#e5a50a'>Uncommitted Local Changes (osc diff)</span>")
+                else:
+                    self.diff_perspective_lbl.set_markup(f"<span weight='bold' foreground='#3584e4'>{source_prj} vs. {target_prj} (osc rdiff)</span>")
 
             if dirty:
                 try:
@@ -5296,12 +5313,11 @@ class SyncWindow(Adw.ApplicationWindow):
                 except Exception as e:
                     diff_text = f"Error performing osc diff: {e}"
             else:
-                source_prj = resolve_source_obs_project(repo_path, default="")
                 short_pkg = os.path.basename(package_name)
                 if source_prj:
                     try:
                         res = subprocess.run(
-                            ["osc", "rdiff", source_prj, short_pkg, "openSUSE:Factory"],
+                            ["osc", "rdiff", target_prj, short_pkg, source_prj],
                             env=get_obs_env(),
                             capture_output=True,
                             text=True,
@@ -5309,9 +5325,9 @@ class SyncWindow(Adw.ApplicationWindow):
                         )
                         diff_text = res.stdout
                         if not diff_text.strip():
-                            diff_text = f"No differences in spec files or sources detected between devel project ({source_prj}) and openSUSE:Factory."
+                            diff_text = f"No differences in spec files or sources detected between {source_prj} and upstream ({target_prj})."
                     except Exception as e:
-                        diff_text = f"Error performing osc rdiff ({source_prj} vs openSUSE:Factory): {e}"
+                        diff_text = f"Error performing osc rdiff ({target_prj} vs {source_prj}): {e}"
                 else:
                     diff_text = "No differences in spec files or sources detected."
 
@@ -6680,7 +6696,7 @@ class SyncWindow(Adw.ApplicationWindow):
         has_dual = bool(self.unstable_b and not is_osc)
         self.diff_selector.set_visible(has_dual)
         if hasattr(self, "diff_perspective_lbl"):
-            self.diff_perspective_lbl.set_visible(bool(not has_dual and not is_osc))
+            self.diff_perspective_lbl.set_visible(bool(not has_dual))
 
         # -------------------------------------------------------------
         # POPULATE DIFF REVIEW (only on package switch or explicit request)

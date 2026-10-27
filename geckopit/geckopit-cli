@@ -2152,17 +2152,25 @@ def main():
                 if is_osc_pkg:
                     src_prj = pool_submit.resolve_source_obs_project(target_pkg_dir, default="")
                     has_diff = False
+                    target_prj = None
                     if src_prj:
+                        st = pool_submit.get_package_pool_submission_status(pkg_name, target_project=None, pkg_dir=target_pkg_dir)
+                        if st and st.get("target_project"):
+                            target_prj = st.get("target_project")
+                        if not target_prj:
+                            target_prj = pool_submit.resolve_package_linkinfo_target_project(target_pkg_dir)
+                        if not target_prj:
+                            target_prj = "openSUSE:Factory"
                         try:
-                            rdiff = subprocess.run(["osc", "rdiff", src_prj, pkg_name, "openSUSE:Factory"], capture_output=True, text=True, timeout=10, env=pool_submit.get_obs_env())
+                            rdiff = subprocess.run(["osc", "rdiff", target_prj, pkg_name, src_prj], capture_output=True, text=True, timeout=10, env=pool_submit.get_obs_env())
                             if rdiff.returncode == 0 and rdiff.stdout.strip():
                                 has_diff = True
                         except Exception:
                             pass
                     if has_diff:
-                        print(f"  Status:         {sb.CYAN}📤 Unsubmitted{sb.RESET} (Differences detected in {src_prj}; ready for 'geckopit-cli --submit-pool')")
+                        print(f"  Status:         {sb.CYAN}📤 Unsubmitted{sb.RESET} (Differences detected in {src_prj}; ready to submit to {target_prj})")
                     else:
-                        print(f"  Status:         {sb.GREEN}✅ Up-to-date with openSUSE:Factory{sb.RESET} (no unsubmitted differences)")
+                        print(f"  Status:         {sb.GREEN}✅ Up-to-date with {target_prj}{sb.RESET} (no unsubmitted differences)")
                 else:
                     active_br = "factory"
                     try:
