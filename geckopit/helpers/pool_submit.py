@@ -385,40 +385,77 @@ def parse_obs_requests_collection(xml_content: str, target_project: Optional[str
 
 
 def get_pending_obs_requests(
-    target_project: str = "openSUSE:Factory",
+    target_project: Optional[str] = "openSUSE:Factory",
+    user: Optional[str] = None,
     timeout: int = 25,
     force_refresh: bool = False
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
-    Fetches all pending submit requests (states=review,new) targeting target_project.
+    Fetches all pending submit requests (states=review,new) targeting target_project
+    and/or created by user across all devel projects.
     Returns: Dict[package_name, List[request_dict]]
     """
     now = time.time()
-    if not force_refresh and target_project in _PENDING_REQUESTS_CACHE.get("data", {}):
-        cached_entry = _PENDING_REQUESTS_CACHE["data"][target_project]
+    cache_key = f"{target_project or ''}:{user or ''}"
+    if not force_refresh and cache_key in _PENDING_REQUESTS_CACHE.get("data", {}):
+        cached_entry = _PENDING_REQUESTS_CACHE["data"][cache_key]
         if (now - cached_entry.get("timestamp", 0)) < PENDING_CACHE_TTL:
             return cached_entry["requests"]
 
-    cmd = [
-        "osc", "api",
-        f"/request?view=collection&project={target_project}&states=review,new&types=submit"
-    ]
-    try:
-        res = subprocess.run(
-            cmd,
-            env=get_obs_env(),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=True
-        )
-        parsed = parse_obs_requests_collection(res.stdout, target_project=target_project)
-    except Exception:
-        parsed = {}
+    parsed = {}
+    seen_req_ids = set()
+
+    # 1. Query target project requests if specified
+    if target_project:
+        cmd = [
+            "osc", "api",
+            f"/request?view=collection&project={target_project}&states=review,new&types=submit"
+        ]
+        try:
+            res = subprocess.run(
+                cmd,
+                env=get_obs_env(),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=True
+            )
+            parsed_prj = parse_obs_requests_collection(res.stdout, target_project=target_project)
+            for pkg, req_list in parsed_prj.items():
+                for r in req_list:
+                    seen_req_ids.add(r.get("id"))
+                parsed[pkg] = list(req_list)
+        except Exception:
+            pass
+
+    # 2. Query user's outgoing requests across all projects if specified
+    if user:
+        cmd_u = [
+            "osc", "api",
+            f"/request?view=collection&user={user}&states=review,new&types=submit"
+        ]
+        try:
+            res_u = subprocess.run(
+                cmd_u,
+                env=get_obs_env(),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=True
+            )
+            parsed_u = parse_obs_requests_collection(res_u.stdout)
+            for pkg, req_list in parsed_u.items():
+                for r in req_list:
+                    r_id = r.get("id")
+                    if r_id not in seen_req_ids:
+                        seen_req_ids.add(r_id)
+                        parsed.setdefault(pkg, []).append(r)
+        except Exception:
+            pass
 
     if "data" not in _PENDING_REQUESTS_CACHE:
         _PENDING_REQUESTS_CACHE["data"] = {}
-    _PENDING_REQUESTS_CACHE["data"][target_project] = {
+    _PENDING_REQUESTS_CACHE["data"][cache_key] = {
         "timestamp": now,
         "requests": parsed
     }

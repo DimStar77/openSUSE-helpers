@@ -858,8 +858,13 @@ def run_sync_check(repos, include_not_in_pool=False):
     total = len(repos)
     print(f"Checking {total} packages in parallel (16 threads)...", file=sys.stderr)
 
+    super_owner, _ = sb.get_gitea_owner_and_repo(".", "_ObsPrj") if hasattr(sb, "get_gitea_owner_and_repo") else (None, None)
+    obsprj_future = None
+
     results = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=17) as executor:
+        if super_owner:
+            obsprj_future = executor.submit(pr_helper.get_obsprj_forwarded_prs, ".", super_owner)
         futures = {executor.submit(sb.check_repo_sync, repo): repo for repo in repos}
         completed = 0
         for future in concurrent.futures.as_completed(futures):
@@ -870,10 +875,21 @@ def run_sync_check(repos, include_not_in_pool=False):
                 print(f"Progress: {completed}/{total} checked...", end='\r', file=sys.stderr)
     print("", file=sys.stderr)
 
+    pkg_to_obsprj = {}
+    if obsprj_future:
+        try:
+            forwarded_map, _ = obsprj_future.result()
+            for (pkg, _), info in forwarded_map.items():
+                if info.get("obsprj_target") in ("factory", "master", "main"):
+                    pkg_to_obsprj[pkg.lower()] = info["obsprj_pr"]
+        except Exception:
+            pass
+
     has_next_count = sum(1 for r, d in results.items() if d.get("status") == "success" and d.get("next_status") != "No next branch")
     not_in_pool_count = sum(1 for d in results.values() if d.get("status") == "success" and d.get("pool_status") == "Not in Pool")
 
-    pending_obs = pool_submit.get_pending_obs_requests("openSUSE:Factory")
+    obs_user = pool_submit.get_obs_user()
+    pending_obs = pool_submit.get_pending_obs_requests("openSUSE:Factory", user=obs_user)
     accepted_obs = pool_submit.get_recently_accepted_obs_requests("openSUSE:Factory")
 
     rows = []
@@ -900,7 +916,9 @@ def run_sync_check(repos, include_not_in_pool=False):
                 stage1_str = f"{sb.RED}📥 **Behind by {data['pool_behind']}** (needs pull){sb.RESET}"
             elif data["pool_ahead"] > 0:
                 if pool_sub["status"] == "pending":
-                    stage1_str = f"{sb.YELLOW}⏳ **SR #{pool_sub['request_id']}** ({pool_sub['state']}){sb.RESET}"
+                    tgt = pool_sub.get("target_project", "Factory")
+                    tgt_disp = f" ➔ {tgt}" if tgt != "openSUSE:Factory" else ""
+                    stage1_str = f"{sb.YELLOW}⏳ **SR #{pool_sub['request_id']}** ({pool_sub['state']}{tgt_disp}){sb.RESET}"
                 elif pool_sub["status"] == "accepted_pending_sync":
                     stage1_str = f"{sb.GREEN}⏳ **SR #{pool_sub['request_id']}** (accepted){sb.RESET}"
                 else:
@@ -924,7 +942,11 @@ def run_sync_check(repos, include_not_in_pool=False):
                 stage2_str = f"{sb.RED}📥 **Behind by {data['next_behind']}** (needs merge){sb.RESET}"
             elif data["next_ahead"] > 0:
                 c_s = 's' if data.get('next_ahead', 0) != 1 else ''
-                stage2_str = f"{sb.GREEN}✅ In Sync (+{data['next_ahead']} next commit{c_s}){sb.RESET}"
+                obsprj_pr = pkg_to_obsprj.get(repo.lower())
+                if obsprj_pr:
+                    stage2_str = f"{sb.GREEN}✅ In Sync (+{data['next_ahead']} commit{c_s}, PR #{obsprj_pr} active){sb.RESET}"
+                else:
+                    stage2_str = f"{sb.GREEN}✅ In Sync (+{data['next_ahead']} next commit{c_s}){sb.RESET}"
             elif data["next_status"] in ("In Sync", "Ahead (ok)"):
                 stage2_str = f"{sb.GREEN}✅ In Sync{sb.RESET}"
             else:

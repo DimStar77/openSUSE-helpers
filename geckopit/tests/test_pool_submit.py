@@ -648,7 +648,53 @@ r367 | unknown | 2026-10-22 14:14:00 | 6341df4d71d5bcfef3f4adb4394a2231 | 3.0.24
             # osc rdiff OLDPRJ PKG NEWPRJ -> target_project pkg source_project
             self.assertEqual(call_cmd, ["osc", "rdiff", "M17N", "ibus", "home:dimstar:Factory"])
 
+    def test_get_pending_obs_requests_user_devel_projects(self):
+        """Verifies get_pending_obs_requests discovers user outgoing requests across devel projects."""
+        from unittest.mock import patch, MagicMock
+
+        xml_factory = """<collection matches="1">
+  <request id="1386637" creator="alice">
+    <action type="submit">
+      <source project="devel:GNOME" package="baobab" rev="10"/>
+      <target project="openSUSE:Factory" package="baobab"/>
+    </action>
+    <state name="review"/>
+  </request>
+</collection>"""
+
+        xml_user = """<collection matches="1">
+  <request id="1393059" creator="dimstar">
+    <action type="submit">
+      <source project="home:dimstar:Factory" package="ibus" rev="7"/>
+      <target project="M17N" package="ibus"/>
+    </action>
+    <state name="new"/>
+  </request>
+</collection>"""
+
+        def fake_run(cmd, *args, **kwargs):
+            m = MagicMock(returncode=0)
+            cmd_str = " ".join(cmd)
+            if "project=openSUSE:Factory" in cmd_str:
+                m.stdout = xml_factory
+            elif "user=dimstar" in cmd_str:
+                m.stdout = xml_user
+            else:
+                m.stdout = "<collection/>"
+            return m
+
+        with patch("subprocess.run", side_effect=fake_run):
+            reqs = pool_submit.get_pending_obs_requests(target_project="openSUSE:Factory", user="dimstar", force_refresh=True)
+            self.assertIn("baobab", reqs)
+            self.assertEqual(reqs["baobab"][0]["id"], "1386637")
+            self.assertEqual(reqs["baobab"][0]["target_project"], "openSUSE:Factory")
+
+            self.assertIn("ibus", reqs)
+            self.assertEqual(reqs["ibus"][0]["id"], "1393059")
+            self.assertEqual(reqs["ibus"][0]["target_project"], "M17N")
+
 if __name__ == "__main__":
+
 
 
 
