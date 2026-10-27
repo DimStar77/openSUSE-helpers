@@ -371,17 +371,13 @@ def render_single_package_dashboard(data):
             req = sr.get("request", {})
             tgt = req.get("target_project", "OBS")
             actions.append(f"📤 Supersede outdated SR #{req.get('id')} with latest sources: {sb.BOLD}osc sr{sb.RESET}")
-        elif sr and sr.get("status") == "pending":
-            req = sr.get("request", {})
-            tgt = req.get("target_project", "OBS")
-            actions.append(f"⏳ Wait for pending SR #{req.get('id')} ({req.get('state')}) to merge in {tgt}")
-        elif sr and sr.get("status") == "accepted_pending_sync":
-            req = sr.get("request", {})
-            tgt = req.get("target_project", "OBS")
-            actions.append(f"⏳ Wait for accepted SR #{req.get('id')} to sync into {tgt}")
+        elif sr and sr.get("status") in ("pending", "accepted_pending_sync"):
+            pass
         else:
-            actions.append(f"📦 Check OSC status: {sb.BOLD}osc status{sb.RESET}")
-            actions.append(f"💾 Submit changes: {sb.BOLD}osc ci{sb.RESET}")
+            wt_dirty = wt.get("dirty", False) or wt.get("untracked", False)
+            if wt_dirty:
+                actions.append(f"📦 Check OSC status: {sb.BOLD}osc status{sb.RESET}")
+                actions.append(f"💾 Submit changes: {sb.BOLD}osc ci{sb.RESET}")
     else:
         if behind > 0:
             actions.append(f"📥 Pull remote commits: {sb.BOLD}git pull --ff-only{sb.RESET}")
@@ -423,12 +419,8 @@ def render_single_package_dashboard(data):
                 if pool_sub["status"] == "pending_outdated":
                     req = pool_sub["request"]
                     actions.append(f"📤 Supersede pending SR #{req['id']} with latest sources: {sb.BOLD}geckopit-cli --submit-pool{sb.RESET}")
-                elif pool_sub["status"] == "pending":
-                    req = pool_sub["request"]
-                    actions.append(f"⏳ Wait for pending SR #{req['id']} ({req['state']}) to merge in openSUSE:Factory")
-                elif pool_sub["status"] == "accepted_pending_sync":
-                    req = pool_sub["request"]
-                    actions.append(f"⏳ Wait for accepted SR #{req['id']} to sync into central pool")
+                elif pool_sub["status"] in ("pending", "accepted_pending_sync"):
+                    pass
                 else:
                     actions.append(f"📤 Submit changes to central pool (openSUSE:Factory): {sb.BOLD}geckopit-cli --submit-pool{sb.RESET}")
         if head in (st_branch, unst_branch):
@@ -476,7 +468,31 @@ def render_single_package_dashboard(data):
         for a in actions:
             print(f"  • {a}")
     else:
-        print(f"  {sb.GREEN}✅ Package is fully in sync and up-to-date. No action needed!{sb.RESET}")
+        # Check if an in-flight SR or PR is in progress
+        pool_sub = sync.get("pool_sr")
+        if not pool_sub or pool_sub.get("status") == "unsubmitted":
+            pool_sub = pool_submit.get_package_pool_submission_status(
+                repo,
+                target_project=None if is_osc else "openSUSE:Factory",
+                source_project=sync.get('osc_project'),
+                pkg_dir=data.get('pkg_dir'),
+                stable_branch=data.get('stable_branch', 'factory')
+            )
+        if pool_sub and pool_sub.get("status") == "accepted_pending_sync":
+            req_id = pool_sub.get("request_id") or (pool_sub.get("request") or {}).get("id")
+            tgt = pool_sub.get("target_project") or (pool_sub.get("request") or {}).get("target_project") or "openSUSE:Factory"
+            print(f"  {sb.GREEN}✅ Package is in sync. No action needed (SR #{req_id} accepted, awaiting sync to {tgt}).{sb.RESET}")
+        elif pool_sub and pool_sub.get("status") == "pending":
+            req_id = pool_sub.get("request_id") or (pool_sub.get("request") or {}).get("id")
+            tgt = pool_sub.get("target_project") or (pool_sub.get("request") or {}).get("target_project") or "openSUSE:Factory"
+            st = pool_sub.get("state") or (pool_sub.get("request") or {}).get("state", "review")
+            print(f"  {sb.GREEN}✅ Package is in sync. No action needed (SR #{req_id} in {st} in {tgt}).{sb.RESET}")
+        elif pr.get("has_forward_pr"):
+            f_num = pr.get("forward_pr_id") or (pr.get("prs", [{}])[0].get("number") if pr.get("prs") else "")
+            f_s = f" #{f_num}" if f_num else ""
+            print(f"  {sb.GREEN}✅ Package is in sync. No action needed (Forward PR{f_s} in-flight).{sb.RESET}")
+        else:
+            print(f"  {sb.GREEN}✅ Package is fully in sync and up-to-date. No action needed!{sb.RESET}")
     print(f"{sb.BOLD}{'='*72}{sb.RESET}")
 
 
@@ -904,10 +920,10 @@ def run_sync_check(repos, include_not_in_pool=False):
             if data["pool_behind"] > 0:
                 actions.append("📥 Pull Pool")
             if data["pool_ahead"] > 0:
-                if pool_sub["status"] == "pending":
-                    actions.append(f"⏳ Wait for SR #{pool_sub['request_id']}")
-                elif pool_sub["status"] == "accepted_pending_sync":
-                    actions.append("⏳ Wait for sync")
+                if pool_sub["status"] == "pending_outdated":
+                    actions.append(f"📤 Supersede SR #{pool_sub['request_id']}")
+                elif pool_sub["status"] in ("pending", "accepted_pending_sync"):
+                    pass
                 else:
                     actions.append("📤 Submit Pool")
             if data["next_behind"] > 0:

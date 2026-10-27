@@ -201,7 +201,7 @@ class TestSinglePackageDashboardFormatting(unittest.TestCase):
                 self.cli.render_single_package_dashboard(data)
         out_pending = buf_pending.getvalue()
         self.assertIn("⏳ Pending SR #1386637 (review from GNOME:Factory)", out_pending)
-        self.assertIn("⏳ Wait for pending SR #1386637 (review) to merge in openSUSE:Factory", out_pending)
+        self.assertIn("No action needed (SR #1386637 in review in openSUSE:Factory)", out_pending)
         self.assertNotIn("Submit changes to central pool", out_pending)
 
         # 3. Test accepted SR awaiting sync
@@ -215,7 +215,7 @@ class TestSinglePackageDashboardFormatting(unittest.TestCase):
                 self.cli.render_single_package_dashboard(data)
         out_acc = buf_acc.getvalue()
         self.assertIn("⏳ SR #1384945 accepted (awaiting central pool sync)", out_acc)
-        self.assertIn("⏳ Wait for accepted SR #1384945 to sync into central pool", out_acc)
+        self.assertIn("No action needed (SR #1384945 accepted, awaiting sync to openSUSE:Factory)", out_acc)
         self.assertNotIn("Submit changes to central pool", out_acc)
 
     def test_version_check_single_stream_table_formatting(self):
@@ -319,7 +319,7 @@ class TestSinglePackageDashboardFormatting(unittest.TestCase):
 
             self.assertIn("Pending SR #1393059", out)
             self.assertIn("M17N", out)
-            self.assertIn("Wait for pending SR #1393059", out)
+            self.assertIn("No action needed (SR #1393059 in new in M17N)", out)
 
 if __name__ == '__main__':
 
