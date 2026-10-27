@@ -98,8 +98,36 @@ def render_single_package_dashboard(data):
         print(f"  Working Tree:  {tree_str}")
         print()
 
-    # Section 2: Downstream SCM Sync (Gitea & Pool)
-    if not is_osc:
+    # Section 2: Downstream SCM Sync (Gitea & Pool / OBS & Pool)
+    if is_osc:
+        print(f"── {sb.BOLD}🔄 OBS Submission & Pool Sync{sb.RESET} {'─'*41}")
+        osc_prj = sync.get('osc_project') or 'OBS'
+        pool_sub = sync.get('pool_sr')
+        if not pool_sub:
+            pool_sub = pool_submit.get_package_pool_submission_status(
+                repo,
+                target_project=None,
+                source_project=osc_prj,
+                pkg_dir=data.get('pkg_dir'),
+                stable_branch=data.get('stable_branch', 'factory')
+            )
+        if pool_sub and pool_sub.get("status") == "pending_outdated":
+            req = pool_sub["request"]
+            tgt = req.get("target_project", "Factory")
+            pool_str = f"{sb.CYAN}📤 Pending SR #{req['id']} Outdated (Newer changes in {req.get('source_project')}; supersede ready for {tgt}){sb.RESET}"
+        elif pool_sub and pool_sub.get("status") == "pending":
+            req = pool_sub["request"]
+            tgt = req.get("target_project", "Factory")
+            pool_str = f"{sb.YELLOW}⏳ Pending SR #{req['id']} ({req['state']} ➔ {tgt}){sb.RESET}"
+        elif pool_sub and pool_sub.get("status") == "accepted_pending_sync":
+            req = pool_sub["request"]
+            tgt = req.get("target_project", "Factory")
+            pool_str = f"{sb.GREEN}⏳ SR #{req['id']} accepted (awaiting sync to {tgt}){sb.RESET}"
+        else:
+            pool_str = f"{sb.CYAN}📦 OSC Managed [{osc_prj}]{sb.RESET}"
+        print(f"  Submit Status: {pool_str}")
+        print()
+    else:
         print(f"── {sb.BOLD}🔄 Downstream SCM Sync (Gitea & Pool){sb.RESET} {'─'*32}")
         st_branch = data.get('stable_branch', 'factory')
         unst_branch = data.get('unstable_branch', 'next')
@@ -170,6 +198,31 @@ def render_single_package_dashboard(data):
                     pool_str = f"{sb.GREEN}⏳ SR #{req['id']} accepted (awaiting central pool sync){sb.RESET}"
                 else:
                     pool_str = f"{sb.CYAN}📤 Ahead of central pool by {pool_ahead} commit{a_s} (Submit needed){sb.RESET}"
+            elif pool_status == 'OSC Managed':
+                osc_prj = sync.get('osc_project') or 'OBS'
+                pool_sub = sync.get('pool_sr')
+                if not pool_sub:
+                    pool_sub = pool_submit.get_package_pool_submission_status(
+                        repo,
+                        target_project=None,
+                        source_project=osc_prj,
+                        pkg_dir=data.get('pkg_dir'),
+                        stable_branch=data.get('stable_branch', 'factory')
+                    )
+                if pool_sub and pool_sub.get("status") == "pending_outdated":
+                    req = pool_sub["request"]
+                    tgt = req.get("target_project", "Factory")
+                    pool_str = f"{sb.CYAN}📤 Pending SR #{req['id']} Outdated (Newer changes in {req.get('source_project')}; supersede ready for {tgt}){sb.RESET}"
+                elif pool_sub and pool_sub.get("status") == "pending":
+                    req = pool_sub["request"]
+                    tgt = req.get("target_project", "Factory")
+                    pool_str = f"{sb.YELLOW}⏳ Pending SR #{req['id']} ({req['state']} ➔ {tgt}){sb.RESET}"
+                elif pool_sub and pool_sub.get("status") == "accepted_pending_sync":
+                    req = pool_sub["request"]
+                    tgt = req.get("target_project", "Factory")
+                    pool_str = f"{sb.GREEN}⏳ SR #{req['id']} accepted (awaiting sync to {tgt}){sb.RESET}"
+                else:
+                    pool_str = f"{sb.CYAN}📦 OSC Managed [{osc_prj}]{sb.RESET}"
             elif pool_status == 'Not in Pool':
                 pool_str = f"{sb.YELLOW}❓ Not in Pool{sb.RESET}"
             elif pool_status in ('Fetch failed', 'Error', 'unknown'):
@@ -306,8 +359,29 @@ def render_single_package_dashboard(data):
                 if guessed and not err:
                     target_v = guessed
             actions.append(f"⚙️  Run package upgrade: {sb.BOLD}geckopit-cli --upgrade {target_v}{sb.RESET}")
-        actions.append(f"📦 Check OSC status: {sb.BOLD}osc status{sb.RESET}")
-        actions.append(f"💾 Submit changes: {sb.BOLD}osc ci{sb.RESET}")
+        sr = sync.get("pool_sr")
+        if not sr:
+            sr = pool_submit.get_package_pool_submission_status(
+                repo,
+                target_project=None,
+                source_project=sync.get('osc_project'),
+                pkg_dir=data.get('pkg_dir')
+            )
+        if sr and sr.get("status") == "pending_outdated":
+            req = sr.get("request", {})
+            tgt = req.get("target_project", "OBS")
+            actions.append(f"📤 Supersede outdated SR #{req.get('id')} with latest sources: {sb.BOLD}osc sr{sb.RESET}")
+        elif sr and sr.get("status") == "pending":
+            req = sr.get("request", {})
+            tgt = req.get("target_project", "OBS")
+            actions.append(f"⏳ Wait for pending SR #{req.get('id')} ({req.get('state')}) to merge in {tgt}")
+        elif sr and sr.get("status") == "accepted_pending_sync":
+            req = sr.get("request", {})
+            tgt = req.get("target_project", "OBS")
+            actions.append(f"⏳ Wait for accepted SR #{req.get('id')} to sync into {tgt}")
+        else:
+            actions.append(f"📦 Check OSC status: {sb.BOLD}osc status{sb.RESET}")
+            actions.append(f"💾 Submit changes: {sb.BOLD}osc ci{sb.RESET}")
     else:
         if behind > 0:
             actions.append(f"📥 Pull remote commits: {sb.BOLD}git pull --ff-only{sb.RESET}")
@@ -2052,7 +2126,7 @@ def main():
                 print("", file=sys.stderr)
                 target_pkg_dir = effective_dir
             pkg_name = os.path.basename(os.path.abspath(target_pkg_dir))
-            st = pool_submit.get_package_pool_submission_status(pkg_name, target_project="openSUSE:Factory", pkg_dir=target_pkg_dir)
+            st = pool_submit.get_package_pool_submission_status(pkg_name, target_project=None, pkg_dir=target_pkg_dir)
             print(f"── {sb.BOLD}🔍 Central Pool Status: {pkg_name}{sb.RESET} {'─'*35}")
             if st["status"] == "pending_outdated":
                 r = st["request"]

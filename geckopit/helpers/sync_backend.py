@@ -2117,6 +2117,16 @@ def check_single_package_full(pkg_dir=".", stable_branch=None, unstable_branch=N
 
     # 1. Fetch latest repository state and pool sync metrics once
     _, sync = check_repo_sync(repo_name, st_branch, unst_branch, parent_dir)
+    try:
+        from helpers import pool_submit
+        sync["pool_sr"] = pool_submit.get_package_pool_submission_status(
+            repo_name,
+            target_project=None,
+            pkg_dir=pkg_dir,
+            stable_branch=st_branch
+        )
+    except Exception:
+        pass
 
     # 2. Concurrently check version (reusing origin refs without refetching) and conditional PR check
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:

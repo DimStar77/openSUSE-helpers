@@ -1956,6 +1956,33 @@ class TestSyncWindow(unittest.TestCase):
         self.assertIn("⚠️ 1 Contributor PR", hdr_2)
         self.assertIn("🔀 1 Forward PR", hdr_2)
 
+        # 3. Outgoing SR to devel project (e.g. M17N) from user project
+        mock_win.package_data = {
+            "ibus": {
+                "sync": {
+                    "pool_sr": {
+                        "status": "pending",
+                        "request_id": "1393059",
+                        "request": {
+                            "id": "1393059",
+                            "creator": "dimstar",
+                            "source_project": "home:dimstar:Factory",
+                            "target_project": "M17N",
+                            "state": "new",
+                            "description": "Update ibus"
+                        }
+                    }
+                },
+                "pr": {"has_pr": False, "prs": []}
+            }
+        }
+        mock_win.current_selected_package = "ibus"
+        with mock.patch("helpers.fork_helper.get_current_obs_user", return_value="dimstar"):
+            with mock.patch("helpers.pool_submit.resolve_source_obs_project", return_value="home:dimstar:Factory"):
+                SyncWindow.update_detail_pr_ui(mock_win, "ibus")
+                hdr_3 = mock_win.pr_card_title_lbl.set_markup.call_args[0][0]
+                self.assertIn("📤 ACTIVE REQUESTS (1 Outgoing in-flight)", hdr_3)
+
     def test_workspace_config_per_profile_filter_persistence(self):
         from geckopit import WorkspaceConfig
         cfg = WorkspaceConfig()

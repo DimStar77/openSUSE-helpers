@@ -565,5 +565,70 @@ r367 | unknown | 2026-10-22 14:14:00 | 6341df4d71d5bcfef3f4adb4394a2231 | 3.0.24
                                 self.assertIn("Would supersede pending SR #1387152", msg)
                                 self.assertIn("-s 1387152 --yes", msg)
 
+    def test_get_package_pool_submission_status_devel_project(self):
+        """Verifies discovering a submit request targeting a devel project (e.g. M17N) from a source project."""
+        from unittest.mock import patch, MagicMock
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, ".osc"))
+            with open(os.path.join(tmpdir, ".osc", "_project"), "w") as f:
+                f.write("home:dimstar:Factory\n")
+
+            mock_xml = """<collection matches="1">
+  <request id="1393059" creator="dimstar">
+    <action type="submit">
+      <source project="home:dimstar:Factory" package="ibus" rev="7"/>
+      <target project="M17N" package="ibus"/>
+    </action>
+    <state name="new" who="dimstar" when="2026-10-27T11:18:52"/>
+  </request>
+</collection>"""
+
+            def fake_run(cmd, *args, **kwargs):
+                m = MagicMock()
+                m.returncode = 0
+                if "search/request" in cmd[2]:
+                    m.stdout = mock_xml
+                elif "api" in cmd and "/source/home:dimstar:Factory/ibus" in cmd[2]:
+                    m.stdout = '<directory srcmd5="7"/>'
+                else:
+                    m.stdout = ""
+                return m
+
+            with patch("subprocess.run", side_effect=fake_run):
+                st = pool_submit.get_package_pool_submission_status(
+                    "ibus",
+                    target_project=None,
+                    pkg_dir=tmpdir
+                )
+                self.assertEqual(st["status"], "pending")
+                self.assertEqual(st["request_id"], "1393059")
+                self.assertEqual(st["target_project"], "M17N")
+                self.assertEqual(st["source_project"], "home:dimstar:Factory")
+
+    def test_revision_matching_short_rev_and_linkinfo_md5(self):
+        """Verifies that short integer revs (e.g. '7') and linkinfo expanded MD5s are not marked outdated."""
+        from unittest.mock import patch, MagicMock
+
+        # 1. Short integer rev (e.g. rev="7") vs long srcmd5
+        dir_xml_short = '<directory name="ibus" rev="7" vrev="7" srcmd5="d8dfd5c3e1922120496aa8244466807c" />'
+        with patch("subprocess.run", return_value=MagicMock(stdout=dir_xml_short, returncode=0)):
+            revs = pool_submit.get_source_package_revisions("home:dimstar:Factory", "ibus", force_refresh=True)
+            self.assertIn("7", revs)
+            self.assertIn("d8dfd5c3e1922120496aa8244466807c", revs)
+
+        # 2. Linkinfo package with expanded xsrcmd5
+        dir_xml_link = """<directory name="000package-groups" rev="2" srcmd5="8f34f6a4320cb80591c599118fbbcc54">
+  <linkinfo project="openSUSE:Factory" package="000package-groups" xsrcmd5="6271b0b263fc89c65cd110511c4b22a8" lsrcmd5="8f34f6a4320cb80591c599118fbbcc54"/>
+</directory>"""
+        with patch("subprocess.run", return_value=MagicMock(stdout=dir_xml_link, returncode=0)):
+            revs = pool_submit.get_source_package_revisions("home:dimstar:Factory", "000package-groups", force_refresh=True)
+            self.assertIn("6271b0b263fc89c65cd110511c4b22a8", revs)
+            self.assertIn("2", revs)
+            self.assertIn("8f34f6a4320cb80591c599118fbbcc54", revs)
+
 if __name__ == "__main__":
+
+
     unittest.main()

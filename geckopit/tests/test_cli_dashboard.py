@@ -282,6 +282,46 @@ class TestSinglePackageDashboardFormatting(unittest.TestCase):
             self.assertIn("Metadata Package (No .spec / Upstream tracking N/A)", out)
             self.assertIn("OSC checkout", out)
 
+    def test_dashboard_osc_package_with_pending_devel_sr(self):
+        """Tests rendering dashboard for an OSC package with a pending SR targeting a devel project."""
+        import io
+        import tempfile
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pkg_dir = os.path.join(tmpdir, 'ibus')
+            os.makedirs(os.path.join(pkg_dir, '.osc'))
+
+            sr_data = {
+                'status': 'pending',
+                'request_id': '1393059',
+                'state': 'new',
+                'source_project': 'home:dimstar:Factory',
+                'target_project': 'M17N',
+                'request': {'id': '1393059', 'state': 'new', 'source_project': 'home:dimstar:Factory', 'target_project': 'M17N'}
+            }
+            data = {
+                'repo_name': 'ibus',
+                'pkg_dir': pkg_dir,
+                'active_branch': 'factory',
+                'stable_branch': 'factory',
+                'unstable_branch': None,
+                'worktree': {'ahead': 0, 'behind': 0, 'dirty': False, 'untracked': False, 'is_osc': True},
+                'sync': {'pool_ahead': 0, 'pool_behind': 0, 'pool_status': 'OSC Managed', 'osc_project': 'home:dimstar:Factory', 'is_osc': True, 'needs_action': False, 'pool_sr': sr_data},
+                'version': {'status': 'success', 'is_metadata': False, 'factory_ver': '1.5.35', 'upstream_stable': '1.5.35', 'needs_update': False},
+                'pr': {'has_pr': False, 'has_forward_pr': False, 'count': 0, 'prs': []}
+            }
+
+            buf = io.StringIO()
+            with patch('sys.stdout', buf):
+                self.cli.render_single_package_dashboard(data)
+            out = buf.getvalue()
+
+            self.assertIn("Pending SR #1393059", out)
+            self.assertIn("M17N", out)
+            self.assertIn("Wait for pending SR #1393059", out)
+
 if __name__ == '__main__':
+
 
     unittest.main()

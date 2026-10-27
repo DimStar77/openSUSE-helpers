@@ -23,7 +23,7 @@ import datetime
 import subprocess
 import xml.etree.ElementTree as ET
 import urllib.parse
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List, Tuple, Set
 
 # Module-level caches with TTL
 _META_CACHE: Dict[str, Dict[str, Any]] = {}
@@ -314,7 +314,7 @@ def is_project_git_managed(
     return result
 
 
-def parse_obs_requests_collection(xml_content: str, target_project: str = "openSUSE:Factory") -> Dict[str, List[Dict[str, Any]]]:
+def parse_obs_requests_collection(xml_content: str, target_project: Optional[str] = None) -> Dict[str, List[Dict[str, Any]]]:
     """
     Parses an OBS collection XML into a dictionary mapping target_package -> list of request dicts.
     """
@@ -350,7 +350,7 @@ def parse_obs_requests_collection(xml_content: str, target_project: str = "openS
             t_prj = target_el.get("project")
             t_pkg = target_el.get("package")
 
-            if t_prj == target_project and t_pkg:
+            if (target_project is None or t_prj == target_project) and t_pkg:
                 src_prj = source_el.get("project") if source_el is not None else ""
                 src_pkg = source_el.get("package") if source_el is not None else t_pkg
                 src_rev = source_el.get("rev") if source_el is not None else ""
@@ -378,6 +378,8 @@ def parse_obs_requests_collection(xml_content: str, target_project: str = "openS
                     "description": description,
                 }
                 requests_by_pkg.setdefault(t_pkg, []).append(req_info)
+                if src_pkg and src_pkg != t_pkg:
+                    requests_by_pkg.setdefault(src_pkg, []).append(req_info)
 
     return requests_by_pkg
 
@@ -444,21 +446,34 @@ def invalidate_obs_requests_cache(project: Optional[str] = None) -> None:
 
 def get_package_pending_obs_requests(
     package_name: str,
-    target_project: str = "openSUSE:Factory",
+    target_project: Optional[str] = None,
+    source_project: Optional[str] = None,
     timeout: int = 10
 ) -> List[Dict[str, Any]]:
     """
     Directly queries OBS for active pending submit requests for a specific package.
-    Fast (~0.6s) and always returns authoritative live state.
+    Supports querying by target project, source project, or both.
+    Fast (~0.3s) and always returns authoritative live state.
     """
     pkg_base = package_name.split("/")[-1]
-    query = f"(state/@name='new' or state/@name='review') and action/target/@project='{target_project}' and action/target/@package='{pkg_base}'"
+    conditions = [
+        "(state/@name='new' or state/@name='review')",
+        f"(action/target/@package='{pkg_base}' or action/source/@package='{pkg_base}')"
+    ]
+    if target_project and not source_project:
+        conditions.append(f"action/target/@project='{target_project}'")
+    elif source_project and not target_project:
+        conditions.append(f"action/source/@project='{source_project}'")
+    elif source_project and target_project:
+        conditions.append(f"(action/target/@project='{target_project}' or action/source/@project='{source_project}')")
+
+    query = " and ".join(conditions)
     cmd = ["osc", "api", f"/search/request?match={query}"]
     try:
         res = subprocess.run(cmd, env=get_obs_env(), capture_output=True, text=True, timeout=timeout)
         if res.returncode == 0 and res.stdout.strip():
-            parsed = parse_obs_requests_collection(res.stdout, target_project=target_project)
-            return parsed.get(pkg_base, [])
+            parsed = parse_obs_requests_collection(res.stdout, target_project=None)
+            return parsed.get(pkg_base, []) or parsed.get(package_name, [])
     except Exception:
         pass
     return []
@@ -611,30 +626,38 @@ def is_accepted_sr_already_synced(
 
 def get_package_pool_submission_status(
     package_name: str,
-    target_project: str = "openSUSE:Factory",
+    target_project: Optional[str] = "openSUSE:Factory",
     pending_requests: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     accepted_requests: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     allow_accepted_query: bool = True,
     pkg_dir: Optional[str] = None,
     stable_branch: str = "factory",
     force_refresh: bool = False,
-    check_srcmd5: bool = True
+    check_srcmd5: bool = True,
+    source_project: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Evaluates whether a package currently has an active pending or recently accepted
-    submit request against target_project.
+    submit request against target_project or from source_project.
 
     Returns dict:
     - status: "pending" | "pending_outdated" | "accepted_pending_sync" | "unsubmitted"
     - request: Dict representing the matching request (if any)
     """
     pkg_base = package_name.split("/")[-1]
+    if pkg_dir and not source_project:
+        source_project = resolve_source_obs_project(pkg_dir, default="", package_name=package_name)
+
     if force_refresh:
-        pending_list = get_package_pending_obs_requests(package_name, target_project=target_project)
+        pending_list = get_package_pending_obs_requests(package_name, target_project=target_project, source_project=source_project)
     else:
         if not isinstance(pending_requests, dict):
-            pending_requests = get_pending_obs_requests(target_project=target_project)
+            pending_requests = get_pending_obs_requests(target_project=target_project or "openSUSE:Factory")
         pending_list = pending_requests.get(package_name) or pending_requests.get(pkg_base) or []
+
+        # If not found in target_project cache and source_project is known (e.g. scratch checkout targeting a devel project)
+        if not pending_list and source_project:
+            pending_list = get_package_pending_obs_requests(package_name, target_project=None, source_project=source_project)
 
     if not isinstance(pkg_dir, str):
         pkg_dir = None
@@ -646,13 +669,21 @@ def get_package_pool_submission_status(
         sorted_reqs = sorted(pending_list, key=lambda r: int(r.get("id") or 0), reverse=True)
         primary = sorted_reqs[0]
         sr_rev = primary.get("source_rev")
-        src_prj = primary.get("source_project")
+        src_prj = primary.get("source_project") or source_project
+        tgt_prj = primary.get("target_project") or target_project or "openSUSE:Factory"
 
         is_outdated = False
         if check_srcmd5 and src_prj and sr_rev:
             cur_md5 = get_source_package_srcmd5(src_prj, package_name, force_refresh=force_refresh)
             if cur_md5 and cur_md5 != sr_rev:
-                is_outdated = True
+                # If cur_md5 != sr_rev, check whether sr_rev matches other active revisions
+                # (e.g. short rev number '7' vs long srcmd5, or linkinfo expanded xsrcmd5)
+                valid_revs = get_source_package_revisions(src_prj, package_name, force_refresh=force_refresh)
+                if valid_revs:
+                    if str(sr_rev) not in valid_revs:
+                        is_outdated = True
+                else:
+                    is_outdated = True
 
         return {
             "status": "pending_outdated" if is_outdated else "pending",
@@ -662,6 +693,7 @@ def get_package_pool_submission_status(
             "request_id": primary.get("id"),
             "source_project": src_prj,
             "source_rev": sr_rev,
+            "target_project": tgt_prj,
             "is_outdated": is_outdated,
         }
 
@@ -686,6 +718,7 @@ def get_package_pool_submission_status(
                     "source_project": None,
                 }
 
+            tgt_prj = primary.get("target_project") or target_project or "openSUSE:Factory"
             return {
                 "status": "accepted_pending_sync",
                 "request": primary,
@@ -693,6 +726,7 @@ def get_package_pool_submission_status(
                 "state": "accepted",
                 "request_id": primary.get("id"),
                 "source_project": primary.get("source_project"),
+                "target_project": tgt_prj,
                 "accepted_when": primary.get("state_when"),
             }
 
@@ -789,7 +823,9 @@ def check_pool_stream_sync(
 
 
 _SRCMD5_CACHE: Dict[Tuple[str, str], Tuple[float, Optional[str]]] = {}
+_PACKAGE_REVISIONS_CACHE: Dict[Tuple[str, str], Tuple[float, Set[str]]] = {}
 SRCMD5_CACHE_TTL: float = 60.0
+REVISIONS_CACHE_TTL: float = 60.0
 
 def get_source_package_srcmd5(source_project: str, package_name: str, force_refresh: bool = False) -> Optional[str]:
     """
@@ -822,6 +858,50 @@ def get_source_package_srcmd5(source_project: str, package_name: str, force_refr
 
     _SRCMD5_CACHE[cache_key] = (now, md5)
     return md5
+
+
+def get_source_package_revisions(source_project: str, package_name: str, force_refresh: bool = False) -> Set[str]:
+    """
+    Returns the set of active source revisions and checksums (rev, vrev, srcmd5,
+    xsrcmd5, lsrcmd5, baserev) for source_project/package_name in OBS.
+    Handles both short revisions (e.g. '7') and long MD5 hashes (e.g. 32 hex chars).
+    Cached for 60 seconds to prevent blocking UI threads.
+    """
+    pkg_base = package_name.split("/")[-1]
+    cache_key = (source_project, pkg_base)
+    now = time.time()
+    if not force_refresh and cache_key in _PACKAGE_REVISIONS_CACHE:
+        ts, val = _PACKAGE_REVISIONS_CACHE[cache_key]
+        if (now - ts) < REVISIONS_CACHE_TTL:
+            return val
+
+    env = get_obs_env()
+    valid_revs = set()
+    try:
+        res = subprocess.run(
+            ["osc", "api", f"/source/{source_project}/{pkg_base}"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            root = ET.fromstring(res.stdout)
+            for attr in ("rev", "vrev", "srcmd5"):
+                v = root.get(attr)
+                if v:
+                    valid_revs.add(str(v))
+            linkinfo = root.find("linkinfo")
+            if linkinfo is not None:
+                for attr in ("xsrcmd5", "lsrcmd5", "srcmd5", "baserev"):
+                    v = linkinfo.get(attr)
+                    if v:
+                        valid_revs.add(str(v))
+    except Exception:
+        pass
+
+    _PACKAGE_REVISIONS_CACHE[cache_key] = (now, valid_revs)
+    return valid_revs
 
 
 def get_git_obs_meta_project(package_dir: str, branch: Optional[str] = None) -> Optional[str]:

@@ -276,49 +276,49 @@ class PackageRow(Gtk.ListBoxRow):
 
             if pool_behind > 0 or pool_ahead > 0:
                 subtitle_parts.append(f"Pool: B:{pool_behind}/A:{pool_ahead}")
-                sr_info = sync_data.get("pool_sr") if pool_ahead > 0 else None
-                short_name = self.package_name.split("/")[-1]
-                if sr_info and sr_info.get("status") == "pending_outdated":
-                    req_id = sr_info.get("request_id")
-                    st = sr_info.get("state", "review")
-                    src = sr_info.get("source_project", "GNOME:Factory")
+
+            sr_info = sync_data.get("pool_sr")
+            short_name = self.package_name.split("/")[-1]
+            if sr_info and sr_info.get("status") in ("pending", "pending_outdated", "accepted_pending_sync"):
+                req = sr_info.get("request") or {}
+                req_id = sr_info.get("request_id") or req.get("id")
+                st = sr_info.get("state") or req.get("state", "review")
+                src = sr_info.get("source_project") or req.get("source_project", "Devel")
+                tgt = sr_info.get("target_project") or req.get("target_project", "openSUSE:Factory")
+
+                if sr_info.get("status") == "pending_outdated":
                     tt = (
-                        f"<b>Central Pool Status</b>\n"
+                        f"<b>Submit Request Status</b>\n"
                         f"• Pending Submit Request: <b>#{req_id}</b> (Outdated - {st})\n"
-                        f"• Devel Project: {src} has newer changes\n"
-                        f"• Action: Ready to supersede via osc sr\n"
-                        f"• Target: openSUSE:Factory/{short_name}\n"
-                        f"• Remote: https://src.opensuse.org/pool/{short_name}.git"
+                        f"• Source: <b>{src}</b> has newer changes\n"
+                        f"• Target: <b>{tgt}/{short_name}</b>\n"
+                        f"• Action: Ready to supersede via osc sr"
                     )
                     self.badges_box.append(self.create_badge(f"SR #{req_id} (outdated)", "blue", tooltip=tt))
                 elif sr_info and sr_info.get("status") == "pending":
-                    req_id = sr_info.get("request_id")
-                    st = sr_info.get("state", "review")
-                    src = sr_info.get("source_project", "GNOME:Factory")
                     tt = (
-                        f"<b>Central Pool Status</b>\n"
-                        f"• Pending Submit Request: <b>#{req_id}</b> ({st} from {src})\n"
-                        f"• Target: openSUSE:Factory/{short_name}\n"
-                        f"• Remote: https://src.opensuse.org/pool/{short_name}.git"
+                        f"<b>Submit Request Status</b>\n"
+                        f"• Pending Submit Request: <b>#{req_id}</b> ({st})\n"
+                        f"• Source: <b>{src}</b>\n"
+                        f"• Target: <b>{tgt}/{short_name}</b>"
                     )
                     self.badges_box.append(self.create_badge(f"SR #{req_id}", "blue", tooltip=tt))
                 elif sr_info and sr_info.get("status") == "accepted_pending_sync":
-                    req_id = sr_info.get("request_id")
                     tt = (
-                        f"<b>Central Pool Status</b>\n"
-                        f"• Submit Request <b>#{req_id}</b> Accepted (awaiting pool sync)\n"
-                        f"• Target: openSUSE:Factory/{self.package_name}\n"
-                        f"• Remote: https://src.opensuse.org/pool/{self.package_name}.git"
+                        f"<b>Submit Request Status</b>\n"
+                        f"• Submit Request <b>#{req_id}</b> Accepted (awaiting sync)\n"
+                        f"• Source: <b>{src}</b>\n"
+                        f"• Target: <b>{tgt}/{short_name}</b>"
                     )
                     self.badges_box.append(self.create_badge(f"SR #{req_id}", "green", tooltip=tt))
-                else:
-                    tt = (
-                        f"<b>Central Pool Status</b>\n"
-                        f"• Behind Pool: <b>{pool_behind}</b> commit{'s' if pool_behind != 1 else ''} (Pull needed)\n"
-                        f"• Ahead of Pool: <b>{pool_ahead}</b> commit{'s' if pool_ahead != 1 else ''} (Submit needed)\n"
-                        f"• Remote: https://src.opensuse.org/pool/{self.package_name}.git"
-                    )
-                    self.badges_box.append(self.create_badge("Pool", "orange", tooltip=tt))
+            elif pool_behind > 0 or pool_ahead > 0:
+                tt = (
+                    f"<b>Central Pool Status</b>\n"
+                    f"• Behind Pool: <b>{pool_behind}</b> commit{'s' if pool_behind != 1 else ''} (Pull needed)\n"
+                    f"• Ahead of Pool: <b>{pool_ahead}</b> commit{'s' if pool_ahead != 1 else ''} (Submit needed)\n"
+                    f"• Remote: https://src.opensuse.org/pool/{self.package_name}.git"
+                )
+                self.badges_box.append(self.create_badge("Pool", "orange", tooltip=tt))
             elif pool_status == "OSC Managed":
                 pass
             elif pool_status == "Not in Pool":
@@ -3640,8 +3640,25 @@ class SyncWindow(Adw.ApplicationWindow):
     def load_obs_requests_cache(self):
         """Fetches the project-wide pending and accepted requests collection from OBS."""
         try:
-            self.obs_pending_requests = pool_submit.get_pending_obs_requests("openSUSE:Factory")
-            self.obs_accepted_requests = pool_submit.get_recently_accepted_obs_requests("openSUSE:Factory")
+            self.obs_pending_requests = dict(pool_submit.get_pending_obs_requests("openSUSE:Factory"))
+            self.obs_accepted_requests = dict(pool_submit.get_recently_accepted_obs_requests("openSUSE:Factory"))
+
+            # Also pre-fetch active submit requests from user's staging/home project if in Scratchpad workspace
+            if getattr(self, "is_scratch", None) is True:
+                try:
+                    from helpers import fork_helper
+                    obs_user = fork_helper.get_current_obs_user()
+                    if obs_user:
+                        s_prj = f"home:{obs_user}:Factory"
+                        s_pending = pool_submit.get_pending_obs_requests(s_prj)
+                        for pkg, req_list in s_pending.items():
+                            existing_ids = {r.get("id") for r in self.obs_pending_requests.get(pkg, [])}
+                            new_reqs = [r for r in req_list if r.get("id") not in existing_ids]
+                            if new_reqs:
+                                self.obs_pending_requests.setdefault(pkg, []).extend(new_reqs)
+                except Exception:
+                    pass
+
             curr = getattr(self, "current_selected_package", None)
             if curr:
                 GLib.idle_add(self.update_detail_sync_ui, curr)
@@ -3720,7 +3737,9 @@ class SyncWindow(Adw.ApplicationWindow):
         if force_refresh:
             short_repo = repo.split("/")[-1]
             try:
-                live_reqs = pool_submit.get_package_pending_obs_requests(repo, target_project="openSUSE:Factory")
+                repo_p = os.path.join(self.stable_p, repo) if getattr(self, "stable_p", None) else None
+                s_prj = pool_submit.resolve_source_obs_project(repo_p, default="") if repo_p else None
+                live_reqs = pool_submit.get_package_pending_obs_requests(repo, target_project=None, source_project=s_prj)
                 if hasattr(self, "obs_pending_requests") and isinstance(self.obs_pending_requests, dict):
                     self.obs_pending_requests[short_repo] = live_reqs
                     self.obs_pending_requests[repo] = live_reqs
@@ -3728,11 +3747,19 @@ class SyncWindow(Adw.ApplicationWindow):
                 pass
 
         name, data = sb.check_repo_sync(repo, **kwargs)
-        if data.get("pool_ahead", 0) > 0:
-            repo_path = os.path.join(self.stable_p, repo) if getattr(self, "stable_p", None) else None
+        repo_path = os.path.join(self.stable_p, repo) if getattr(self, "stable_p", None) else None
+        s_prj = pool_submit.resolve_source_obs_project(repo_path, default="") if repo_path else None
+        short_repo = repo.split("/")[-1]
+        has_pending_in_cache = bool(
+            hasattr(self, "obs_pending_requests") and
+            isinstance(self.obs_pending_requests, dict) and
+            (repo in self.obs_pending_requests or short_repo in self.obs_pending_requests)
+        )
+        if data.get("pool_ahead", 0) > 0 or data.get("is_osc", False) or getattr(self, "is_scratch", False) or has_pending_in_cache:
             data["pool_sr"] = pool_submit.get_package_pool_submission_status(
                 repo,
-                target_project="openSUSE:Factory",
+                target_project=None,
+                source_project=s_prj,
                 pending_requests=getattr(self, "obs_pending_requests", None),
                 accepted_requests=getattr(self, "obs_accepted_requests", None),
                 pkg_dir=repo_path,
@@ -6195,7 +6222,44 @@ class SyncWindow(Adw.ApplicationWindow):
                         self.submit_pool_btn.set_tooltip_text("Submit package changes to openSUSE:Factory via osc sr")
             elif pool_status == "OSC Managed":
                 osc_prj = sync.get("osc_project") or "OBS"
-                p1_text = f"<span foreground='#00d2ff' weight='bold'>📦 OSC Managed [{osc_prj}]</span>"
+                sr_status = sync.get("pool_sr")
+                if not sr_status:
+                    repo_path = os.path.join(self.stable_p, package_name) if getattr(self, "stable_p", None) else None
+                    sr_status = pool_submit.get_package_pool_submission_status(
+                        package_name,
+                        target_project=None,
+                        source_project=osc_prj,
+                        pending_requests=getattr(self, "obs_pending_requests", None),
+                        accepted_requests=getattr(self, "obs_accepted_requests", None),
+                        pkg_dir=repo_path,
+                        stable_branch=getattr(self, "stable_b", "factory"),
+                        check_srcmd5=False
+                    )
+                    if package_name in self.package_data and "sync" in self.package_data[package_name]:
+                        self.package_data[package_name]["sync"]["pool_sr"] = sr_status
+                        if hasattr(self, "update_row_ui"):
+                            self.update_row_ui(package_name)
+
+                if sr_status and sr_status.get("status") == "pending_outdated":
+                    req = sr_status.get("request", {})
+                    req_id = req.get("id")
+                    st = req.get("state", "review")
+                    tgt = req.get("target_project", "openSUSE:Factory")
+                    p1_text = f"📤 <span weight='bold' foreground='#3584e4'>Pending SR #{req_id} Outdated</span> ({st} in {tgt})"
+                elif sr_status and sr_status.get("status") == "pending":
+                    req = sr_status.get("request", {})
+                    req_id = req.get("id")
+                    st = req.get("state", "review")
+                    tgt = req.get("target_project", "openSUSE:Factory")
+                    p1_text = f"⏳ <span weight='bold' foreground='#e5a50a'>Pending Submit Request #{req_id}</span> ({st} ➔ {tgt})"
+                elif sr_status and sr_status.get("status") == "accepted_pending_sync":
+                    req = sr_status.get("request", {})
+                    req_id = req.get("id")
+                    tgt = req.get("target_project", "openSUSE:Factory")
+                    p1_text = f"⏳ <span weight='bold' foreground='#2ec27e'>Submit Request #{req_id} Accepted</span> (in {tgt})"
+                else:
+                    p1_text = f"<span foreground='#00d2ff' weight='bold'>📦 OSC Managed [{osc_prj}]</span>"
+
                 self.pull_pool_btn.set_sensitive(False)
                 if hasattr(self, "submit_pool_btn"):
                     self.submit_pool_btn.set_sensitive(False)
@@ -6337,7 +6401,19 @@ class SyncWindow(Adw.ApplicationWindow):
             is_accepted = sr_info.get("status") == "accepted_pending_sync"
             is_outdated = sr_info.get("status") == "pending_outdated"
 
-            is_incoming = (t_prj != "openSUSE:Factory")
+            from helpers import fork_helper
+            obs_user = fork_helper.get_current_obs_user()
+            local_src_prj = pool_submit.resolve_source_obs_project(repo_path, default="") if repo_path else ""
+
+            is_outgoing = bool(
+                (local_src_prj and src_prj == local_src_prj) or
+                (obs_user and creator == obs_user) or
+                (obs_user and src_prj == f"home:{obs_user}:Factory") or
+                t_prj == "openSUSE:Factory" or
+                getattr(self, "is_scratch", False)
+            )
+            is_incoming = not is_outgoing
+
             items.append({
                 "type": "SR",
                 "id": req_id,
@@ -6418,23 +6494,27 @@ class SyncWindow(Adw.ApplicationWindow):
 
         items = sorted(items, key=sort_request_item)
 
-        inc_count = sum(1 for i in items if i["kind"] == "incoming")
+        inc_prs = sum(1 for i in items if i["kind"] == "incoming" and i["type"] == "PR")
+        inc_srs = sum(1 for i in items if i["kind"] == "incoming" and i["type"] == "SR")
         fwd_count = sum(1 for i in items if i["kind"] == "forward")
         out_count = sum(1 for i in items if i["kind"] == "outgoing")
         total_count = len(items)
 
         # Dynamic, high-signal Card Header
         action_parts = []
-        if inc_count > 0:
-            c_s = "s" if inc_count > 1 else ""
-            action_parts.append(f"⚠️ {inc_count} Contributor PR{c_s}")
+        if inc_prs > 0:
+            c_s = "s" if inc_prs > 1 else ""
+            action_parts.append(f"⚠️ {inc_prs} Contributor PR{c_s}")
+        if inc_srs > 0:
+            c_s = "s" if inc_srs > 1 else ""
+            action_parts.append(f"⚠️ {inc_srs} Contributor SR{c_s}")
         if fwd_count > 0:
             f_s = "s" if fwd_count > 1 else ""
             action_parts.append(f"🔀 {fwd_count} Forward PR{f_s}")
 
         extra = f" ({out_count} outgoing in-flight)" if out_count > 0 else ""
 
-        if inc_count > 0:
+        if (inc_prs > 0 or inc_srs > 0):
             hdr_text = f"<span weight='bold' size='medium' foreground='#e5a50a'>📥 ACTIVE REQUESTS: {', '.join(action_parts)}{extra}</span>"
         elif fwd_count > 0:
             hdr_text = f"<span weight='bold' size='medium' foreground='#2ec27e'>🔀 ACTIVE REQUESTS: {', '.join(action_parts)}{extra}</span>"
@@ -6490,7 +6570,8 @@ class SyncWindow(Adw.ApplicationWindow):
 
                 pill = Gtk.Label()
                 if kind == "incoming":
-                    pill.set_markup("<span size='smaller' weight='bold' foreground='#e5a50a'>[📥 Contributor PR]</span>")
+                    pill_text = "[📥 Contributor SR]" if item["type"] == "SR" else "[📥 Contributor PR]"
+                    pill.set_markup(f"<span size='smaller' weight='bold' foreground='#e5a50a'>{pill_text}</span>")
                 elif kind == "forward":
                     pill.set_markup("<span size='smaller' weight='bold' foreground='#2ec27e'>[🔀 Branch Forward]</span>")
                 else: # outgoing
@@ -6499,8 +6580,10 @@ class SyncWindow(Adw.ApplicationWindow):
                             pill.set_markup("<span size='smaller' weight='bold' foreground='#2ec27e'>[Accepted - OBS SR]</span>")
                         elif item.get("is_outdated"):
                             pill.set_markup("<span size='smaller' weight='bold' foreground='#3584e4'>[📤 Outdated SR - Supersede Ready]</span>")
+                        elif item.get("target") == "openSUSE:Factory":
+                            pill.set_markup("<span size='smaller' weight='bold' foreground='#3584e4'>[📤 Outgoing Factory SR]</span>")
                         else:
-                            pill.set_markup(f"<span size='smaller' weight='bold' foreground='#3584e4'>[📤 Outgoing Factory SR]</span>")
+                            pill.set_markup("<span size='smaller' weight='bold' foreground='#3584e4'>[📤 Outgoing Devel SR]</span>")
                     else:
                         pill.set_markup("<span size='smaller' weight='bold' foreground='#3584e4'>[📤 Outgoing Pool PR]</span>")
                 title_box.append(pill)
@@ -6927,11 +7010,19 @@ class SyncWindow(Adw.ApplicationWindow):
         elif data.get("pool_status") != "Not in Pool" and isinstance(getattr(self, "known_not_in_pool", None), set):
             self.known_not_in_pool.discard(name)
 
-        if data.get("pool_ahead", 0) > 0:
-            repo_path = os.path.join(self.stable_p, repo) if getattr(self, "stable_p", None) else None
+        repo_path = os.path.join(self.stable_p, repo) if getattr(self, "stable_p", None) else None
+        s_prj = pool_submit.resolve_source_obs_project(repo_path, default="") if repo_path else None
+        short_repo = repo.split("/")[-1]
+        has_pending_in_cache = bool(
+            hasattr(self, "obs_pending_requests") and
+            isinstance(self.obs_pending_requests, dict) and
+            (repo in self.obs_pending_requests or short_repo in self.obs_pending_requests)
+        )
+        if data.get("pool_ahead", 0) > 0 or data.get("is_osc", False) or getattr(self, "is_scratch", False) or has_pending_in_cache:
             data["pool_sr"] = pool_submit.get_package_pool_submission_status(
                 repo,
-                target_project="openSUSE:Factory",
+                target_project=None,
+                source_project=s_prj,
                 pending_requests=getattr(self, "obs_pending_requests", None),
                 accepted_requests=getattr(self, "obs_accepted_requests", None),
                 pkg_dir=repo_path,
