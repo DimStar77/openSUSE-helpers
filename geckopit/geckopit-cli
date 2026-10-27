@@ -1911,6 +1911,8 @@ def main():
         elif arg.startswith("--merge-pr="):
             merge_pr_id = arg.split("=", 1)[1]
 
+    dry_run = "--dry-run" in sys.argv or "-n" in sys.argv
+
     # Detect if a target package argument was provided (e.g. 'geckopit-cli baobab')
     target_arg = None
     for arg in sys.argv[1:]:
@@ -2031,7 +2033,7 @@ def main():
     # Universal submit action
     if "--submit" in sys.argv:
         eff_dir = target_pkg_dir or "."
-        ok, msg = fork_helper.submit_flyby_package(eff_dir, message=custom_message)
+        ok, msg = fork_helper.submit_flyby_package(eff_dir, message=custom_message, dry_run=dry_run)
         if ok:
             print(f"\n{sb.GREEN}✅ {msg}{sb.RESET}\n")
             sys.exit(0)
@@ -2077,8 +2079,6 @@ def main():
     show_commit = "--commit" in sys.argv or "-c" in sys.argv
     no_edit = "--no-edit" in sys.argv
     no_service = "--no-service" in sys.argv
-
-    dry_run = "--dry-run" in sys.argv or "-n" in sys.argv
 
     # Execute commit mode
     if show_commit:

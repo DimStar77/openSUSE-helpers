@@ -527,6 +527,7 @@ def fork_package(
 def submit_flyby_package(
     package_dir: str,
     message: Optional[str] = None,
+    dry_run: bool = False,
     on_log: Optional[Callable[[str], None]] = None
 ) -> Tuple[bool, str]:
     """
@@ -544,7 +545,7 @@ def submit_flyby_package(
 
     # 1. Detect Git Fork
     if os.path.isdir(os.path.join(pkg_dir, ".git")) or os.path.isfile(os.path.join(pkg_dir, ".git")):
-        log("=> Detected Git-managed scratch package.")
+        log("=> Detected Git-managed package.")
 
         # Get current branch
         res_b = subprocess.run(["git", "-C", pkg_dir, "branch", "--show-current"], capture_output=True, text=True)
@@ -561,33 +562,68 @@ def submit_flyby_package(
             target_branch = current_branch.removeprefix("for-")
         elif upstream_ref and "/" in upstream_ref:
             target_branch = upstream_ref.split("/", 1)[1]
+        else:
+            target_branch = current_branch
 
         # Extract changes diff
         base_ref = upstream_ref or f"origin/{target_branch}"
         cmd_diff = ["git", "-C", pkg_dir, "diff", "--no-ext-diff", f"{base_ref}...HEAD"]
         res_diff = subprocess.run(cmd_diff, capture_output=True, text=True)
-        diff_text = res_diff.stdout
+        diff_text = res_diff.stdout.strip()
+        if not diff_text:
+            diff_text = pool_submit.extract_pool_changes(pkg_dir, stable_branch=target_branch)
 
         title = message.splitlines()[0] if message else f"Update {os.path.basename(pkg_dir)} for {target_branch}"
         description = message or diff_text or "Automated submission via Geckopit."
 
-        log(f"   Pushing '{current_branch}' to origin...")
-        res_push = subprocess.run(["git", "-C", pkg_dir, "push", "-u", "origin", current_branch], env=get_git_env(), capture_output=True, text=True)
-        if res_push.returncode != 0:
-            return False, f"git push failed: {res_push.stderr.strip()}"
+        if dry_run:
+            log(f"   [DRY-RUN] Would push '{current_branch}' to origin.")
+        else:
+            log(f"   Pushing '{current_branch}' to origin...")
+            res_push = subprocess.run(["git", "-C", pkg_dir, "push", "-u", "origin", current_branch], env=get_git_env(), capture_output=True, text=True)
+            if res_push.returncode != 0:
+                return False, f"git push failed: {res_push.stderr.strip()}"
 
         # Resolve upstream repo for PR target
-        res_rem = subprocess.run(["git", "-C", pkg_dir, "remote", "get-url", "upstream"], capture_output=True, text=True)
-        upstream_url = res_rem.stdout.strip() if res_rem.returncode == 0 else ""
-        if not upstream_url:
-            res_rem_orig = subprocess.run(["git", "-C", pkg_dir, "remote", "get-url", "origin"], capture_output=True, text=True)
-            upstream_url = res_rem_orig.stdout.strip()
+        origin_url = ""
+        res_rem_orig = subprocess.run(["git", "-C", pkg_dir, "remote", "get-url", "origin"], capture_output=True, text=True)
+        if res_rem_orig.returncode == 0:
+            origin_url = res_rem_orig.stdout.strip()
 
-        target_host, target_repo_path = pool_submit.parse_git_remote_url(upstream_url)
-        target_owner, target_repo = target_repo_path.split("/", 1) if "/" in target_repo_path else ("pool", target_repo_path)
+        origin_host, origin_repo_path = pool_submit.parse_git_remote_url(origin_url)
+        origin_owner, origin_repo = origin_repo_path.split("/", 1) if "/" in origin_repo_path else ("", origin_repo_path)
 
-        current_user = get_current_gitea_user() or "user"
-        head_spec = current_branch if current_user.lower() == target_owner.lower() else f"{current_user}:{current_branch}"
+        res_rem_up = subprocess.run(["git", "-C", pkg_dir, "remote", "get-url", "upstream"], capture_output=True, text=True)
+        upstream_url = res_rem_up.stdout.strip() if res_rem_up.returncode == 0 else ""
+
+        if upstream_url:
+            target_host, target_repo_path = pool_submit.parse_git_remote_url(upstream_url)
+            target_owner, target_repo = target_repo_path.split("/", 1) if "/" in target_repo_path else ("pool", target_repo_path)
+        else:
+            # Dynamically resolve upstream parent repository using get_upstream_gitea_target
+            # (checks Gitea API 'parent' field, stream devel target, or falls back to 'pool')
+            target_owner, target_repo = sync_backend.get_upstream_gitea_target(pkg_dir, origin_owner, origin_repo)
+
+        # Self-PR collision guard: if origin is identical to target and branch matches, resolve central pool/devel repo
+        if origin_owner and origin_owner.lower() == target_owner.lower() and current_branch == target_branch:
+            dev_target = resolve_package_devel_target(os.path.basename(pkg_dir), stream=target_branch)
+            if dev_target.get("is_git") and dev_target.get("git_owner") and dev_target.get("git_owner").lower() != origin_owner.lower():
+                target_owner = dev_target.get("git_owner")
+                target_repo = dev_target.get("git_repo")
+            elif origin_owner.lower() != "pool":
+                target_owner = "pool"
+                target_repo = origin_repo
+
+        current_user = get_current_gitea_user() or origin_owner or "user"
+        if origin_owner and origin_owner.lower() != target_owner.lower():
+            head_spec = f"{origin_owner}:{current_branch}"
+        else:
+            head_spec = current_branch
+
+        if dry_run:
+            log(f"   [DRY-RUN] Would create Pull Request against {target_owner}/{target_repo}:{target_branch} (head: {head_spec}):")
+            log(f"             Title: {title}")
+            return True, f"[DRY-RUN] Pull Request simulation successful (➔ {target_owner}/{target_repo}:{target_branch})"
 
         log(f"   Creating Pull Request against {target_owner}/{target_repo}:{target_branch}...")
         token = sync_backend.get_gitea_token()

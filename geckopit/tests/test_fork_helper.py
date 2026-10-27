@@ -263,5 +263,34 @@ class TestForkHelper(unittest.TestCase):
                         self.assertFalse(os.path.exists(pkg_dir))
 
 
+    def test_submit_flyby_package_git_fork_resolves_upstream_pool(self):
+        """Verifies submitting from a personal fork resolves upstream pool repo and avoids self-PR."""
+        from unittest.mock import patch, MagicMock
+        with tempfile.TemporaryDirectory() as td:
+            pkg_dir = os.path.join(td, 'vlc')
+            os.makedirs(os.path.join(pkg_dir, '.git'), exist_ok=True)
+
+            def fake_run(cmd, *args, **kwargs):
+                m = MagicMock(returncode=0, stdout='', stderr='')
+                if 'branch' in cmd and '--show-current' in cmd:
+                    m.stdout = 'leap-16.0\n'
+                elif 'rev-parse' in cmd and '@{u}' in cmd:
+                    m.stdout = 'origin/leap-16.0\n'
+                elif 'remote' in cmd and 'upstream' in cmd:
+                    m.returncode = 1
+                elif 'remote' in cmd and 'origin' in cmd:
+                    m.stdout = 'gitea@src.opensuse.org:dimstar/vlc.git\n'
+                return m
+
+            with patch('subprocess.run', side_effect=fake_run):
+                with patch('helpers.sync_backend.get_upstream_gitea_target', return_value=('pool', 'vlc')):
+                    logs = []
+                    ok, msg = fork_helper.submit_flyby_package(pkg_dir, dry_run=True, on_log=logs.append)
+                    self.assertTrue(ok)
+                    self.assertIn('[DRY-RUN]', msg)
+                    self.assertTrue(any('pool/vlc:leap-16.0' in l for l in logs))
+                    self.assertTrue(any('head: dimstar:leap-16.0' in l for l in logs))
+
 if __name__ == '__main__':
+
     unittest.main()
