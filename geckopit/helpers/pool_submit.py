@@ -384,6 +384,25 @@ def parse_obs_requests_collection(xml_content: str, target_project: Optional[str
     return requests_by_pkg
 
 
+def get_obs_user() -> Optional[str]:
+    """Resolves the current OBS username from ~/.config/osc/oscrc or environment."""
+    osc_paths = [
+        os.path.expanduser("~/.config/osc/oscrc"),
+        os.path.expanduser("~/.oscrc")
+    ]
+    for p in osc_paths:
+        if os.path.isfile(p):
+            try:
+                with open(p, "r", encoding="utf-8", errors="replace") as f:
+                    c = f.read()
+                m = re.search(r"^\s*user\s*=\s*(\S+)", c, re.MULTILINE)
+                if m:
+                    return m.group(1).strip()
+            except Exception:
+                pass
+    return os.environ.get("USER") or os.environ.get("LOGNAME")
+
+
 def get_pending_obs_requests(
     target_project: Optional[str] = "openSUSE:Factory",
     user: Optional[str] = None,
