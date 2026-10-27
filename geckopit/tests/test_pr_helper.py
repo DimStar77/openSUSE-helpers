@@ -383,5 +383,98 @@ Tue Oct  6 12:00:00 UTC 2026 - B <b@example.com>
             except Exception:
                 pass
 
+    def test_resolve_pr_target_auto_detection_and_collision(self):
+        """Verifies resolve_pr_target correctly auto-detects, handles prefixes, and halts on ambiguity."""
+        from unittest.mock import patch, MagicMock
+        from helpers.pr_helper import resolve_pr_target
+
+        with tempfile.TemporaryDirectory() as td:
+            pkg_dir = os.path.join(td, 'vlc')
+            os.makedirs(os.path.join(pkg_dir, '.git'), exist_ok=True)
+
+            with patch('helpers.pr_helper.sb.get_gitea_owner_and_repo', return_value=('dimstar', 'vlc')), \
+                 patch('helpers.pr_helper.sb.get_upstream_gitea_target', return_value=('pool', 'vlc')):
+
+                # 1. Explicit pool#4
+                cid, src, lbl = resolve_pr_target(pkg_dir, 'pool#4')
+                self.assertEqual(cid, '4')
+                self.assertIn('pool/vlc.git', src)
+                self.assertEqual(lbl, 'pool/vlc')
+
+                # 2. Explicit origin#3
+                cid, src, lbl = resolve_pr_target(pkg_dir, 'origin#3')
+                self.assertEqual(cid, '3')
+                self.assertEqual(src, 'origin')
+                self.assertEqual(lbl, 'dimstar/vlc')
+
+                # 3. Auto-detection: PR only on pool
+                mock_session = MagicMock()
+                def fake_get(url, *args, **kwargs):
+                    m = MagicMock()
+                    if 'pool/vlc/pulls/4' in url:
+                        m.status_code = 200
+                    else:
+                        m.status_code = 404
+                    return m
+
+                mock_session.get.side_effect = fake_get
+                with patch('helpers.pr_helper.sb.get_http_session', return_value=mock_session):
+                    cid, src, lbl = resolve_pr_target(pkg_dir, '4')
+                    self.assertEqual(cid, '4')
+                    self.assertEqual(lbl, 'pool/vlc')
+
+                # 4. Ambiguity: PR on both
+                mock_session2 = MagicMock()
+                mock_resp = MagicMock(status_code=200)
+                mock_session2.get.return_value = mock_resp
+                with patch('helpers.pr_helper.sb.get_http_session', return_value=mock_session2):
+                    cid, src, lbl = resolve_pr_target(pkg_dir, '99')
+                    self.assertIsNone(cid)
+                    self.assertIsNone(src)
+
+    def test_list_pull_requests_dual_repo_grouping(self):
+        """Verifies list_pull_requests queries and groups PRs from both origin and upstream parent."""
+        import io
+        from unittest.mock import patch, MagicMock
+        from helpers.pr_helper import list_pull_requests
+
+        with tempfile.TemporaryDirectory() as td:
+            pkg_dir = os.path.join(td, 'vlc')
+            os.makedirs(os.path.join(pkg_dir, '.git'), exist_ok=True)
+
+            with patch('helpers.pr_helper.sb.get_gitea_owner_and_repo', return_value=('dimstar', 'vlc')), \
+                 patch('helpers.pr_helper.sb.get_upstream_gitea_target', return_value=('pool', 'vlc')), \
+                 patch('helpers.pr_helper.get_obsprj_forwarded_prs', return_value=({}, [])):
+
+                mock_session = MagicMock()
+                def fake_get(url, *args, **kwargs):
+                    m = MagicMock()
+                    m.status_code = 200
+                    if 'dimstar/vlc/pulls' in url:
+                        m.json.return_value = [{
+                            'number': 1, 'title': 'Local PR', 'user': {'username': 'alice'},
+                            'base': {'ref': 'factory'}, 'html_url': 'https://src.opensuse.org/dimstar/vlc/pulls/1'
+                        }]
+                    elif 'pool/vlc/pulls' in url:
+                        m.json.return_value = [{
+                            'number': 4, 'title': 'Pool PR', 'user': {'username': 'bob'},
+                            'base': {'ref': 'leap-16.0'}, 'html_url': 'https://src.opensuse.org/pool/vlc/pulls/4'
+                        }]
+                    return m
+
+                mock_session.get.side_effect = fake_get
+                with patch('helpers.pr_helper.sb.get_http_session', return_value=mock_session):
+                    buf = io.StringIO()
+                    with patch('sys.stdout', buf):
+                        ok = list_pull_requests(target_pkg_dir=pkg_dir)
+                    self.assertTrue(ok)
+                    out = buf.getvalue()
+                    self.assertIn('DIRECT PRs TO FORK (dimstar/vlc)', out)
+                    self.assertIn('CENTRAL UPSTREAM PRs (pool/vlc)', out)
+                    self.assertIn('Local PR', out)
+                    self.assertIn('Pool PR', out)
+                    self.assertIn('geckopit-cli --merge-pr 4', out)
+
 if __name__ == '__main__':
+
     unittest.main()

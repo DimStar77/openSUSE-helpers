@@ -434,7 +434,7 @@ def check_repo_pr(repo_name, stable_branch="factory", unstable_branch="next", wo
         headers['Authorization'] = f'token {token}'
 
     prs = []
-    seen_pr_ids = set()
+    seen_pr_keys = set()
     forward_pr = None
 
     # Check: 1. Local origin repo, 2. Dynamic upstream parent repo (GNOME, KDE, multimedia, pool, etc.), 3. Central pool fallback
@@ -455,12 +455,13 @@ def check_repo_pr(repo_name, stable_branch="factory", unstable_branch="next", wo
                 if isinstance(data, list):
                     for pr in data:
                         num = pr.get("number")
-                        if num in seen_pr_ids:
+                        html_url = pr.get("html_url") or ""
+                        pr_key = html_url or (o.lower(), r.lower(), num)
+                        if pr_key in seen_pr_keys:
                             continue
-                        seen_pr_ids.add(num)
+                        seen_pr_keys.add(pr_key)
 
                         title = pr.get("title") or ""
-                        html_url = pr.get("html_url") or ""
                         author = pr.get("user", {}).get("username") or pr.get("user", {}).get("login") or "unknown"
                         base_ref = pr.get("base", {}).get("ref") or ""
                         head_ref = pr.get("head", {}).get("ref") or pr.get("head", {}).get("label") or ""

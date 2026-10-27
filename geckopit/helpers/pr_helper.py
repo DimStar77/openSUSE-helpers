@@ -212,24 +212,101 @@ def get_pr_commits(package_dir: str, target_commit: str) -> List[str]:
 
     return best_commits if best_commits else [target_commit]
 
-def get_pr_info(package_dir: str, pr_id: str) -> Optional[Dict[str, Any]]:
-    """Fetches refs/pull/<pr_id>/head from origin and returns commit metadata."""
+def resolve_pr_target(package_dir: str, pr_arg: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """
+    Resolves pr_arg (e.g. '4', 'pool#4', 'origin#4', 'pool/vlc#4') into:
+    (clean_pr_id, fetch_source, repo_label)
+    Returns (None, None, None) on error or ambiguity.
+    """
+    pkg_name = os.path.basename(os.path.abspath(package_dir))
+    owner, gitea_name = sb.get_gitea_owner_and_repo(package_dir, pkg_name)
+    up_owner, up_repo = sb.get_upstream_gitea_target(package_dir, owner, gitea_name)
+
+    target_hint = None
+    clean_id = pr_arg
+    if "#" in pr_arg:
+        target_hint, clean_id = pr_arg.split("#", 1)
+
+    clean_id = clean_id.strip()
+    if not clean_id.isdigit():
+        print(f"{RED}[Error]{RESET} Invalid PR number: '{clean_id}'. Expected an integer.", file=sys.stderr)
+        return None, None, None
+
+    origin_fetch = "origin"
+    origin_label = f"{owner}/{gitea_name}"
+    upstream_fetch = f"https://src.opensuse.org/{up_owner}/{up_repo}.git"
+    upstream_label = f"{up_owner}/{up_repo}"
+
+    if target_hint:
+        h = target_hint.strip().lower()
+        if h in ("origin", "local", owner.lower(), origin_label.lower()):
+            return clean_id, origin_fetch, origin_label
+        elif h in ("pool", "upstream", up_owner.lower(), upstream_label.lower()):
+            return clean_id, upstream_fetch, upstream_label
+        elif "/" in h:
+            return clean_id, f"https://src.opensuse.org/{h}.git", h
+        else:
+            print(f"{RED}[Error]{RESET} Unknown PR target prefix '{target_hint}'. Use 'origin', 'pool', or '<owner>/<repo>'.", file=sys.stderr)
+            return None, None, None
+
+    if owner.lower() == up_owner.lower() and gitea_name.lower() == up_repo.lower():
+        return clean_id, origin_fetch, origin_label
+
+    token = sb.get_gitea_token()
+    headers = {'User-Agent': 'curl/8.0.1'}
+    if token:
+        headers['Authorization'] = f'token {token}'
+    session = sb.get_http_session()
+
+    has_on_origin = False
+    has_on_upstream = False
     try:
-        # 1. Fetch the pull request ref from origin
+        r_orig = session.get(f"https://src.opensuse.org/api/v1/repos/{owner}/{gitea_name}/pulls/{clean_id}", headers=headers, timeout=6)
+        if r_orig.status_code == 200:
+            has_on_origin = True
+    except Exception:
+        pass
+
+    try:
+        r_up = session.get(f"https://src.opensuse.org/api/v1/repos/{up_owner}/{up_repo}/pulls/{clean_id}", headers=headers, timeout=6)
+        if r_up.status_code == 200:
+            has_on_upstream = True
+    except Exception:
+        pass
+
+    if has_on_origin and has_on_upstream:
+        print(f"\n{YELLOW}⚠️  Ambiguous PR #{clean_id}:{RESET} Pull request exists on both '{origin_label}' and '{upstream_label}'.", file=sys.stderr)
+        print("Please specify the target repository:", file=sys.stderr)
+        print(f"  {CYAN}geckopit-cli --merge-pr origin#{clean_id}{RESET}   ({origin_label})", file=sys.stderr)
+        print(f"  {CYAN}geckopit-cli --merge-pr pool#{clean_id}{RESET}     ({upstream_label})\n", file=sys.stderr)
+        return None, None, None
+    elif has_on_upstream:
+        print(f"ℹ️  Found PR #{clean_id} on {upstream_label}.", file=sys.stderr)
+        return clean_id, upstream_fetch, upstream_label
+    elif has_on_origin:
+        return clean_id, origin_fetch, origin_label
+    else:
+        return clean_id, origin_fetch, origin_label
+
+
+def get_pr_info(package_dir: str, pr_id: str, fetch_source: str = "origin") -> Optional[Dict[str, Any]]:
+    """Fetches refs/pull/<pr_id>/head from fetch_source and returns commit metadata."""
+    try:
+        # 1. Fetch the pull request ref from fetch_source
         res = subprocess.run(
-            ["git", "-C", package_dir, "fetch", "origin", f"pull/{pr_id}/head"],
+            ["git", "-C", package_dir, "fetch", fetch_source, f"pull/{pr_id}/head"],
             capture_output=True,
             text=True
         )
         if res.returncode != 0:
             # Fallback to full refspec
             res = subprocess.run(
-                ["git", "-C", package_dir, "fetch", "origin", f"refs/pull/{pr_id}/head"],
+                ["git", "-C", package_dir, "fetch", fetch_source, f"refs/pull/{pr_id}/head"],
                 capture_output=True,
                 text=True
             )
             if res.returncode != 0:
-                print(f"{RED}[Error]{RESET} Failed to fetch pull request #{pr_id} from origin:\n{res.stderr}", file=sys.stderr)
+                print(f"{RED}[Error]{RESET} Failed to fetch pull request #{pr_id} from {fetch_source}:\n{res.stderr}", file=sys.stderr)
                 return None
 
         # 2. Extract commit metadata from FETCH_HEAD
@@ -314,9 +391,13 @@ def merge_pull_request(
         print(f"{RED}[Error]{RESET} Working tree is dirty. Please commit or stash changes before merging a PR.", file=sys.stderr)
         return False
 
-    # 3. Fetch PR info
-    print(f"🔄 Fetching pull request #{pr_id} from origin for {CYAN}{pkg_name}{RESET}...")
-    pr_info = get_pr_info(pkg_dir, pr_id)
+    # 3. Resolve target repository and fetch PR info
+    clean_id, fetch_source, repo_label = resolve_pr_target(pkg_dir, pr_id)
+    if not clean_id or not fetch_source:
+        return False
+
+    print(f"🔄 Fetching pull request #{clean_id} from {repo_label} for {CYAN}{pkg_name}{RESET}...")
+    pr_info = get_pr_info(pkg_dir, clean_id, fetch_source=fetch_source)
     if not pr_info:
         return False
 
@@ -639,60 +720,88 @@ def list_pull_requests(target_pkg_dir: Optional[str] = None, workspace_path: str
         pkg_dir = os.path.abspath(target_pkg_dir)
         pkg_name = os.path.basename(pkg_dir)
         owner, gitea_name = sb.get_gitea_owner_and_repo(pkg_dir, pkg_name)
+        up_owner, up_repo = sb.get_upstream_gitea_target(pkg_dir, owner, gitea_name)
+        is_fork = (up_owner.lower() != owner.lower() or up_repo.lower() != gitea_name.lower())
 
         super_owner, _ = sb.get_gitea_owner_and_repo(workspace_path, "_ObsPrj")
         if not super_owner:
             super_owner = owner
 
-        print(f"🔄 Querying open pull requests for {CYAN}{pkg_name}{RESET} on {owner}/{gitea_name}...")
-        url = f"https://src.opensuse.org/api/v1/repos/{owner}/{gitea_name}/pulls?state=open"
-        prs = []
-        try:
-            res = sb.get_http_session().get(url, headers=headers, timeout=10)
-            if res.status_code == 200:
-                prs = res.json()
-        except Exception as e:
-            print(f"{RED}[Error]{RESET} Failed to query pull requests from Gitea: {e}", file=sys.stderr)
-            return False
+        targets = [(owner, gitea_name, "origin")]
+        if is_fork:
+            targets.append((up_owner, up_repo, "pool" if up_owner.lower() == "pool" else "upstream"))
+
+        repo_prs = {}
+        for t_owner, t_repo, t_alias in targets:
+            print(f"🔄 Querying open pull requests for {CYAN}{pkg_name}{RESET} on {t_owner}/{t_repo}...")
+            url = f"https://src.opensuse.org/api/v1/repos/{t_owner}/{t_repo}/pulls?state=open"
+            try:
+                res = sb.get_http_session().get(url, headers=headers, timeout=10)
+                if res.status_code == 200:
+                    repo_prs[(t_owner, t_repo, t_alias)] = res.json()
+                else:
+                    repo_prs[(t_owner, t_repo, t_alias)] = []
+            except Exception:
+                repo_prs[(t_owner, t_repo, t_alias)] = []
+
+        total_prs = sum(len(prs) for prs in repo_prs.values())
+        if total_prs == 0:
+            repos_str = f"{owner}/{gitea_name}" + (f" or {up_owner}/{up_repo}" if is_fork else "")
+            print(f"\n{CYAN}ℹ️  No open pull requests found for {pkg_name} on {repos_str}.{RESET}\n")
+            return True
 
         forwarded_map, _ = get_obsprj_forwarded_prs(workspace_path, super_owner)
 
-        if not prs:
-            print(f"\n{CYAN}ℹ️  No open pull requests found for {pkg_name} on {owner}/{gitea_name}.{RESET}\n")
-            return True
+        all_numbers = {}
+        for (t_owner, t_repo, t_alias), prs in repo_prs.items():
+            for pr in prs:
+                num = pr.get("number")
+                all_numbers.setdefault(num, []).append(t_alias)
+        overlapping_numbers = {num for num, aliases in all_numbers.items() if len(aliases) > 1}
 
         print(f"\n{BOLD}{'='*80}{RESET}")
-        print(f"📋 {BOLD}OPEN PULL REQUESTS: {CYAN}{pkg_name}{RESET} ({owner}/{gitea_name})")
+        title_suffix = f" ({owner}/{gitea_name} & {up_owner}/{up_repo})" if is_fork else f" ({owner}/{gitea_name})"
+        print(f"📋 {BOLD}OPEN PULL REQUESTS: {CYAN}{pkg_name}{RESET}{title_suffix}")
         print(f"{BOLD}{'='*80}{RESET}")
 
-        for pr in prs:
-            num = pr.get("number")
-            title = pr.get("title")
-            author = pr.get("user", {}).get("username") or pr.get("user", {}).get("login")
-            base = pr.get("base", {}).get("ref")
-            head_repo = pr.get("head", {}).get("repo", {}).get("full_name") or ""
-            head_ref = pr.get("head", {}).get("ref") or ""
-            source_str = f"{head_repo}:{head_ref}" if head_repo else head_ref
-            created = pr.get("created_at", "")[:19].replace("T", " ")
-            url = pr.get("html_url")
+        for (t_owner, t_repo, t_alias), prs in repo_prs.items():
+            if not prs:
+                continue
+            if is_fork:
+                section_title = f"📥 DIRECT PRs TO FORK ({t_owner}/{t_repo}):" if t_alias == "origin" else f"🌐 CENTRAL UPSTREAM PRs ({t_owner}/{t_repo}):"
+                print(f"\n{BOLD}{section_title}{RESET}")
+                print(f"{'-'*len(section_title)}")
 
-            fwd = forwarded_map.get((pkg_name.lower(), num))
-            if fwd:
-                if fwd["is_grouped"]:
-                    fwd_str = f"{YELLOW}{super_owner}/_ObsPrj#{fwd['obsprj_pr']} ➔ {fwd['obsprj_target']} [Group of {fwd['group_size']} packages]{RESET}"
+            for pr in prs:
+                num = pr.get("number")
+                title = pr.get("title")
+                author = pr.get("user", {}).get("username") or pr.get("user", {}).get("login")
+                base = pr.get("base", {}).get("ref")
+                head_repo = pr.get("head", {}).get("repo", {}).get("full_name") or ""
+                head_ref = pr.get("head", {}).get("ref") or ""
+                source_str = f"{head_repo}:{head_ref}" if head_repo else head_ref
+                created = pr.get("created_at", "")[:19].replace("T", " ")
+                url = pr.get("html_url")
+
+                fwd = forwarded_map.get((pkg_name.lower(), num))
+                if fwd:
+                    if fwd["is_grouped"]:
+                        fwd_str = f"{YELLOW}{super_owner}/_ObsPrj#{fwd['obsprj_pr']} ➔ {fwd['obsprj_target']} [Group of {fwd['group_size']} packages]{RESET}"
+                    else:
+                        fwd_str = f"{GREEN}{super_owner}/_ObsPrj#{fwd['obsprj_pr']} ➔ {fwd['obsprj_target']} [Single Package Forwarded]{RESET}"
                 else:
-                    fwd_str = f"{GREEN}{super_owner}/_ObsPrj#{fwd['obsprj_pr']} ➔ {fwd['obsprj_target']} [Single Package Forwarded]{RESET}"
-            else:
-                fwd_str = f"{CYAN}None (Direct Branch or Contributor PR){RESET}"
+                    fwd_str = f"{CYAN}None (Direct Branch or Contributor PR){RESET}"
 
-            print(f"  {BOLD}PR #{num}:{RESET} {title}")
-            print(f"    • Author:       {author}")
-            print(f"    • Target:       {BOLD}{base}{RESET}  (<= {source_str})")
-            print(f"    • Created:      {created}")
-            print(f"    • Forwarded PR: {fwd_str}")
-            print(f"    • URL:          {url}")
-            print(f"    • Quick Merge:  {CYAN}geckopit-cli --merge-pr {num}{RESET}")
-            print()
+                merge_cmd = f"geckopit-cli --merge-pr {t_alias}#{num}" if num in overlapping_numbers else f"geckopit-cli --merge-pr {num}"
+
+                print(f"  {BOLD}PR #{num}:{RESET} {title}")
+                print(f"    • Author:       {author}")
+                print(f"    • Target:       {BOLD}{base}{RESET}  (<= {source_str})")
+                print(f"    • Created:      {created}")
+                print(f"    • Forwarded PR: {fwd_str}")
+                print(f"    • URL:          {url}")
+                print(f"    • Quick Merge:  {CYAN}{merge_cmd}{RESET}")
+                print()
 
         print(f"{BOLD}{'='*80}{RESET}\n")
         return True
