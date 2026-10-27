@@ -743,7 +743,7 @@ def run_sync_action(target_pkg_dir=None, force=False, jobs=16):
             return 1
 
 
-def run_package_commit(pkg_dir=".", interactive=True):
+def run_package_commit(pkg_dir=".", interactive=True, no_service=False):
     pkg_dir = os.path.abspath(pkg_dir)
     pkg_name = sb.get_package_name_from_dir(pkg_dir)
     print(f"\033[1;34m=>\033[0m \033[1mGeckopit Package Commit\033[0m: \033[1;37m{pkg_name}\033[0m")
@@ -751,6 +751,7 @@ def run_package_commit(pkg_dir=".", interactive=True):
     ok, msg = ch.execute_package_commit(
         package_dir=pkg_dir,
         interactive=interactive,
+        no_service=no_service,
         on_log=lambda m: print(f"   \033[0;37m{m}\033[0m")
     )
 
@@ -1598,7 +1599,7 @@ KNOWN_OPTIONS = {
     "--upgrade", "-u",
     "--check-patches", "--verbose", "--sle",
     "--rebase-patch", "--shell",
-    "--commit", "-c", "--no-edit",
+    "--commit", "-c", "--no-edit", "--no-service",
     "--audit-deps", "-d", "--fix-deps",
     "--list-prs", "--merge-pr", "--squash", "--no-commit",
     "--ignore", "--unignore", "--list-ignored",
@@ -1820,6 +1821,7 @@ def print_help():
     print(f"  {sb.BOLD}--squash{sb.RESET}            Used with --merge-pr to squash multiple PR commits into a single commit.")
     print(f"  {sb.BOLD}--no-commit{sb.RESET}         Used with --merge-pr to stage changes without committing.")
     print(f"  {sb.BOLD}--no-edit{sb.RESET}          Used with --commit to commit without opening an interactive editor.")
+    print(f"  {sb.BOLD}--no-service{sb.RESET}       Used with --commit to skip _service and source_validator checks.")
     print(f"  {sb.BOLD}-m, --message <m>{sb.RESET}  Custom submission description message with --submit-pool.")
     print(f"  {sb.BOLD}-a, --all{sb.RESET}          With --submit-pool, submits all unsubmitted workspace packages.")
     print(f"  {sb.BOLD}-n, --dry-run{sb.RESET}      Used with --upgrade or --submit-pool to simulate without modifying.")
@@ -2074,6 +2076,7 @@ def main():
     # Parse commit options
     show_commit = "--commit" in sys.argv or "-c" in sys.argv
     no_edit = "--no-edit" in sys.argv
+    no_service = "--no-service" in sys.argv
 
     dry_run = "--dry-run" in sys.argv or "-n" in sys.argv
 
@@ -2082,7 +2085,7 @@ def main():
         if not target_pkg_dir:
             print(f"{sb.RED}[Error]{sb.RESET} --commit must be run inside a package directory (or target a package).", file=sys.stderr)
             sys.exit(1)
-        sys.exit(run_package_commit(target_pkg_dir, interactive=not no_edit))
+        sys.exit(run_package_commit(target_pkg_dir, interactive=not no_edit, no_service=no_service))
 
     # Execute check-patches mode
     if "--check-patches" in sys.argv:

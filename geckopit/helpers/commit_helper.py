@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import tempfile
+import shutil
 from typing import Optional, Tuple, List, Callable
 
 TEXT_FILE_EXTENSIONS = (
@@ -248,9 +249,94 @@ def format_commit_message_from_entry(entry_text: str) -> Tuple[str, str]:
     return subject, body
 
 
+def find_obs_source_validator() -> Optional[str]:
+    """Finds obs-service-source_validator binary in PATH or canonical openSUSE location."""
+    for cand in ("obs-service-source_validator", "source_validator"):
+        p = shutil.which(cand)
+        if p and os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    canonical = "/usr/lib/obs/service/source_validator"
+    if os.path.isfile(canonical) and os.access(canonical, os.X_OK):
+        return canonical
+    return None
+
+
+def check_service_source_urls(package_dir: str) -> Tuple[bool, str]:
+    """
+    Guards against having remote URLs in Source: or Source0: lines when _service
+    manages the primary source archive (e.g. obs_scm, tar_scm, download_url).
+    In openSUSE, _service-managed packages must specify only the local filename.
+    """
+    service_path = os.path.join(package_dir, "_service")
+    if not os.path.isfile(service_path):
+        return True, ""
+
+    try:
+        with open(service_path, "r", encoding="utf-8", errors="replace") as f:
+            service_content = f.read()
+    except OSError:
+        return True, ""
+
+    # Check if _service generates/manages the primary source archive
+    manages_source = any(s in service_content for s in ("obs_scm", "tar_scm", "download_url"))
+    if not manages_source:
+        return True, ""
+
+    try:
+        for fname in os.listdir(package_dir):
+            if fname.endswith(".spec"):
+                spec_path = os.path.join(package_dir, fname)
+                try:
+                    with open(spec_path, "r", encoding="utf-8", errors="replace") as f:
+                        for line_no, line in enumerate(f, 1):
+                            m = re.match(r"^\s*Source[0]?\s*:\s*(https?://|ftp://)\S+", line, re.IGNORECASE)
+                            if m:
+                                tag = line.split(":", 1)[0].strip()
+                                return False, (
+                                    f"{fname}:{line_no}: Found URL in '{tag}:' while _service manages the source archive.\n"
+                                    f"In _service-managed packages, Source lines must only specify the plain filename (e.g. '%{{name}}-%{{version}}.tar.xz').\n"
+                                    f"Use '--no-service' to override if intentional."
+                                )
+                except OSError:
+                    pass
+    except OSError:
+        pass
+
+    return True, ""
+
+
+def run_obs_source_validator(package_dir: str, on_log: Optional[Callable[[str], None]] = None) -> Tuple[bool, str]:
+    """
+    Executes obs-service-source_validator if installed to validate packaging files,
+    patch syntax, and changelog headers.
+    """
+    validator = find_obs_source_validator()
+    if not validator:
+        return True, ""
+
+    try:
+        res = subprocess.run(
+            [validator],
+            cwd=package_dir,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        if res.returncode != 0:
+            err = res.stdout.strip() or res.stderr.strip()
+            return False, f"obs-service-source_validator failed:\n{err}\nUse '--no-service' to override if intentional."
+        if on_log:
+            on_log("Verified package sources with obs-service-source_validator.")
+    except Exception as e:
+        if on_log:
+            on_log(f"Notice: obs-service-source_validator error: {e}")
+    return True, ""
+
+
 def execute_package_commit(
     package_dir: str = ".",
     interactive: bool = True,
+    no_service: bool = False,
     on_log: Optional[Callable[[str], None]] = None
 ) -> Tuple[bool, str]:
     """
@@ -275,6 +361,18 @@ def execute_package_commit(
     ok, msg = stage_package_files(package_dir, on_log=log)
     if not ok:
         return False, msg
+
+    # Pre-commit Service & Source validation
+    if not no_service:
+        ok_url, err_url = check_service_source_urls(package_dir)
+        if not ok_url:
+            return False, err_url
+
+        ok_val, err_val = run_obs_source_validator(package_dir, on_log=log)
+        if not ok_val:
+            return False, err_val
+    else:
+        log("Skipping _service and source_validator checks (--no-service)")
 
     # 3. Pre-check: Verify staged changes
     try:

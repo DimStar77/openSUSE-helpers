@@ -209,6 +209,69 @@ Wed Sep 23 16:00:00 UTC 2026 - User <user@example.com>
             self.assertIn('committed', msg.lower())
             self.assertTrue(any('No .changes file found' in log for log in logs))
 
+    def test_check_service_source_urls(self):
+        """Verifies catching remote URLs in Source lines when _service is present."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service_file = os.path.join(tmpdir, "_service")
+            spec_file = os.path.join(tmpdir, "pkg.spec")
+
+            # 1. No _service present -> always clean even with URL
+            with open(spec_file, "w") as f:
+                f.write("Name: pkg\nSource0: https://example.com/pkg-1.0.tar.xz\n")
+            ok, msg = ch.check_service_source_urls(tmpdir)
+            self.assertTrue(ok)
+            self.assertEqual(msg, "")
+
+            # 2. _service with obs_scm and Source0 with URL -> caught!
+            with open(service_file, "w") as f:
+                f.write('<services><service name="obs_scm" mode="manual"/></services>')
+            ok, msg = ch.check_service_source_urls(tmpdir)
+            self.assertFalse(ok)
+            self.assertIn("Found URL in 'Source0:' while _service manages the source archive", msg)
+            self.assertIn("--no-service", msg)
+
+            # 3. Clean plain filename Source0 -> clean!
+            with open(spec_file, "w") as f:
+                f.write("Name: pkg\nSource0: %{name}-%{version}.tar.xz\n")
+            ok, msg = ch.check_service_source_urls(tmpdir)
+            self.assertTrue(ok)
+            self.assertEqual(msg, "")
+
+    @mock.patch("subprocess.run")
+    def test_execute_package_commit_blocked_by_service_url(self, mock_run):
+        """Verifies execute_package_commit halts when Source0 has a URL with _service, and can be bypassed with no_service."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, "_service"), "w") as f:
+                f.write('<services><service name="obs_scm" mode="manual"/></services>')
+            with open(os.path.join(tmpdir, "pkg.spec"), "w") as f:
+                f.write("Name: pkg\nSource0: https://github.com/org/pkg/releases/pkg-1.0.tar.xz\n")
+            with open(os.path.join(tmpdir, "pkg.changes"), "w") as f:
+                f.write("-------------------------------------------------------------------\nWed Oct 27 12:00:00 UTC 2026 - user@example.com\n\n- Update to 1.0\n")
+
+            mock_diff = mock.MagicMock(returncode=0, stdout="pkg.spec\n")
+            mock_run.return_value = mock_diff
+
+            # Blocked without --no-service
+            ok, msg = ch.execute_package_commit(tmpdir, interactive=False, no_service=False)
+            self.assertFalse(ok)
+            self.assertIn("Found URL in 'Source0:'", msg)
+
+            # Bypassed with --no-service
+            ok, msg = ch.execute_package_commit(tmpdir, interactive=False, no_service=True)
+            self.assertTrue(ok)
+
+    def test_run_obs_source_validator_failure(self):
+        """Verifies run_obs_source_validator catches non-zero exit from validator."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch("commit_helper.find_obs_source_validator", return_value="/mock/source_validator"):
+                with mock.patch("subprocess.run") as mock_run:
+                    mock_run.return_value = mock.MagicMock(returncode=1, stdout="ERROR: missing file", stderr="")
+                    ok, msg = ch.run_obs_source_validator(tmpdir)
+                    self.assertFalse(ok)
+                    self.assertIn("obs-service-source_validator failed", msg)
+                    self.assertIn("ERROR: missing file", msg)
+
 if __name__ == '__main__':
+
 
     unittest.main()
