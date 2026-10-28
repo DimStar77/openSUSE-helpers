@@ -437,6 +437,61 @@ class TestSinglePackageDashboardFormatting(unittest.TestCase):
         self.assertIn("Unstable branch 'next' has 6 unforwarded commits ready to forward.", out)
         self.assertNotIn("Create Gitea Pull Request from factory to factory", out)
 
+    def test_run_package_upgrade_auto_guessing_obs_scm_and_tarball(self):
+        """Verifies run_package_upgrade auto-guesses target revision/version when None is provided."""
+        import tempfile, io
+        from unittest.mock import patch, MagicMock
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # 1. Test obs_scm package auto-detection
+            service_path = os.path.join(tmpdir, "_service")
+            with open(service_path, "w") as f:
+                f.write("""<services>
+  <service name="obs_scm" mode="manual">
+    <param name="url">https://gitlab.example.org/foo/mypkg.git</param>
+    <param name="revision">v1.0.0</param>
+  </service>
+</services>""")
+            spec_path = os.path.join(tmpdir, "mypkg.spec")
+            with open(spec_path, "w") as f:
+                f.write("Name: mypkg\nVersion: 1.0.0\n")
+
+            fake_ver = {
+                'status': 'success',
+                'upstream_latest': '1.2.0',
+                'upstream_stable': '1.1.0'
+            }
+
+            with patch('sync_backend.check_repo_version', return_value=(None, fake_ver)):
+                with patch('sync_backend.check_worktree_status', return_value={'head': 'next'}):
+                    buf = io.StringIO()
+                    with patch('sys.stdout', buf):
+                        with patch('upgrade.obs_scm.ObsScmUpgradeHelper.execute_upgrade') as mock_exec:
+                            mock_exec.return_value = MagicMock(success=True, message="Updated", removed_files=[], fixed_meson_drifts=[])
+                            ret = self.cli.run_package_upgrade(tmpdir, revision=None, dry_run=True)
+                            self.assertEqual(ret, 0)
+                            mock_exec.assert_called_once()
+                            self.assertEqual(mock_exec.call_args[1]['target_revision'], "v1.2.0")
+
+                    out = buf.getvalue()
+                    self.assertIn("v1.2.0 (auto-detected from upstream release 1.2.0)", out)
+
+            # 2. Test tarball package auto-detection
+            os.remove(service_path)
+            with patch('sync_backend.check_repo_version', return_value=(None, fake_ver)):
+                with patch('sync_backend.check_worktree_status', return_value={'head': 'factory'}):
+                    buf = io.StringIO()
+                    with patch('sys.stdout', buf):
+                        with patch('upgrade.tarball.TarballUpgradeHelper.execute_upgrade') as mock_exec:
+                            mock_exec.return_value = MagicMock(success=True, message="Updated", removed_files=[], fixed_meson_drifts=[])
+                            ret = self.cli.run_package_upgrade(tmpdir, revision=None, dry_run=True)
+                            self.assertEqual(ret, 0)
+                            mock_exec.assert_called_once()
+                            self.assertEqual(mock_exec.call_args[1]['target_revision'], "1.1.0")
+
+                    out = buf.getvalue()
+                    self.assertIn("1.1.0 (auto-detected from upstream release 1.1.0)", out)
+
 if __name__ == '__main__':
 
 

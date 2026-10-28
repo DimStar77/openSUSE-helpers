@@ -910,5 +910,27 @@ AppStream description
             self.assertTrue(any("Would remove obsolete file: AppStream-1.2.0.tar.xz.asc" in l for l in logs))
 
 
+    def test_obs_scm_execute_upgrade_auto_guesses_when_none(self):
+        """Verifies ObsScmUpgradeHelper automatically guesses target revision if target_revision is None."""
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service_path = os.path.join(tmpdir, "_service")
+            with open(service_path, "w") as f:
+                f.write("""<services>
+  <service name="obs_scm" mode="manual">
+    <param name="url">https://gitlab.example.org/foo/mypkg.git</param>
+    <param name="revision">v1.0.0</param>
+  </service>
+</services>""")
+            spec_path = os.path.join(tmpdir, "mypkg.spec")
+            with open(spec_path, "w") as f:
+                f.write("Name: mypkg\nVersion: 1.0.0\n")
+
+            helper = ObsScmUpgradeHelper(tmpdir)
+            fake_ver = {'status': 'success', 'upstream_stable': '1.3.0', 'upstream_latest': '1.3.0'}
+            with patch('sync_backend.check_repo_version', return_value=(None, fake_ver)):
+                res = helper.execute_upgrade(target_revision=None, dry_run=True)
+                self.assertTrue(res.success)
+
 if __name__ == '__main__':
     unittest.main()

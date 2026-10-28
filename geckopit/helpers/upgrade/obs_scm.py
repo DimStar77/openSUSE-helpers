@@ -763,8 +763,25 @@ class ObsScmUpgradeHelper(BaseUpgradeHelper):
                 message=f"No _service file found in {self.package_dir}"
             )
 
-        rev = target_revision.strip() if target_revision else "@PARENT_TAG@"
-        if target_revision and target_revision.strip() != "@PARENT_TAG@":
+        rev = target_revision.strip() if target_revision else None
+        if not rev or rev == "@PARENT_TAG@":
+            # Attempt to guess from upstream if possible
+            try:
+                import sync_backend as sb
+                parent_dir = os.path.dirname(self.package_dir)
+                pkg_name = self.get_package_name()
+                _, ver_info = sb.check_repo_version(pkg_name, None, workspace_path=parent_dir, skip_fetch=True)
+                cand = ver_info.get("upstream_latest") or ver_info.get("upstream_stable")
+                if cand and cand not in ("—", "N/A"):
+                    cur_rev = self.get_current_revision(self.package_dir)
+                    guessed, err = sb.guess_update_revision(cur_rev, cand)
+                    if guessed and not err:
+                        rev = guessed
+            except Exception:
+                pass
+            if not rev:
+                rev = "@PARENT_TAG@"
+        elif rev:
             try:
                 import sync_backend as sb
                 cur_rev = self.get_current_revision(self.package_dir)

@@ -14,6 +14,7 @@ import concurrent.futures
 import locale
 import difflib
 import subprocess
+import re
 
 # Gracefully handle container environments missing host regional locale files
 try:
@@ -632,6 +633,65 @@ def run_single_package_forward(pkg_dir=".", show_pr=False, only_no_pr=False):
     print(f"{sb.BOLD}{'='*60}{sb.RESET}")
 
 
+def resolve_auto_upgrade_revision(pkg_dir, helper):
+    """
+    Automatically detects the target upstream release version and formats the target revision
+    matching the Geckopit GUI one-click upgrade behavior.
+    Returns: (guessed_revision, upstream_version, error_message)
+    """
+    pkg_name = sb.get_package_name_from_dir(pkg_dir)
+    wt = sb.check_worktree_status(pkg_dir)
+    head = wt.get("head") or "unknown"
+    prof = sb.load_geckopit_profile_config()
+    st_branch = prof.get("stable_branch", "factory") or "factory"
+    unst_branch = prof.get("unstable_branch", "next") or "next"
+
+    ver_info = None
+    try:
+        prof_info = sb.get_workspace_profile_for_path(pkg_dir)
+        if prof_info:
+            prof_name, _, _ = prof_info
+            cache_path = sb.get_profile_cache_path(prof_name)
+            if cache_path.exists():
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    cache_data = json.load(f)
+                    pkg_entry = cache_data.get("package_data", {}).get(pkg_name, {})
+                    ver_info = pkg_entry.get("version")
+    except Exception:
+        pass
+
+    if not ver_info or ver_info.get("status") != "success":
+        try:
+            parent_dir = os.path.dirname(pkg_dir)
+            ignored = prof.get("ignored_versions") or prof.get("ignored_unstable_versions", {})
+            _, ver_info = sb.check_repo_version(pkg_name, None, st_branch, unst_branch, parent_dir, ignored, skip_fetch=True)
+        except Exception:
+            pass
+
+    if ver_info:
+        u_latest = ver_info.get("upstream_latest")
+        u_stable = ver_info.get("upstream_stable")
+        if head == unst_branch or head == "next":
+            target_v = u_latest if (u_latest and u_latest not in ("—", "N/A")) else u_stable
+        else:
+            target_v = u_stable if (u_stable and u_stable not in ("—", "N/A")) else u_latest
+
+        if target_v and target_v not in ("—", "N/A"):
+            if helper and helper.name == "tarball":
+                clean_v = re.sub(r"^v(?=\d)", "", target_v.strip())
+                return clean_v, target_v, None
+            elif helper and helper.name == "obs_scm":
+                cur_rev = helper.get_current_revision(pkg_dir)
+                guessed, err = sb.guess_update_revision(cur_rev, target_v)
+                if guessed and not err:
+                    return guessed, target_v, None
+                else:
+                    return target_v, target_v, err
+            return target_v, target_v, None
+
+    return None, None, "No upstream release version found in release-monitoring"
+
+
 def run_package_upgrade(pkg_dir=".", revision=None, dry_run=False):
     pkg_dir = os.path.abspath(pkg_dir)
     helper = get_upgrade_helper(pkg_dir)
@@ -643,12 +703,40 @@ def run_package_upgrade(pkg_dir=".", revision=None, dry_run=False):
         return 1
 
     pkg_name = sb.get_package_name_from_dir(pkg_dir)
+    auto_detected = False
+    source_ver = None
+
+    if not revision or revision.strip() == "@PARENT_TAG@":
+        guessed_rev, target_v, err = resolve_auto_upgrade_revision(pkg_dir, helper)
+        if guessed_rev:
+            revision = guessed_rev
+            auto_detected = True
+            source_ver = target_v
+        elif not revision:
+            if helper.name == "obs_scm":
+                revision = "@PARENT_TAG@"
+            else:
+                print(f"\033[1;31m[Error]\033[0m Could not determine upstream version for {pkg_name}: {err}", file=sys.stderr)
+                print("Please provide a target version: geckopit-cli --upgrade <version>", file=sys.stderr)
+                return 1
+    elif helper.name == "obs_scm":
+        cur_rev = helper.get_current_revision(pkg_dir)
+        guessed, err = sb.guess_update_revision(cur_rev, revision)
+        if guessed and not err and guessed != revision:
+            revision = guessed
+
     if helper.name == "tarball":
         target_label = "Target Version:"
-        rev_display = revision if (revision and revision != "@PARENT_TAG@") else "latest upstream release"
+        if auto_detected:
+            rev_display = f"{revision} (auto-detected from upstream release {source_ver})"
+        else:
+            rev_display = revision if revision else "latest upstream release"
     else:
         target_label = "Target Revision:"
-        rev_display = revision if revision else "@PARENT_TAG@ (default)"
+        if auto_detected:
+            rev_display = f"{revision} (auto-detected from upstream release {source_ver})"
+        else:
+            rev_display = revision if revision else "@PARENT_TAG@ (default)"
 
     print(f"\033[1;34m=>\033[0m \033[1mGeckopit Package Upgrade\033[0m: \033[1;37m{pkg_name}\033[0m")
     print(f"\033[1;34m=>\033[0m Engine: \033[1;32m{helper.name}\033[0m ({helper.description})")
@@ -2010,7 +2098,7 @@ def main():
     for idx, arg in enumerate(sys.argv):
         if arg in ("--upgrade", "-u"):
             show_upgrade = True
-            if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("-"):
+            if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("-") and not sb.is_package_dir(sys.argv[idx + 1]):
                 upgrade_rev = sys.argv[idx + 1]
         elif arg.startswith("--upgrade="):
             show_upgrade = True
