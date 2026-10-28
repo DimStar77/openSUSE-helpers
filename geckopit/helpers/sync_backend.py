@@ -10,6 +10,7 @@ Shared between CLI and GUI frontends.
 import os
 import sys
 import json
+import time
 import re
 import subprocess
 import concurrent.futures
@@ -2055,6 +2056,129 @@ def load_geckopit_profile_config(workspace_dir=None):
         except Exception:
             pass
     return config
+
+
+def get_workspace_profile_for_path(target_path, config_file=None):
+    """
+    Checks whether target_path or any parent directory is configured as a
+    stable_path or unstable_path across all profiles in ~/.config/geckopit.json.
+    Returns (profile_name, profile_dict) if inside a recognized workspace, else (None, None).
+    """
+    from pathlib import Path
+    cfg_path = Path(config_file) if config_file else (Path.home() / ".config" / "geckopit.json")
+    if not cfg_path.exists():
+        return None, None
+    try:
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        workspaces = data.get("workspaces", {})
+        target_dir = os.path.abspath(target_path)
+        curr = target_dir
+        while curr and curr != "/":
+            for ws_name, prof in workspaces.items():
+                sp = prof.get("stable_path")
+                up = prof.get("unstable_path")
+                if (sp and os.path.abspath(sp) == curr) or (up and os.path.abspath(up) == curr):
+                    return ws_name, prof
+            curr = os.path.dirname(curr)
+
+        pairing = autodetect_worktree_pairing(target_dir)
+        if pairing:
+            sp = pairing.get("stable_path")
+            for ws_name, prof in workspaces.items():
+                if prof.get("stable_path") and os.path.abspath(prof["stable_path"]) == os.path.abspath(sp):
+                    return ws_name, prof
+            return os.path.basename(sp), pairing
+    except Exception:
+        pass
+    return None, None
+
+
+def get_profile_cache_path(profile_name, cache_dir=None):
+    """Returns ~/.cache/geckopit/cache_{safe_profile_name}.json."""
+    from pathlib import Path
+    safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in profile_name)
+    cdir = Path(cache_dir) if cache_dir else (Path.home() / ".cache" / "geckopit")
+    return cdir / f"cache_{safe_name}.json"
+
+
+def update_profile_cache_for_package(pkg_dir, package_data=None, cache_dir=None, config_file=None):
+    """
+    Atomically updates ~/.cache/geckopit/cache_{profile}.json for the given package directory
+    if it belongs to a configured workspace profile.
+    If pkg_dir does not belong to any workspace, skips without modifying or creating any cache.
+    """
+    from pathlib import Path
+    ws_name, ws_prof = get_workspace_profile_for_path(pkg_dir, config_file=config_file)
+    if not ws_name:
+        return False
+
+    cache_path = get_profile_cache_path(ws_name, cache_dir=cache_dir)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+    cache_content = {"profile": ws_name, "scanned_at": time.time(), "package_data": {}}
+    if cache_path.exists():
+        try:
+            with open(cache_path, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+                if isinstance(loaded, dict) and "package_data" in loaded:
+                    cache_content = loaded
+        except Exception:
+            pass
+
+    pkg_name = get_package_name_from_dir(pkg_dir)
+    if not pkg_name:
+        return False
+
+    if package_data is None:
+        try:
+            package_data = check_single_package_full(
+                pkg_dir,
+                stable_branch=ws_prof.get("stable_branch"),
+                unstable_branch=ws_prof.get("unstable_branch")
+            )
+        except Exception:
+            return False
+
+    existing_pkg = cache_content.setdefault("package_data", {}).setdefault(pkg_name, {})
+    if "sync" in package_data:
+        existing_pkg["sync"] = package_data["sync"]
+    if "version" in package_data:
+        existing_pkg["version"] = package_data["version"]
+    if "pr" in package_data:
+        existing_pkg["pr"] = package_data["pr"]
+
+    # Map worktree status
+    wt_info = package_data.get("worktree", {})
+    existing_wt = existing_pkg.setdefault("worktree", {})
+
+    active_branch = package_data.get("active_branch")
+    unst_branch = ws_prof.get("unstable_branch")
+    has_unstable = bool(ws_prof.get("unstable_path") and unst_branch)
+
+    if has_unstable:
+        if active_branch == unst_branch:
+            existing_wt["unstable"] = wt_info
+        else:
+            existing_wt["stable"] = wt_info
+    else:
+        existing_wt["stable"] = wt_info
+
+    cache_content["scanned_at"] = time.time()
+
+    tmp_path = cache_path.with_suffix(".tmp")
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(cache_content, f, indent=2)
+        tmp_path.replace(cache_path)
+        return True
+    except Exception:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
+        return False
 
 
 def get_local_package_version(repo_path):

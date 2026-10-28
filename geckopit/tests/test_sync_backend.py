@@ -5,6 +5,7 @@ import unittest
 import tempfile
 import unittest.mock as mock
 import subprocess
+import json
 
 import os
 import sys
@@ -774,6 +775,86 @@ class TestSyncBackend(unittest.TestCase):
                 self.assertEqual(data["status"], "success")
                 self.assertEqual(data["pool_ahead"], 0)
                 self.assertEqual(data["pool_behind"], 0)
+
+    def test_get_workspace_profile_for_path_boundary(self):
+        """Verifies get_workspace_profile_for_path correctly detects inside vs outside workspace."""
+        with tempfile.TemporaryDirectory() as td:
+            cfg_file = os.path.join(td, "geckopit.json")
+            cfg = {
+                "active_workspace": "GNOME",
+                "workspaces": {
+                    "GNOME": {
+                        "stable_path": os.path.join(td, "GNOME"),
+                        "stable_branch": "factory",
+                        "unstable_path": os.path.join(td, "GNOME:Next"),
+                        "unstable_branch": "next"
+                    }
+                }
+            }
+            with open(cfg_file, "w") as f:
+                json.dump(cfg, f)
+
+            p_in = os.path.join(td, "GNOME:Next", "pkg1")
+            p_out = os.path.join(td, "random", "pkg2")
+            os.makedirs(p_in, exist_ok=True)
+            os.makedirs(p_out, exist_ok=True)
+
+            ws_in, prof_in = sb.get_workspace_profile_for_path(p_in, config_file=cfg_file)
+            self.assertEqual(ws_in, "GNOME")
+            self.assertEqual(prof_in.get("unstable_branch"), "next")
+
+            ws_out, prof_out = sb.get_workspace_profile_for_path(p_out, config_file=cfg_file)
+            self.assertIsNone(ws_out)
+            self.assertIsNone(prof_out)
+
+    def test_update_profile_cache_for_package_writes_and_skips(self):
+        """Verifies update_profile_cache_for_package writes cache for workspace packages and skips others."""
+        with tempfile.TemporaryDirectory() as td:
+            cfg_file = os.path.join(td, "geckopit.json")
+            cache_dir = os.path.join(td, "cache")
+            cfg = {
+                "active_workspace": "GNOME",
+                "workspaces": {
+                    "GNOME": {
+                        "stable_path": os.path.join(td, "GNOME"),
+                        "stable_branch": "factory",
+                        "unstable_path": os.path.join(td, "GNOME:Next"),
+                        "unstable_branch": "next"
+                    }
+                }
+            }
+            with open(cfg_file, "w") as f:
+                json.dump(cfg, f)
+
+            pkg_in = os.path.join(td, "GNOME:Next", "testpkg")
+            pkg_out = os.path.join(td, "outside", "randompkg")
+            os.makedirs(pkg_in, exist_ok=True)
+            os.makedirs(pkg_out, exist_ok=True)
+
+            fake_data = {
+                "repo_name": "testpkg",
+                "pkg_dir": pkg_in,
+                "active_branch": "next",
+                "sync": {"status": "success", "pool_status": "In Sync", "pool_ahead": 0},
+                "version": {"status": "success", "needs_update": False},
+                "pr": {"has_pr": True, "count": 1},
+                "worktree": {"ahead": 0, "behind": 0, "dirty": False}
+            }
+
+            # 1. Update inside workspace
+            ok = sb.update_profile_cache_for_package(pkg_in, package_data=fake_data, cache_dir=cache_dir, config_file=cfg_file)
+            self.assertTrue(ok)
+            cache_file = os.path.join(cache_dir, "cache_GNOME.json")
+            self.assertTrue(os.path.exists(cache_file))
+            with open(cache_file) as f:
+                c = json.load(f)
+            self.assertIn("testpkg", c["package_data"])
+            self.assertEqual(c["package_data"]["testpkg"]["pr"]["count"], 1)
+            self.assertEqual(c["package_data"]["testpkg"]["worktree"]["unstable"]["dirty"], False)
+
+            # 2. Update outside workspace
+            ok_out = sb.update_profile_cache_for_package(pkg_out, package_data=fake_data, cache_dir=cache_dir, config_file=cfg_file)
+            self.assertFalse(ok_out)
 
 if __name__ == '__main__':
 

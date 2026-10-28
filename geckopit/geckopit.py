@@ -1999,6 +1999,11 @@ class SyncWindow(Adw.ApplicationWindow):
         self._config_reload_timeout_id = None
         self.setup_config_file_monitor()
 
+        self._last_cache_save_time = 0.0
+        self.cache_file_monitor = None
+        self._cache_reload_timeout_id = None
+        self.setup_cache_file_monitor()
+
         # Core data
         self.repos = []
         self.package_data = {}
@@ -2278,6 +2283,20 @@ class SyncWindow(Adw.ApplicationWindow):
                 pass
             self.config_file_monitor = None
 
+        if getattr(self, "cache_file_monitor", None):
+            try:
+                self.cache_file_monitor.cancel()
+            except Exception:
+                pass
+            self.cache_file_monitor = None
+
+        if getattr(self, "_cache_reload_timeout_id", None):
+            try:
+                GLib.source_remove(self._cache_reload_timeout_id)
+            except Exception:
+                pass
+            self._cache_reload_timeout_id = None
+
         if getattr(self, "_config_reload_timeout_id", None):
             try:
                 GLib.source_remove(self._config_reload_timeout_id)
@@ -2376,6 +2395,7 @@ class SyncWindow(Adw.ApplicationWindow):
     def save_profile_cache(self):
         cache_path = self.get_cache_path()
         try:
+            self._last_cache_save_time = time.time()
             cache_path.parent.mkdir(parents=True, exist_ok=True)
             active_ws = getattr(self.config, "active_workspace", "Default") if hasattr(self, "config") else "Default"
             payload = json.dumps({
@@ -2401,6 +2421,7 @@ class SyncWindow(Adw.ApplicationWindow):
     def save_profile_cache_async(self):
         """Snapshots in-memory package state on the main thread and writes JSON to disk in a background thread."""
         try:
+            self._last_cache_save_time = time.time()
             active_ws = getattr(self.config, "active_workspace", "Default") if hasattr(self, "config") else "Default"
             # Deep copy to ensure background JSON serialization is completely thread-safe against concurrent worker mutations
             data_copy = copy.deepcopy(self.package_data)
@@ -2567,6 +2588,7 @@ class SyncWindow(Adw.ApplicationWindow):
 
     def reload_workspace(self):
         self.scan_generation = getattr(self, "scan_generation", 0) + 1
+        self.setup_cache_file_monitor()
         # Update stable and unstable branch maps
         active_prof = self.config.get_active_profile()
         self.stable_p = active_prof.get("stable_path", ".") or "."
@@ -3023,6 +3045,75 @@ class SyncWindow(Adw.ApplicationWindow):
             if hasattr(self, "toast_overlay"):
                 toast = Adw.Toast.new("⚙️ Workspace configuration reloaded from disk.")
                 self.toast_overlay.add_toast(toast)
+
+        return False
+
+    def setup_cache_file_monitor(self):
+        """Attaches a Gio.FileMonitor to ~/.cache/geckopit/cache_{safe_profile}.json to live-synchronize external CLI updates."""
+        if getattr(self, "cache_file_monitor", None):
+            try:
+                self.cache_file_monitor.cancel()
+            except Exception:
+                pass
+            self.cache_file_monitor = None
+
+        cache_path = self.get_cache_path()
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            gfile = Gio.File.new_for_path(str(cache_path))
+            monitor = gfile.monitor_file(Gio.FileMonitorFlags.NONE, None)
+            monitor.connect("changed", self.on_cache_file_changed)
+            self.cache_file_monitor = monitor
+        except Exception:
+            self.cache_file_monitor = None
+
+    def on_cache_file_changed(self, monitor, f1, f2, event_type):
+        """Triggered via inotify whenever the active profile's cache file is modified on disk."""
+        if event_type == Gio.FileMonitorEvent.DELETED:
+            return
+        last_save = getattr(self, "_last_cache_save_time", 0.0)
+        if time.time() - last_save < 1.5:
+            return
+
+        # Debounce multiple rapid file writes into a single update pass
+        if getattr(self, "_cache_reload_timeout_id", None):
+            try:
+                GLib.source_remove(self._cache_reload_timeout_id)
+            except Exception:
+                pass
+        self._cache_reload_timeout_id = GLib.timeout_add(150, self.on_cache_file_reload)
+
+    def on_cache_file_reload(self):
+        """Reloads modified packages from profile cache into GUI state."""
+        self._cache_reload_timeout_id = None
+        cache_path = self.get_cache_path()
+        if not cache_path.exists():
+            return False
+
+        try:
+            with open(cache_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            new_pkg_data = data.get("package_data", {})
+        except Exception:
+            return False
+
+        changed_pkgs = []
+        for pkg_name, new_val in new_pkg_data.items():
+            if pkg_name in self.package_data:
+                old_val = self.package_data.get(pkg_name)
+                if old_val != new_val:
+                    self.package_data[pkg_name] = new_val
+                    changed_pkgs.append(pkg_name)
+                    self.update_row_ui(pkg_name)
+
+        curr_sel = getattr(self, "current_selected_package", None)
+        if curr_sel and curr_sel in changed_pkgs:
+            self.update_detail_version_ui(curr_sel)
+            self.update_detail_sync_ui(curr_sel)
+            self.update_detail_worktree_ui(curr_sel)
+            self.update_detail_pr_ui(curr_sel)
+            self.update_detail_title(curr_sel)
+            self.refresh_active_diff()
 
         return False
 

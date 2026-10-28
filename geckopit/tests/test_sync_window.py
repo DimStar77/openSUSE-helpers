@@ -2537,5 +2537,76 @@ class TestSyncWindow(unittest.TestCase):
         mock_win.set_title.assert_called_with("Geckopit - Profile: Scratchpad [Scratchpad]")
 
 
+    @mock.patch("geckopit.GLib.timeout_add")
+    def test_on_cache_file_changed_schedules_reload_on_external_change(self, mock_timeout_add):
+        from geckopit import SyncWindow
+        from gi.repository import Gio
+
+        mock_win = mock.Mock()
+        mock_win._last_cache_save_time = 0.0  # Old save / external modification
+        mock_win._cache_reload_timeout_id = None
+
+        mock_timeout_add.return_value = 888
+        SyncWindow.on_cache_file_changed(mock_win, None, None, None, Gio.FileMonitorEvent.CHANGED)
+
+        mock_timeout_add.assert_called_with(150, mock_win.on_cache_file_reload)
+        self.assertEqual(mock_win._cache_reload_timeout_id, 888)
+
+    @mock.patch("geckopit.GLib.timeout_add")
+    def test_on_cache_file_changed_ignores_self_saves(self, mock_timeout_add):
+        from geckopit import SyncWindow
+        from gi.repository import Gio
+        import time
+
+        mock_win = mock.Mock()
+        mock_win._last_cache_save_time = time.time()  # Recent self-save
+        mock_win._cache_reload_timeout_id = None
+
+        SyncWindow.on_cache_file_changed(mock_win, None, None, None, Gio.FileMonitorEvent.CHANGED)
+        mock_timeout_add.assert_not_called()
+        self.assertIsNone(mock_win._cache_reload_timeout_id)
+
+    def test_on_cache_file_reload_updates_changed_package_and_ui(self):
+        from geckopit import SyncWindow
+        from pathlib import Path
+        import json, tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            cache_file = Path(td) / "cache_GNOME.json"
+            cache_content = {
+                "profile": "GNOME",
+                "scanned_at": 1000.0,
+                "package_data": {
+                    "sofia-sip": {
+                        "sync": {"status": "success", "pool_ahead": 0},
+                        "version": {"factory_ver": "1.13.19"},
+                        "pr": {"has_pr": True, "count": 1, "number": 5}
+                    }
+                }
+            }
+            with open(cache_file, "w") as f:
+                json.dump(cache_content, f)
+
+            mock_win = mock.Mock()
+            mock_win.get_cache_path.return_value = cache_file
+            mock_win.package_data = {
+                "sofia-sip": {
+                    "sync": {"status": "success", "pool_ahead": 1},
+                    "version": {"factory_ver": "1.13.18"},
+                    "pr": {"has_pr": False, "count": 0}
+                }
+            }
+            mock_win.current_selected_package = "sofia-sip"
+
+            SyncWindow.on_cache_file_reload(mock_win)
+
+            # Assert package data was updated in memory
+            self.assertEqual(mock_win.package_data["sofia-sip"]["version"]["factory_ver"], "1.13.19")
+            self.assertEqual(mock_win.package_data["sofia-sip"]["pr"]["number"], 5)
+            # Assert UI updates were dispatched
+            mock_win.update_row_ui.assert_called_with("sofia-sip")
+            mock_win.update_detail_version_ui.assert_called_with("sofia-sip")
+            mock_win.refresh_active_diff.assert_called_once()
+
 if __name__ == '__main__':
     unittest.main()

@@ -515,6 +515,10 @@ def run_single_package_dashboard(pkg_dir="."):
     print(f"Inspecting package '{pkg_name}'...", file=sys.stderr)
     data = sb.check_single_package_full(pkg_dir)
     render_single_package_dashboard(data)
+    try:
+        sb.update_profile_cache_for_package(pkg_dir, data)
+    except Exception:
+        pass
 
 
 def run_single_package_version(pkg_dir=".", branch=None):
@@ -704,6 +708,10 @@ def run_package_upgrade(pkg_dir=".", revision=None, dry_run=False):
         if summary_parts:
             print(f"   \033[1;36m✨ Summary:\033[0m {', '.join(summary_parts)}")
 
+        try:
+            sb.update_profile_cache_for_package(pkg_dir)
+        except Exception:
+            pass
         return 0
     else:
         print(f"\033[1;31m=> Upgrade Failed:\033[0m {result.message}", file=sys.stderr)
@@ -787,6 +795,10 @@ def run_package_commit(pkg_dir=".", interactive=True, no_service=False):
 
     if ok:
         print(f"\033[1;32m=> {msg}\033[0m")
+        try:
+            sb.update_profile_cache_for_package(pkg_dir)
+        except Exception:
+            pass
         return 0
     else:
         print(f"\033[1;31m=> Commit Error:\033[0m {msg}", file=sys.stderr)
@@ -1446,6 +1458,10 @@ def run_fix_deps_action(pkg_dir="."):
             changes_files = [f for f in os.listdir(pkg_dir) if f.endswith(".changes")]
             changes_name = changes_files[0] if changes_files else f"{pkg_name}.changes"
             print(f"{sb.GREEN}📝 Recorded changelog entry in {changes_name}{sb.RESET}")
+        try:
+            sb.update_profile_cache_for_package(pkg_dir)
+        except Exception:
+            pass
         return 0
     else:
         print(f"\n{sb.GREEN}✅ All build dependencies are already in sync. No changes needed.{sb.RESET}")
@@ -1547,6 +1563,11 @@ def run_package_pool_submit(target_pkg_dir, message=None, dry_run=False, force=F
         force=force
     )
     if ok:
+        if not dry_run:
+            try:
+                sb.update_profile_cache_for_package(target_pkg_dir)
+            except Exception:
+                pass
         print(f"{sb.GREEN}✅ {msg}{sb.RESET}")
         return 0
     else:
@@ -2121,6 +2142,11 @@ def main():
         eff_dir = target_pkg_dir or "."
         ok, msg = fork_helper.submit_flyby_package(eff_dir, message=custom_message, dry_run=dry_run)
         if ok:
+            if not dry_run:
+                try:
+                    sb.update_profile_cache_for_package(eff_dir)
+                except Exception:
+                    pass
             print(f"\n{sb.GREEN}✅ {msg}{sb.RESET}\n")
             sys.exit(0)
         else:
@@ -2336,6 +2362,11 @@ def main():
         no_commit = "--no-commit" in sys.argv
         squash = "--squash" in sys.argv
         success = pr_helper.merge_pull_request(target_pkg_dir, merge_pr_id, auto_commit=not no_commit, squash=squash)
+        if success:
+            try:
+                sb.update_profile_cache_for_package(target_pkg_dir)
+            except Exception:
+                pass
         sys.exit(0 if success else 1)
 
     # Execute upgrade mode
