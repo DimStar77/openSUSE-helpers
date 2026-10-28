@@ -635,9 +635,10 @@ def is_accepted_sr_already_synced(
     meaning the package is ready for new submissions or has new unsubmitted changes.
     Returns:
     - True if real unsubmitted packaging differences exist in OBS (new changes ready to submit),
-      or if the changes in the accepted SR have already landed in refs/pool/{stable_branch}.
-    - False if there are no new differences between source and target in OBS (meaning it is
-      truly waiting for the central pool Git mirror to catch up to the accepted SR).
+      if the local origin ref is already in sync with pool, or if the accepted changes have
+      already landed in refs/pool/{stable_branch}.
+    - False if there are no new differences between source and target in OBS and pool ref is
+      behind origin (meaning it is truly waiting for the central pool Git mirror to catch up).
     """
     if not os.path.isdir(pkg_dir):
         return False
@@ -651,30 +652,51 @@ def is_accepted_sr_already_synced(
         if has_diff:
             return True
 
-    # 2. Secondary check: check if the SR description landed in pool git ref
+    # 2. Check if local origin ref is already in sync with pool ref
+    ensure_origin_ref_fresh(pkg_dir, branch=stable_branch)
+    ensure_pool_ref_fresh(pkg_dir, stable_branch=stable_branch)
+    pool_ref = f"refs/pool/{stable_branch}"
+    origin_ref = f"origin/{stable_branch}"
+    try:
+        cnt_res = subprocess.run(
+            ["git", "-C", pkg_dir, "rev-list", f"{pool_ref}..{origin_ref}", "--count"],
+            capture_output=True, text=True
+        )
+        if cnt_res.returncode == 0 and cnt_res.stdout.strip() == "0":
+            return True
+    except Exception:
+        pass
+
+    # 3. Check if request ID landed in pool git ref
+    sr_id = sr.get("id")
+    if sr_id:
+        try:
+            res_id = subprocess.run(
+                ["git", "-C", pkg_dir, "log", pool_ref, "-n", "30", f"--grep={sr_id}"],
+                capture_output=True, text=True
+            )
+            if res_id.returncode == 0 and res_id.stdout.strip():
+                return True
+        except Exception:
+            pass
+
+    # 4. Check if the SR description landed in pool git ref
     desc = sr.get("description", "").strip()
     if desc:
-        ensure_pool_ref_fresh(pkg_dir, stable_branch=stable_branch)
-        pool_ref = f"refs/pool/{stable_branch}"
         try:
-            first_line = ""
             for line in desc.splitlines():
                 line = line.strip()
-                if line.startswith("- "):
+                if line.startswith(("- ", "* ", "+ ")):
                     line = line[2:].strip()
-                elif line.startswith("* "):
-                    line = line[2:].strip()
-                if line and not line.startswith("---") and not (re.match(r"^[A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d+", line) and "@" in line):
-                    first_line = line
+                line = line.rstrip(":. ").strip()
+                if line and not line.startswith("---") and "@" not in line and len(line) > 5:
+                    res = subprocess.run(
+                        ["git", "-C", pkg_dir, "log", pool_ref, "-n", "30", "--grep=" + line[:50]],
+                        capture_output=True, text=True
+                    )
+                    if res.returncode == 0 and res.stdout.strip():
+                        return True
                     break
-
-            if first_line:
-                res = subprocess.run(
-                    ["git", "-C", pkg_dir, "log", pool_ref, "--grep=" + first_line[:50]],
-                    capture_output=True, text=True
-                )
-                if res.returncode == 0 and res.stdout.strip():
-                    return True
         except Exception:
             pass
 

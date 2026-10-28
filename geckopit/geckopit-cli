@@ -122,7 +122,8 @@ def render_single_package_dashboard(data):
         elif pool_sub and pool_sub.get("status") == "accepted_pending_sync":
             req = pool_sub["request"]
             tgt = req.get("target_project", "Factory")
-            pool_str = f"{sb.GREEN}⏳ SR #{req['id']} accepted (awaiting sync to {tgt}){sb.RESET}"
+            sync_tgt = "central pool" if tgt == "openSUSE:Factory" else tgt
+            pool_str = f"{sb.GREEN}⏳ SR #{req['id']} accepted in {tgt} (awaiting sync to {sync_tgt}){sb.RESET}"
         else:
             pool_str = f"{sb.CYAN}📦 OSC Managed [{osc_prj}]{sb.RESET}"
         print(f"  Submit Status: {pool_str}")
@@ -224,7 +225,8 @@ def render_single_package_dashboard(data):
                 elif pool_sub and pool_sub.get("status") == "accepted_pending_sync":
                     req = pool_sub["request"]
                     tgt = req.get("target_project", "Factory")
-                    pool_str = f"{sb.GREEN}⏳ SR #{req['id']} accepted (awaiting sync to {tgt}){sb.RESET}"
+                    sync_tgt = "central pool" if tgt == "openSUSE:Factory" else tgt
+                    pool_str = f"{sb.GREEN}⏳ SR #{req['id']} accepted in {tgt} (awaiting sync to {sync_tgt}){sb.RESET}"
                 else:
                     pool_str = f"{sb.CYAN}📦 OSC Managed [{osc_prj}]{sb.RESET}"
             elif pool_status == 'Not in Pool':
@@ -497,7 +499,8 @@ def render_single_package_dashboard(data):
         elif pool_sub and pool_sub.get("status") == "accepted_pending_sync":
             req_id = pool_sub.get("request_id") or (pool_sub.get("request") or {}).get("id")
             tgt = pool_sub.get("target_project") or (pool_sub.get("request") or {}).get("target_project") or "openSUSE:Factory"
-            print(f"  {sb.GREEN}✅ Package is in sync. No action needed (SR #{req_id} accepted, awaiting sync to {tgt}).{sb.RESET}")
+            sync_tgt = "central pool" if tgt == "openSUSE:Factory" else tgt
+            print(f"  {sb.GREEN}✅ Package is in sync. No action needed (SR #{req_id} accepted in {tgt}, awaiting mirror sync to {sync_tgt}).{sb.RESET}")
         elif pool_sub and pool_sub.get("status") == "pending":
             req_id = pool_sub.get("request_id") or (pool_sub.get("request") or {}).get("id")
             tgt = pool_sub.get("target_project") or (pool_sub.get("request") or {}).get("target_project") or "openSUSE:Factory"

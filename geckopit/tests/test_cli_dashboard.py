@@ -216,8 +216,8 @@ class TestSinglePackageDashboardFormatting(unittest.TestCase):
             with patch('sys.stdout', buf_acc):
                 self.cli.render_single_package_dashboard(data)
         out_acc = buf_acc.getvalue()
-        self.assertIn("⏳ SR #1384945 accepted (awaiting central pool sync)", out_acc)
-        self.assertIn("No action needed (SR #1384945 accepted, awaiting sync to openSUSE:Factory)", out_acc)
+        self.assertIn("SR #1384945 accepted", out_acc)
+        self.assertIn("No action needed (SR #1384945 accepted in openSUSE:Factory, awaiting mirror sync to central pool)", out_acc)
         self.assertNotIn("Submit changes to central pool", out_acc)
 
     def test_version_check_single_stream_table_formatting(self):

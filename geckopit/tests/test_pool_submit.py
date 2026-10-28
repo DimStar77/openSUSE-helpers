@@ -131,6 +131,29 @@ class TestPoolSubmit(unittest.TestCase):
                 synced = pool_submit.is_accepted_sr_already_synced(tmpdir, sr, stable_branch="factory")
                 self.assertFalse(synced)
 
+            # 3. When pool_ahead is 0 -> True
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(stdout="0\n", returncode=0)
+                synced = pool_submit.is_accepted_sr_already_synced(tmpdir, sr, stable_branch="factory")
+                self.assertTrue(synced)
+
+            # 4. When changelog has trailing colon, strips punctuation for grep -> True
+            sr_colon = {
+                "id": "1392752",
+                "state": "accepted",
+                "description": "- Update to version 2.1.9:\n  * Feature foo"
+            }
+            with patch("subprocess.run") as mock_run:
+                def fake_run(cmd, *args, **kwargs):
+                    if "rev-list" in cmd:
+                        return MagicMock(stdout="1\n", returncode=0)
+                    if "--grep=Update to version 2.1.9" in cmd:
+                        return MagicMock(stdout="87669af Update to version 2.1.9\n", returncode=0)
+                    return MagicMock(stdout="", returncode=0)
+                mock_run.side_effect = fake_run
+                synced = pool_submit.is_accepted_sr_already_synced(tmpdir, sr_colon, stable_branch="factory")
+                self.assertTrue(synced)
+
     def test_resolve_source_obs_project(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             # 1. Fallback default
