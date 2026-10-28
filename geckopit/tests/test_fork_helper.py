@@ -203,6 +203,44 @@ class TestForkHelper(unittest.TestCase):
                                     self.assertTrue(ok)
                                     self.assertEqual(path, scratch_dest)
 
+    def test_fork_package_maps_slfo_stream_at_provisioning_time(self):
+        """Verifies fork_package maps leap-16.1 to slfo-1.3 if pool repo uses SLFO branches."""
+        target_info = {
+            'package': 'openldap2_6',
+            'stream': 'leap-16.1',
+            'devel_project': 'openSUSE:Leap:16.1',
+            'devel_package': 'openldap2_6',
+            'is_git': True,
+            'scmsync_url': 'https://src.opensuse.org/pool/openldap2_6.git#leap-16.1',
+            'git_url': 'https://src.opensuse.org/pool/openldap2_6.git',
+            'git_owner': 'pool',
+            'git_repo': 'openldap2_6',
+            'target_branch': 'leap-16.1',
+        }
+        with tempfile.TemporaryDirectory() as td:
+            scratch_dest = os.path.join(td, 'openldap2_6')
+            with patch('helpers.fork_helper.resolve_package_devel_target', return_value=target_info):
+                with patch('helpers.fork_helper.resolve_destination_directory', return_value=(scratch_dest, None)):
+                    with patch('helpers.fork_helper.resolve_target_obs_project', return_value='home:dimstar:Factory'):
+                        with patch('helpers.fork_helper.get_current_gitea_user', return_value='dimstar'):
+                            with patch('helpers.fork_helper.ensure_gitea_fork', return_value=(True, 'Forked')):
+                                with patch('helpers.fork_helper.provision_obs_scmsync_package', return_value=(True, 'OK')) as mock_prov:
+                                    def fake_run(cmd, *args, **kwargs):
+                                        m = MagicMock(returncode=0, stdout='', stderr='')
+                                        if 'branch' in cmd and '-r' in cmd:
+                                            m.stdout = 'upstream/slfo-1.3\nupstream/slfo-main\n'
+                                        return m
+
+                                    with patch('subprocess.run', side_effect=fake_run):
+                                        logs = []
+                                        ok, msg, path = fork_helper.fork_package('openldap2_6', stream='leap-16.1', on_log=logs.append)
+                                        self.assertTrue(ok)
+                                        self.assertTrue(any("Target branch mapped: 'leap-16.1' ➔ 'slfo-1.3'" in l for l in logs))
+                                        self.assertTrue(any("Active branch: 'for-slfo-1.3' (tracking 'upstream/slfo-1.3')" in l for l in logs))
+                                        mock_prov.assert_called_once()
+                                        scmsync_url = mock_prov.call_args[0][2]
+                                        self.assertIn('#for-slfo-1.3', scmsync_url)
+
     def test_fork_package_obs_track_workflow(self):
         target_info = {
             'package': 'ibus',
@@ -363,6 +401,38 @@ class TestForkHelper(unittest.TestCase):
                         self.assertEqual(call_kwargs.get('package_name'), 'sofia-sip')
                         self.assertEqual(call_kwargs.get('target_project'), 'openSUSE:Factory')
                         self.assertEqual(call_kwargs.get('stable_branch'), 'factory')
+
+    def test_submit_flyby_package_topic_branch_maps_slfo_stream_and_avoids_unbound_error(self):
+        """Verifies submitting from for-leap-16.1 topic branch maps to slfo-1.3 upstream and extracts changelog."""
+        from unittest.mock import patch, MagicMock
+        with tempfile.TemporaryDirectory() as td:
+            pkg_dir = os.path.join(td, 'openldap2_6')
+            os.makedirs(os.path.join(pkg_dir, '.git'), exist_ok=True)
+
+            def fake_run(cmd, *args, **kwargs):
+                m = MagicMock(returncode=0, stdout='', stderr='')
+                if 'branch' in cmd and '--show-current' in cmd:
+                    m.stdout = 'for-leap-16.1\n'
+                elif 'branch' in cmd and '-r' in cmd:
+                    m.stdout = 'origin/HEAD -> origin/slfo-main\norigin/slfo-1.3\nupstream/slfo-1.3\nupstream/slfo-main\n'
+                elif 'remote' in cmd and 'get-url' in cmd and 'origin' in cmd:
+                    m.stdout = 'gitea@src.opensuse.org:dimstar/openldap2_6.git\n'
+                elif 'remote' in cmd and 'get-url' in cmd and 'upstream' in cmd:
+                    m.stdout = 'https://src.opensuse.org/pool/openldap2_6.git\n'
+                elif 'diff' in cmd and '*.changes' in cmd:
+                    m.stdout = '@@ -1,3 +1,7 @@\n+-------------------------------------------------------------------\n+Wed Oct 28 15:00:00 UTC 2026 - maint\n+\n+- Fix openldap startup script.\n'
+                elif 'log' in cmd and '-1' in cmd:
+                    m.stdout = 'Fix openldap startup script\n'
+                return m
+
+            with patch('subprocess.run', side_effect=fake_run):
+                logs = []
+                ok, msg = fork_helper.submit_flyby_package(pkg_dir, dry_run=True, on_log=logs.append)
+                self.assertTrue(ok)
+                self.assertIn('[DRY-RUN]', msg)
+                self.assertTrue(any("Target branch mapped: 'leap-16.1' ➔ 'slfo-1.3'" in l for l in logs))
+                self.assertTrue(any("pool/openldap2_6:slfo-1.3 (head: dimstar:for-leap-16.1)" in l for l in logs))
+                self.assertTrue(any("Title: Fix openldap startup script" in l for l in logs))
 
 if __name__ == '__main__':
 

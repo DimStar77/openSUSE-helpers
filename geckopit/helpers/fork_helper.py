@@ -130,6 +130,13 @@ def get_devel_packages_map(force_refresh: bool = False) -> Dict[str, str]:
     return devel_map
 
 
+STREAM_BRANCH_EQUIVALENTS = {
+    "leap-16.1": "slfo-1.3",
+    "leap-16.0": "slfo-1.2",
+    "slfo-1.3": "leap-16.1",
+    "slfo-1.2": "leap-16.0",
+}
+
 def resolve_package_devel_target(package_name: str, stream: str = "factory") -> Dict[str, Any]:
     """
     Resolves the authoritative upstream devel target and source management mode (Git vs OBS)
@@ -481,8 +488,19 @@ def fork_package(
             log(f"   Reusing existing local checkout at {resolved_dest}...")
             subprocess.run(["git", "-C", resolved_dest, "fetch", "--all"], env=get_git_env(), capture_output=True)
 
+        # Map stream branch if target_branch not directly present on pool (e.g. leap-16.1 -> slfo-1.3)
+        remote_prefix = "upstream" if not is_self_owned else "origin"
+        res_r = subprocess.run(["git", "-C", resolved_dest, "branch", "-r"], capture_output=True, text=True)
+        remote_branches = [b.strip() for b in res_r.stdout.splitlines()]
+        if f"{remote_prefix}/{target_branch}" not in remote_branches:
+            mapped = STREAM_BRANCH_EQUIVALENTS.get(target_branch)
+            if mapped and f"{remote_prefix}/{mapped}" in remote_branches:
+                log(f"   Target branch mapped: '{target_branch}' ➔ '{mapped}' (upstream pool branch).")
+                target_branch = mapped
+                topic_branch = f"for-{target_branch}"
+
         # Ensure topic branch exists and tracks target_branch
-        ref_base = f"upstream/{target_branch}" if not is_self_owned else f"origin/{target_branch}"
+        ref_base = f"{remote_prefix}/{target_branch}"
         res_chk = subprocess.run(["git", "-C", resolved_dest, "checkout", "-B", topic_branch, ref_base], env=get_git_env(), capture_output=True, text=True)
         if res_chk.returncode != 0:
             # Fallback to local branch checkout
@@ -658,10 +676,12 @@ def submit_flyby_package(
                 dry_run=dry_run
             )
 
-        # Case 3: Topic branch (e.g. for-factory) or scratchpad package fork
+        # Case 3: Topic branch (e.g. for-factory, for-leap-16.1) or scratchpad package fork
         target_branch = "factory"
+        upstream_ref = ""
         if current_branch.startswith("for-"):
-            target_branch = current_branch.removeprefix("for-")
+            stream_candidate = current_branch.removeprefix("for-")
+            target_branch = stream_candidate
         else:
             # If tracking branch is configured on upstream remote, use that branch
             res_u = subprocess.run(["git", "-C", pkg_dir, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], capture_output=True, text=True)
@@ -675,16 +695,68 @@ def submit_flyby_package(
             else:
                 target_branch = current_branch
 
+        # Interrogate remote branches to resolve target_branch and base_ref
+        res_r = subprocess.run(["git", "-C", pkg_dir, "branch", "-r"], capture_output=True, text=True)
+        remote_branches = [line.strip() for line in res_r.stdout.splitlines()]
+
+        # Map stream aliases if target_branch not directly present on remotes (e.g. leap-16.1 -> slfo-1.3)
+        if f"upstream/{target_branch}" not in remote_branches and f"origin/{target_branch}" not in remote_branches:
+            mapped = STREAM_BRANCH_EQUIVALENTS.get(target_branch)
+            if mapped and (f"upstream/{mapped}" in remote_branches or f"origin/{mapped}" in remote_branches):
+                log(f"   Target branch mapped: '{target_branch}' ➔ '{mapped}' (upstream remote branch)")
+                target_branch = mapped
+
         # Extract changes diff
-        base_ref = upstream_ref or f"origin/{target_branch}"
-        cmd_diff = ["git", "-C", pkg_dir, "diff", "--no-ext-diff", f"{base_ref}...HEAD"]
+        base_ref = None
+        for cand in [f"upstream/{target_branch}", f"origin/{target_branch}", f"refs/pool/{target_branch}"]:
+            if cand in remote_branches or sync_backend.has_git_ref(pkg_dir, cand):
+                base_ref = cand
+                break
+        if not base_ref:
+            base_ref = upstream_ref or f"origin/{target_branch}"
+
+        cmd_diff = ["git", "-C", pkg_dir, "diff", "--no-ext-diff", f"{base_ref}...HEAD", "--", "*.changes"]
         res_diff = subprocess.run(cmd_diff, capture_output=True, text=True)
         diff_text = res_diff.stdout.strip()
-        if not diff_text:
-            diff_text = pool_submit.extract_pool_changes(pkg_dir, stable_branch=target_branch)
 
-        title = message.splitlines()[0] if message else f"Update {os.path.basename(pkg_dir)} for {target_branch}"
-        description = message or diff_text or "Automated submission via Geckopit."
+        added_lines = []
+        in_hunk = False
+        for line in diff_text.splitlines():
+            if line.startswith("@@"):
+                in_hunk = True
+                continue
+            if in_hunk:
+                if line.startswith("+++ ") or line.startswith("--- "):
+                    continue
+                if line.startswith("+"):
+                    added_lines.append(line[1:])
+        desc_text = "\n".join(added_lines).strip()
+        cleaned_desc = []
+        for l in desc_text.splitlines():
+            if re.match(r"^[-]{20,}", l):
+                continue
+            if re.match(r"^[A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d+", l) and "@" in l:
+                continue
+            cleaned_desc.append(l)
+
+        # Smart title from first commit message or changes diff
+        title = message.splitlines()[0] if message else ""
+        if not title:
+            res_subj = subprocess.run(
+                ["git", "-C", pkg_dir, "log", "-1", "--format=%s", f"{base_ref}...HEAD"],
+                capture_output=True, text=True
+            )
+            subj = res_subj.stdout.strip()
+            title = subj if subj else f"Update {os.path.basename(pkg_dir)} for {target_branch}"
+
+        cleaned_body = "\n".join(cleaned_desc).strip()
+        if not cleaned_body:
+            res_full_diff = subprocess.run(["git", "-C", pkg_dir, "diff", "--no-ext-diff", f"{base_ref}...HEAD"], capture_output=True, text=True)
+            cleaned_body = res_full_diff.stdout.strip()
+            if not cleaned_body:
+                cleaned_body = pool_submit.extract_pool_changes(pkg_dir, stable_branch=target_branch)
+
+        description = message or cleaned_body or "Automated submission via Geckopit."
 
         if dry_run:
             log(f"   [DRY-RUN] Would push '{current_branch}' to origin.")
