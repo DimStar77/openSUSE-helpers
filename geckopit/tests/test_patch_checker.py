@@ -819,5 +819,20 @@ for path in sys.argv[1:]:
                 self.assertIn("-O", captured, f"Expected -O side-by-side flag for editor '{ed_name}'")
                 self.assertTrue(any(c.endswith(".rej") for c in captured), f"Expected .rej file in arguments for '{ed_name}'")
 
+    def test_setup_scratch_git_config_disables_gpg_signing(self):
+        """Verifies setup_scratch_git_config explicitly disables commit and tag GPG signing."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from patch_checker import setup_scratch_git_config
+            subprocess.run(["git", "-C", tmpdir, "init", "-q"], check=True)
+            setup_scratch_git_config(tmpdir, name="Test User", email="test@example.com")
+
+            gpg_sign = subprocess.run(["git", "-C", tmpdir, "config", "--get", "commit.gpgSign"], capture_output=True, text=True, check=True).stdout.strip()
+            tag_sign = subprocess.run(["git", "-C", tmpdir, "config", "--get", "tag.gpgSign"], capture_output=True, text=True, check=True).stdout.strip()
+            user_name = subprocess.run(["git", "-C", tmpdir, "config", "--get", "user.name"], capture_output=True, text=True, check=True).stdout.strip()
+
+            self.assertEqual(gpg_sign, "false")
+            self.assertEqual(tag_sign, "false")
+            self.assertEqual(user_name, "Test User")
+
 if __name__ == '__main__':
     unittest.main()

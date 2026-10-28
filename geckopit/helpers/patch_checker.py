@@ -244,6 +244,14 @@ def find_primary_source_archive(package_dir: str, spec_details: Optional[Dict[st
     # 4. Fallback: newest mtime
     return sorted(archives, key=os.path.getmtime, reverse=True)[0]
 
+def setup_scratch_git_config(tmpdir: str, name: str = "Geckopit Scratch", email: str = "geckopit@opensuse.org"):
+    """Configures user identity and explicitly disables GPG signing in ephemeral scratch repositories."""
+    subprocess.run(["git", "-C", tmpdir, "config", "user.name", name], check=True)
+    subprocess.run(["git", "-C", tmpdir, "config", "user.email", email], check=True)
+    subprocess.run(["git", "-C", tmpdir, "config", "commit.gpgSign", "false"], check=True)
+    subprocess.run(["git", "-C", tmpdir, "config", "tag.gpgSign", "false"], check=True)
+
+
 def check_patches_sequential(
     package_dir: str,
     on_log: Optional[Callable[[str], None]] = None
@@ -546,10 +554,9 @@ def check_patches_sequential(
 
             # Initialize a temporary git repository so git apply handles hunks accurately
             subprocess.run(["git", "-C", tmpdir, "init", "-q"], check=True)
-            subprocess.run(["git", "-C", tmpdir, "config", "user.name", "Test"], check=True)
-            subprocess.run(["git", "-C", tmpdir, "config", "user.email", "test@test"], check=True)
+            setup_scratch_git_config(tmpdir, name="Test", email="test@test")
             subprocess.run(["git", "-C", tmpdir, "add", "."], check=True)
-            subprocess.run(["git", "-C", tmpdir, "commit", "-q", "-m", "upstream", "--allow-empty"], check=True)
+            subprocess.run(["git", "-C", tmpdir, "commit", "-q", "-m", "upstream", "--allow-empty", "--no-gpg-sign"], check=True)
 
             for idx, p_info in enumerate(opensuse_patches, 1):
                 p = p_info["name"]
@@ -576,7 +583,7 @@ def check_patches_sequential(
 
                 if applied_cleanly:
                     subprocess.run(["git", "-C", tmpdir, "add", "."], check=True)
-                    subprocess.run(["git", "-C", tmpdir, "commit", "-q", "-m", f"apply {p}", "--allow-empty"], check=True)
+                    subprocess.run(["git", "-C", tmpdir, "commit", "-q", "-m", f"apply {p}", "--allow-empty", "--no-gpg-sign"], check=True)
                     applied.append(p)
                     log(f"[{idx}/{len(opensuse_patches)}] ✅ {p}: Applied cleanly")
                 else:
@@ -639,7 +646,7 @@ def check_patches_sequential(
 
                     if applied_cleanly:
                         subprocess.run(["git", "-C", tmpdir, "add", "."], check=True)
-                        subprocess.run(["git", "-C", tmpdir, "commit", "-q", "-m", f"apply {p}", "--allow-empty"], check=True)
+                        subprocess.run(["git", "-C", tmpdir, "commit", "-q", "-m", f"apply {p}", "--allow-empty", "--no-gpg-sign"], check=True)
                         sle_clean.append(p)
                     else:
                         p_targets = get_patch_target_files(p_path)
@@ -1019,8 +1026,7 @@ def rebase_patch_cli(
         if repo_dir:
             # OBS SCM repository: clone locally with shared object store (-s) in milliseconds
             subprocess.run(["git", "clone", "-s", "-q", repo_dir, tmpdir], check=True)
-            subprocess.run(["git", "-C", tmpdir, "config", "user.name", "Geckopit Rebase"], check=True)
-            subprocess.run(["git", "-C", tmpdir, "config", "user.email", "geckopit@opensuse.org"], check=True)
+            setup_scratch_git_config(tmpdir, name="Geckopit Rebase", email="geckopit@opensuse.org")
         else:
             is_lfs, oid, size = parse_lfs_pointer(archive_path)
             if is_lfs:
@@ -1076,10 +1082,9 @@ def rebase_patch_cli(
                         pass
 
             subprocess.run(["git", "-C", tmpdir, "init", "-q"], check=True)
-            subprocess.run(["git", "-C", tmpdir, "config", "user.name", "Geckopit Rebase"], check=True)
-            subprocess.run(["git", "-C", tmpdir, "config", "user.email", "geckopit@opensuse.org"], check=True)
+            setup_scratch_git_config(tmpdir, name="Geckopit Rebase", email="geckopit@opensuse.org")
             subprocess.run(["git", "-C", tmpdir, "add", "."], check=True)
-            subprocess.run(["git", "-C", tmpdir, "commit", "-qm", "upstream", "--allow-empty"], check=True)
+            subprocess.run(["git", "-C", tmpdir, "commit", "-qm", "upstream", "--allow-empty", "--no-gpg-sign"], check=True)
 
 
         # Apply preceding patches
@@ -1089,7 +1094,7 @@ def rebase_patch_cli(
             if r.returncode != 0:
                 subprocess.run(["git", "-C", tmpdir, "apply", "-p0", p_path], capture_output=True)
             subprocess.run(["git", "-C", tmpdir, "add", "."], check=True)
-            subprocess.run(["git", "-C", tmpdir, "commit", "-qm", f"Apply {p}", "--allow-empty"], check=True)
+            subprocess.run(["git", "-C", tmpdir, "commit", "-qm", f"Apply {p}", "--allow-empty", "--no-gpg-sign"], check=True)
 
         # Check if target patch is already merged upstream (reverse apply succeeds)
         rev_check = subprocess.run(["git", "-C", tmpdir, "apply", "-R", "--check", "-p1", target_patch_path], capture_output=True)
