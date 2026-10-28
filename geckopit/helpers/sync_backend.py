@@ -14,6 +14,8 @@ import time
 import re
 import subprocess
 import concurrent.futures
+import fcntl
+import contextlib
 import unicodedata
 import configparser
 import requests
@@ -2094,6 +2096,52 @@ def get_workspace_profile_for_path(target_path, config_file=None):
     return None, None
 
 
+@contextlib.contextmanager
+def profile_cache_lock(cache_path, timeout=5.0):
+    """
+    Acquires an exclusive advisory file lock on ~/.cache/geckopit/cache_{profile}.lock
+    to guarantee zero lost updates or race conditions between CLI and GUI.
+    """
+    from pathlib import Path
+    lock_file = Path(str(cache_path) + ".lock")
+    fd = None
+    try:
+        lock_file.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o644)
+    except Exception:
+        yield
+        return
+
+    start = time.time()
+    acquired = False
+    try:
+        while time.time() - start < timeout:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except (BlockingIOError, OSError):
+                time.sleep(0.02)
+        if not acquired:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                acquired = True
+            except Exception:
+                pass
+        yield
+    finally:
+        if acquired:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except Exception:
+                pass
+        if fd is not None:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+
+
 def get_profile_cache_path(profile_name, cache_dir=None):
     """Returns ~/.cache/geckopit/cache_{safe_profile_name}.json."""
     from pathlib import Path
@@ -2105,7 +2153,7 @@ def get_profile_cache_path(profile_name, cache_dir=None):
 def update_profile_cache_for_package(pkg_dir, package_data=None, cache_dir=None, config_file=None):
     """
     Atomically updates ~/.cache/geckopit/cache_{profile}.json for the given package directory
-    if it belongs to a configured workspace profile.
+    if it belongs to a configured workspace profile under an exclusive advisory file lock.
     If pkg_dir does not belong to any workspace, skips without modifying or creating any cache.
     """
     from pathlib import Path
@@ -2115,16 +2163,6 @@ def update_profile_cache_for_package(pkg_dir, package_data=None, cache_dir=None,
 
     cache_path = get_profile_cache_path(ws_name, cache_dir=cache_dir)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-
-    cache_content = {"profile": ws_name, "scanned_at": time.time(), "package_data": {}}
-    if cache_path.exists():
-        try:
-            with open(cache_path, "r", encoding="utf-8") as f:
-                loaded = json.load(f)
-                if isinstance(loaded, dict) and "package_data" in loaded:
-                    cache_content = loaded
-        except Exception:
-            pass
 
     pkg_name = get_package_name_from_dir(pkg_dir)
     if not pkg_name:
@@ -2140,45 +2178,56 @@ def update_profile_cache_for_package(pkg_dir, package_data=None, cache_dir=None,
         except Exception:
             return False
 
-    existing_pkg = cache_content.setdefault("package_data", {}).setdefault(pkg_name, {})
-    if "sync" in package_data:
-        existing_pkg["sync"] = package_data["sync"]
-    if "version" in package_data:
-        existing_pkg["version"] = package_data["version"]
-    if "pr" in package_data:
-        existing_pkg["pr"] = package_data["pr"]
-
-    # Map worktree status
-    wt_info = package_data.get("worktree", {})
-    existing_wt = existing_pkg.setdefault("worktree", {})
-
-    active_branch = package_data.get("active_branch")
-    unst_branch = ws_prof.get("unstable_branch")
-    has_unstable = bool(ws_prof.get("unstable_path") and unst_branch)
-
-    if has_unstable:
-        if active_branch == unst_branch:
-            existing_wt["unstable"] = wt_info
-        else:
-            existing_wt["stable"] = wt_info
-    else:
-        existing_wt["stable"] = wt_info
-
-    cache_content["scanned_at"] = time.time()
-
-    tmp_path = cache_path.with_suffix(".tmp")
-    try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(cache_content, f, indent=2)
-        tmp_path.replace(cache_path)
-        return True
-    except Exception:
-        if tmp_path.exists():
+    with profile_cache_lock(cache_path):
+        cache_content = {"profile": ws_name, "scanned_at": time.time(), "package_data": {}}
+        if cache_path.exists():
             try:
-                tmp_path.unlink()
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                    if isinstance(loaded, dict) and "package_data" in loaded:
+                        cache_content = loaded
             except Exception:
                 pass
-        return False
+
+        existing_pkg = cache_content.setdefault("package_data", {}).setdefault(pkg_name, {})
+        if "sync" in package_data:
+            existing_pkg["sync"] = package_data["sync"]
+        if "version" in package_data:
+            existing_pkg["version"] = package_data["version"]
+        if "pr" in package_data:
+            existing_pkg["pr"] = package_data["pr"]
+
+        # Map worktree status
+        wt_info = package_data.get("worktree", {})
+        existing_wt = existing_pkg.setdefault("worktree", {})
+
+        active_branch = package_data.get("active_branch")
+        unst_branch = ws_prof.get("unstable_branch")
+        has_unstable = bool(ws_prof.get("unstable_path") and unst_branch)
+
+        if has_unstable:
+            if active_branch == unst_branch:
+                existing_wt["unstable"] = wt_info
+            else:
+                existing_wt["stable"] = wt_info
+        else:
+            existing_wt["stable"] = wt_info
+
+        cache_content["scanned_at"] = time.time()
+
+        tmp_path = cache_path.with_name(f"{cache_path.name}.tmp.{os.getpid()}_{threading.get_ident()}")
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(cache_content, f, indent=2)
+            tmp_path.replace(cache_path)
+            return True
+        except Exception:
+            if tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except Exception:
+                    pass
+            return False
 
 
 def get_local_package_version(repo_path):

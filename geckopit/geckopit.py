@@ -2396,15 +2396,30 @@ class SyncWindow(Adw.ApplicationWindow):
         cache_path = self.get_cache_path()
         try:
             self._last_cache_save_time = time.time()
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            active_ws = getattr(self.config, "active_workspace", "Default") if hasattr(self, "config") else "Default"
-            payload = json.dumps({
-                "profile": active_ws,
-                "scanned_at": time.time(),
-                "package_data": self.package_data
-            }, indent=2)
-            with open(cache_path, "w", encoding="utf-8") as f:
-                f.write(payload)
+            with sb.profile_cache_lock(cache_path):
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                existing_packages = {}
+                if cache_path.exists():
+                    try:
+                        with open(cache_path, "r", encoding="utf-8") as f:
+                            disk_cache = json.load(f)
+                        existing_packages = disk_cache.get("package_data", {})
+                    except Exception:
+                        pass
+
+                merged_packages = dict(existing_packages)
+                merged_packages.update(self.package_data)
+
+                active_ws = getattr(self.config, "active_workspace", "Default") if hasattr(self, "config") else "Default"
+                payload = json.dumps({
+                    "profile": active_ws,
+                    "scanned_at": time.time(),
+                    "package_data": merged_packages
+                }, indent=2)
+                tmp_path = cache_path.with_name(f"{cache_path.name}.tmp.{os.getpid()}_{threading.get_ident()}")
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    f.write(payload)
+                tmp_path.replace(cache_path)
         except Exception:
             pass
 
@@ -2428,20 +2443,33 @@ class SyncWindow(Adw.ApplicationWindow):
             cache_path = self.get_cache_path()
 
             def _write():
-                try:
-                    cache_path.parent.mkdir(parents=True, exist_ok=True)
-                    payload = json.dumps({
-                        "profile": active_ws,
-                        "scanned_at": time.time(),
-                        "package_data": data_copy
-                    }, indent=2)
-                    # Atomic write via temporary file replacement to eliminate cache corruption risks on interruption
-                    tmp_path = cache_path.with_suffix(".tmp")
-                    with open(tmp_path, "w", encoding="utf-8") as f:
-                        f.write(payload)
-                    tmp_path.replace(cache_path)
-                except Exception:
-                    pass
+                with sb.profile_cache_lock(cache_path):
+                    try:
+                        cache_path.parent.mkdir(parents=True, exist_ok=True)
+                        existing_packages = {}
+                        if cache_path.exists():
+                            try:
+                                with open(cache_path, "r", encoding="utf-8") as f:
+                                    disk_cache = json.load(f)
+                                existing_packages = disk_cache.get("package_data", {})
+                            except Exception:
+                                pass
+
+                        merged_packages = dict(existing_packages)
+                        merged_packages.update(data_copy)
+
+                        payload = json.dumps({
+                            "profile": active_ws,
+                            "scanned_at": time.time(),
+                            "package_data": merged_packages
+                        }, indent=2)
+                        # Process/thread-unique temp file to eliminate collision risks on concurrent writes
+                        tmp_path = cache_path.with_name(f"{cache_path.name}.tmp.{os.getpid()}_{threading.get_ident()}")
+                        with open(tmp_path, "w", encoding="utf-8") as f:
+                            f.write(payload)
+                        tmp_path.replace(cache_path)
+                    except Exception:
+                        pass
 
             threading.Thread(target=_write, daemon=True).start()
         except Exception:

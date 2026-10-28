@@ -6,6 +6,8 @@ import tempfile
 import unittest.mock as mock
 import subprocess
 import json
+import threading
+import time
 
 import os
 import sys
@@ -855,6 +857,32 @@ class TestSyncBackend(unittest.TestCase):
             # 2. Update outside workspace
             ok_out = sb.update_profile_cache_for_package(pkg_out, package_data=fake_data, cache_dir=cache_dir, config_file=cfg_file)
             self.assertFalse(ok_out)
+
+    def test_profile_cache_lock_mutual_exclusion(self):
+        """Verifies profile_cache_lock provides mutual exclusion across concurrent workers."""
+        with tempfile.TemporaryDirectory() as td:
+            cache_file = os.path.join(td, "cache_GNOME.json")
+            events = []
+
+            def worker_holding_lock():
+                with sb.profile_cache_lock(cache_file):
+                    events.append("worker1_acquired")
+                    time.sleep(0.1)
+                    events.append("worker1_released")
+
+            def worker_waiting():
+                time.sleep(0.02)
+                with sb.profile_cache_lock(cache_file):
+                    events.append("worker2_acquired")
+
+            t1 = threading.Thread(target=worker_holding_lock)
+            t2 = threading.Thread(target=worker_waiting)
+            t1.start()
+            t2.start()
+            t1.join()
+            t2.join()
+
+            self.assertEqual(events, ["worker1_acquired", "worker1_released", "worker2_acquired"])
 
 if __name__ == '__main__':
 
