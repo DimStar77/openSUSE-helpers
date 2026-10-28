@@ -284,7 +284,7 @@ hr {
 <tr>
 <td style="text-align: left;"><code>SR #N (outdated)</code></td>
 <td style="text-align: left;">Pending submit request has outdated sources (newer changes in devel project).</td>
-<td style="text-align: left;">Click '📤 Supersede SR' or run <code>geckopit-cli --submit-pool</code> to supersede.</td>
+<td style="text-align: left;">Click '📤 Supersede SR' or run <code>geckopit-cli --submit</code> to supersede.</td>
 </tr>
 </tbody>
 </table>
@@ -451,10 +451,10 @@ geckopit-cli --unignore 0.99.11 telepathy-glib
 geckopit-cli --list-ignored
 
 # Submit package changes to openSUSE:Factory (dry-run preview)
-geckopit-cli libnotify --submit-pool --dry-run
+geckopit-cli libnotify --submit --dry-run
 
 # Submit package changes to openSUSE:Factory with auto-extracted .changes description
-geckopit-cli libnotify --submit-pool
+geckopit-cli libnotify --submit
 
 # Audit against a specific workspace profile and customize worker concurrency
 geckopit-cli --profile GNOME --jobs 8
@@ -691,22 +691,22 @@ geckopit-cli --outdated
 geckopit-cli libnotify --check-pool
 
 # Submit package changes to openSUSE:Factory (dry-run simulation)
-geckopit-cli libnotify --submit-pool --dry-run
+geckopit-cli libnotify --submit --dry-run
 
 # Submit package changes with auto-extracted .changes description
-geckopit-cli libnotify --submit-pool
+geckopit-cli libnotify --submit
 
 # Submit with a custom message
-geckopit-cli libnotify --submit-pool -m &quot;Update to version 0.8.9&quot;
+geckopit-cli libnotify --submit -m &quot;Update to version 0.8.9&quot;
 
 # Interactively submit all unsubmitted workspace packages at once
-geckopit-cli --submit-pool --all
+geckopit-cli --submit --all
 </code></pre>
 <p><strong>Key Submission Capabilities</strong>:</p>
 <ul>
 <li><strong>Sub-2-Second Distribution Audit</strong>: Queries the project-wide OBS submit request collection (<code>/request?view=collection&amp;project=openSUSE:Factory&amp;states=review,new&amp;types=submit</code>) in ~1.8 seconds total, cross-referencing all 500+ packages in memory.</li>
 <li><strong>Existing SR Guard</strong>: Prevents redundant submissions when a request is already under evaluation in Factory staging (e.g. <code>⏳ Pending SR #1385454 (review)</code>).</li>
-<li><strong>Outdated Request Tracking &amp; Automated Superseding</strong>: Compares the devel package's <code>srcmd5</code> against the frozen request revision in OBS. If newer changes were committed to the source devel project while an SR was pending (such as <code>loupe</code> or <code>glycin</code>), Geckopit flags the request as outdated (<code>📤 Pending SR #&lt;id&gt; Outdated</code>), enables the <strong><code>📤 Supersede SR</code></strong> action button on the pipeline card, and automatically passes <code>-s &lt;id&gt;</code> to <code>osc sr</code> when superseding via <code>geckopit-cli --submit-pool</code>.</li>
+<li><strong>Outdated Request Tracking &amp; Automated Superseding</strong>: Compares the devel package's <code>srcmd5</code> against the frozen request revision in OBS. If newer changes were committed to the source devel project while an SR was pending (such as <code>loupe</code> or <code>glycin</code>), Geckopit flags the request as outdated (<code>📤 Pending SR #&lt;id&gt; Outdated</code>), enables the <strong><code>📤 Supersede SR</code></strong> action button on the pipeline card, and automatically passes <code>-s &lt;id&gt;</code> to <code>osc sr</code> when superseding via <code>geckopit-cli --submit</code>.</li>
 <li><strong>Sync Gap Intelligence</strong>: Audits recently accepted submit requests within a sliding window to catch packages accepted in OBS that have not yet finished backend mirroring to <code>src.opensuse.org/pool/&lt;pkg&gt;.git</code>.</li>
 <li><strong>Safe Workspace Crossover</strong>: When invoked from an unstable worktree (such as <code>GNOME:Next</code> on <code>next</code>), Geckopit automatically notifies you and routes the submission to your configured stable checkout (<code>GNOME</code> on <code>factory</code>), preventing developmental code from leaking into Factory.</li>
 <li><strong>Future Git-Pool Readiness</strong>: Inspects target project meta for <code>&lt;scmsync&gt;</code> tags, automatically guiding maintainers toward Gitea Pull Requests once <code>openSUSE:Factory</code> migrates to Git.</li>

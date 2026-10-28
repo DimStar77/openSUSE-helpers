@@ -373,19 +373,19 @@ geckopit-cli --check-pool
 geckopit-cli libnotify --check-pool
 
 # Submit package changes to openSUSE:Factory via osc sr (dry-run preview)
-geckopit-cli libnotify --submit-pool --dry-run
+geckopit-cli libnotify --submit --dry-run
 
 # Submit package changes to openSUSE:Factory with auto-extracted .changes description
-geckopit-cli libnotify --submit-pool
+geckopit-cli libnotify --submit
 
 # Submit with a custom description
-geckopit-cli libnotify --submit-pool -m "Update to version 0.8.9"
+geckopit-cli libnotify --submit -m "Update to version 0.8.9"
 
 # Filter submission audit specifically to packages with outdated submit requests
 geckopit-cli --outdated
 
 # Interactively submit all unsubmitted packages across the workspace
-geckopit-cli --submit-pool --all
+geckopit-cli --submit --all
 ```
 
 *   **Pending Request Guard**: Automatically queries OBS submit requests targeting `openSUSE:Factory`. If an SR is already pending in review, Geckopit blocks duplicate submissions and displays the active request ID (`⏳ Pending SR #1385454 (review)`).

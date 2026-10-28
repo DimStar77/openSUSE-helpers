@@ -424,11 +424,11 @@ def render_single_package_dashboard(data):
                 )
                 if pool_sub["status"] == "pending_outdated":
                     req = pool_sub["request"]
-                    actions.append(f"📤 Supersede pending SR #{req['id']} with latest sources: {sb.BOLD}geckopit-cli --submit-pool{sb.RESET}")
+                    actions.append(f"📤 Supersede pending SR #{req['id']} with latest sources: {sb.BOLD}geckopit-cli --submit{sb.RESET}")
                 elif pool_sub["status"] in ("pending", "accepted_pending_sync"):
                     pass
                 else:
-                    actions.append(f"📤 Submit changes to central pool (openSUSE:Factory): {sb.BOLD}geckopit-cli --submit-pool{sb.RESET}")
+                    actions.append(f"📤 Submit changes to central pool (openSUSE:Factory): {sb.BOLD}geckopit-cli --submit{sb.RESET}")
         if head in (st_branch, unst_branch):
             if next_behind > 0:
                 actions.append(f"🔀 Catch-up merge from {st_branch}: {sb.BOLD}git merge origin/{st_branch}{sb.RESET}")
@@ -1634,10 +1634,10 @@ def run_pool_audit_cli(workspace_path="."):
 
         print("")
         print(f"💡 {sb.BOLD}To submit an individual package:{sb.RESET}")
-        print(f"   geckopit-cli <pkg> --submit-pool")
+        print(f"   geckopit-cli <pkg> --submit")
         print("")
         print(f"💡 {sb.BOLD}To submit all unsubmitted packages:{sb.RESET}")
-        print(f"   geckopit-cli --submit-pool --all (or with '--dry-run' to preview)")
+        print(f"   geckopit-cli --submit --all (or with '--dry-run' to preview)")
     else:
         print(f"{sb.GREEN}✅ All packages ahead of pool already have active submit requests or are syncing!{sb.RESET}")
 
@@ -1710,7 +1710,7 @@ KNOWN_OPTIONS = {
     "--audit-deps", "-d", "--fix-deps",
     "--list-prs", "--merge-pr", "--squash", "--no-commit",
     "--ignore", "--unignore", "--list-ignored",
-    "--submit-pool", "--check-pool", "--pending-sr", "--pending-requests", "--outdated", "--supersede",
+    "--check-pool", "--pending-sr", "--pending-requests", "--outdated", "--supersede",
     "--message", "-m", "--all", "-a", "--yes", "-y",
     "--check-setup", "--setup",
     "--guide", "--docs",
@@ -1891,7 +1891,6 @@ def print_help():
     print(f"  {sb.BOLD}-v, --version [b]{sb.RESET}  Compares package versions against release-monitoring.org.")
     print(f"  {sb.BOLD}--not-in-pool{sb.RESET}      Dedicated audit mode: lists packages not in central Gitea pool.")
     print(f"  {sb.BOLD}--check-pool{sb.RESET}       Audits workspace or package for pending Factory submit requests.")
-    print(f"  {sb.BOLD}--submit-pool [p]{sb.RESET}  Submits package changes to central pool (openSUSE:Factory) via osc sr.")
     print(f"  {sb.BOLD}--todo{sb.RESET}             Alias for default sync checking mode.")
     print(f"\n{sb.BOLD}Version Ignoring & Monitoring:{sb.RESET}")
     print(f"  {sb.BOLD}--ignore [VER] [pkg]{sb.RESET}  Ignores an upstream release version for a package.")
@@ -1918,7 +1917,7 @@ def print_help():
     print(f"  {sb.BOLD}--stream <stream>{sb.RESET}   Target stream ('factory', 'leap-16.1', 'leap-16.0'; default: 'factory').")
     print(f"  {sb.BOLD}--dest-dir <path>{sb.RESET}   Destination directory on disk (defaults to scratch_dir/<pkg>).")
     print(f"  {sb.BOLD}--no-build{sb.RESET}         Skip creating the OBS <scmsync> cloud build package for Git forks.")
-    print(f"  {sb.BOLD}--submit{sb.RESET}           Universal submit: routes OBS branches to 'osc sr' and Git forks to Gitea PR.")
+    print(f"  {sb.BOLD}--submit [pkg]{sb.RESET}     Universal submit: routes unstable branch to forward PR, stable branch to 'osc sr', and forks to upstream.")
     print(f"  {sb.BOLD}--prune <pkg>{sb.RESET}        Retires a scratchpad package: removes local checkout, OBS package, and topic branch.")
     print(f"\n{sb.BOLD}Setup & Documentation:{sb.RESET}")
     print(f"  {sb.BOLD}--check-setup{sb.RESET}      Verifies readiness of Git identity, SSH keys, OBS, and Gitea.")
@@ -1929,9 +1928,9 @@ def print_help():
     print(f"  {sb.BOLD}--no-commit{sb.RESET}         Used with --merge-pr to stage changes without committing.")
     print(f"  {sb.BOLD}--no-edit{sb.RESET}          Used with --commit to commit without opening an interactive editor.")
     print(f"  {sb.BOLD}--no-service{sb.RESET}       Used with --commit to skip _service and source_validator checks.")
-    print(f"  {sb.BOLD}-m, --message <m>{sb.RESET}  Custom submission description message with --submit-pool.")
-    print(f"  {sb.BOLD}-a, --all{sb.RESET}          With --submit-pool, submits all unsubmitted workspace packages.")
-    print(f"  {sb.BOLD}-n, --dry-run{sb.RESET}      Used with --upgrade or --submit-pool to simulate without modifying.")
+    print(f"  {sb.BOLD}-m, --message <m>{sb.RESET}  Custom submission description message with --submit.")
+    print(f"  {sb.BOLD}-a, --all{sb.RESET}          With --submit, submits all unsubmitted workspace packages.")
+    print(f"  {sb.BOLD}-n, --dry-run{sb.RESET}      Used with --upgrade or --submit to simulate without modifying.")
     print(f"  {sb.BOLD}-p, --pr{sb.RESET}           Include Gitea pull request pending status in forwarding mode.")
     print(f"  {sb.BOLD}--no-pr{sb.RESET}            In forwarding mode, only show packages without a pending pull request.")
     print(f"  {sb.BOLD}-b, --branch <b>{sb.RESET}   Limit checks to a specific branch ('factory' or 'next').")
@@ -2019,6 +2018,8 @@ def main():
             merge_pr_id = arg.split("=", 1)[1]
 
     dry_run = "--dry-run" in sys.argv or "-n" in sys.argv
+    all_submit = "--all" in sys.argv or "-a" in sys.argv
+    yes_arg = "--yes" in sys.argv or "-y" in sys.argv
 
     # Detect if a target package argument was provided (e.g. 'geckopit-cli baobab')
     target_arg = None
@@ -2139,7 +2140,19 @@ def main():
 
     # Universal submit action
     if "--submit" in sys.argv:
+        if all_submit:
+            sys.exit(run_all_pool_submit_cli(
+                workspace_path=os.getcwd(),
+                dry_run=dry_run,
+                yes=yes_arg,
+                force=force_sync
+            ))
+
         eff_dir = target_pkg_dir or "."
+        # If in workspace root without targeting a package or inside a package checkout, audit submissions
+        if not target_pkg_dir and not sb.is_package_dir("."):
+            sys.exit(run_pool_audit_cli(workspace_path=os.getcwd()))
+
         ok, msg = fork_helper.submit_flyby_package(eff_dir, message=custom_message, dry_run=dry_run)
         if ok:
             if not dry_run:
@@ -2249,7 +2262,7 @@ def main():
                 print(f"  State:          {r['state']} (by @{r['creator']})")
                 print(f"  Source:         {r['source_project']}/{r['source_package']}")
                 print(f"  Target:         {r['target_project']}/{r['target_package']}")
-                print(f"  Action:         Run 'geckopit-cli --submit-pool' to supersede with latest sources")
+                print(f"  Action:         Run 'geckopit-cli --submit' to supersede with latest sources")
             elif st["status"] == "pending":
                 r = st["request"]
                 print(f"  Status:         {sb.YELLOW}⏳ Pending Submit Request #{r['id']}{sb.RESET} (Up-to-date with latest sources)")
@@ -2323,32 +2336,14 @@ def main():
                         except Exception:
                             pass
                         if pool_ahead > 0:
-                            print(f"  Status:         {sb.CYAN}📤 Unsubmitted{sb.RESET} (Ahead of pool by {pool_ahead} commit{'s' if pool_ahead != 1 else ''}; ready for 'geckopit-cli --submit-pool')")
+                            print(f"  Status:         {sb.CYAN}📤 Unsubmitted{sb.RESET} (Ahead of pool by {pool_ahead} commit{'s' if pool_ahead != 1 else ''}; ready for 'geckopit-cli --submit')")
                         else:
                             print(f"  Status:         {sb.GREEN}✅ Up-to-date with central pool{sb.RESET} (0 commits ahead)")
             sys.exit(0)
         else:
             sys.exit(run_pool_audit_cli(workspace_path=os.getcwd()))
 
-    # Execute submit-pool mode
-    if "--submit-pool" in sys.argv:
-        if target_pkg_dir:
-            sys.exit(run_package_pool_submit(
-                target_pkg_dir,
-                message=custom_message,
-                dry_run=dry_run,
-                force=force_sync
-            ))
-        else:
-            if all_submit:
-                sys.exit(run_all_pool_submit_cli(
-                    workspace_path=os.getcwd(),
-                    dry_run=dry_run,
-                    yes=yes_arg,
-                    force=force_sync
-                ))
-            else:
-                sys.exit(run_pool_audit_cli(workspace_path=os.getcwd()))
+
 
     # Execute list-prs mode
     if "--list-prs" in sys.argv:

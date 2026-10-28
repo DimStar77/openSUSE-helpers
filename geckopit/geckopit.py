@@ -5516,10 +5516,7 @@ class SyncWindow(Adw.ApplicationWindow):
             repo_path = self.get_mapped_worktree_path(pkg, "factory")
             head_file = SyncWindow.get_git_head_file(repo_path) if repo_path else None
             active_br = SyncWindow.read_git_branch_from_head_file(head_file) if head_file else ""
-            if active_br and active_br.startswith("for-"):
-                command = "geckopit-cli --submit"
-            else:
-                command = "geckopit-cli --submit-pool"
+            command = "geckopit-cli --submit"
             self.allocate_terminal(pkg, "factory", command)
 
     def on_osc_ci_clicked(self, btn):
