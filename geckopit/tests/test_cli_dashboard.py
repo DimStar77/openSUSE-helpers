@@ -156,6 +156,8 @@ class TestSinglePackageDashboardFormatting(unittest.TestCase):
         out = buf.getvalue()
 
         self.assertIn("Ahead of factory by 3 commits (Ready for PR)", out)
+        self.assertIn("Create Gitea Pull Request from next to factory:", out)
+        self.assertIn("geckopit-cli --submit", out)
         self.assertNotIn("Active PR:", out)
 
 

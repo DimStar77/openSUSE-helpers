@@ -4,6 +4,7 @@ import sys
 import unittest
 import tempfile
 import unittest.mock as mock
+import subprocess
 
 import os
 import sys
@@ -718,6 +719,61 @@ class TestSyncBackend(unittest.TestCase):
             discovered = sb.discover_workspace_packages(tmpdir)
             self.assertIn('000package-groups', discovered)
             self.assertIn('jeos-appliance', discovered)
+
+    def test_has_git_ref_prefix_candidates(self):
+        """Verifies has_git_ref resolves refs both with and without explicit refs/ prefixes."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_dir = os.path.join(tmpdir, "pkg")
+            os.makedirs(repo_dir)
+            subprocess.run(["git", "init", repo_dir], capture_output=True, check=True)
+            # Create dummy remote ref in packed-refs or loose
+            git_dir = os.path.join(repo_dir, ".git")
+            os.makedirs(os.path.join(git_dir, "refs", "remotes", "origin"), exist_ok=True)
+            with open(os.path.join(git_dir, "refs", "remotes", "origin", "factory"), "w") as f:
+                f.write("0123456789abcdef0123456789abcdef01234567\n")
+
+            self.assertTrue(sb.has_git_ref(repo_dir, "refs/remotes/origin/factory"))
+            self.assertTrue(sb.has_git_ref(repo_dir, "origin/factory"))
+            self.assertFalse(sb.has_git_ref(repo_dir, "origin/nonexistent"))
+
+    def test_check_repo_sync_compare_ref_prefers_stable_branch(self):
+        """Verifies check_repo_sync compares stable branch against pool rather than falling back to @{u}."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_dir = os.path.join(tmpdir, "pkg")
+            os.makedirs(repo_dir)
+            subprocess.run(["git", "init", repo_dir], capture_output=True, check=True)
+            git_dir = os.path.join(repo_dir, ".git")
+            os.makedirs(os.path.join(git_dir, "refs", "remotes", "origin"), exist_ok=True)
+            os.makedirs(os.path.join(git_dir, "refs", "pool"), exist_ok=True)
+
+            # Create an initial commit
+            test_file = os.path.join(repo_dir, "test.txt")
+            with open(test_file, "w") as f:
+                f.write("initial\n")
+            subprocess.run(["git", "-C", repo_dir, "config", "user.name", "Test"], check=True)
+            subprocess.run(["git", "-C", repo_dir, "config", "user.email", "test@example.com"], check=True)
+            subprocess.run(["git", "-C", repo_dir, "add", "."], check=True)
+            subprocess.run(["git", "-C", repo_dir, "commit", "-m", "initial"], check=True)
+
+            rev = subprocess.run(["git", "-C", repo_dir, "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+
+            # Set refs/remotes/origin/factory and refs/pool/factory to same commit
+            with open(os.path.join(git_dir, "refs", "remotes", "origin", "factory"), "w") as f:
+                f.write(f"{rev}\n")
+            with open(os.path.join(git_dir, "refs", "pool", "factory"), "w") as f:
+                f.write(f"{rev}\n")
+
+            # Mock check_repo_sync network fetch to no-op
+            with mock.patch("helpers.sync_backend.run_tracked") as mock_rt:
+                # Provide rev-list count returning "0 0" for compare_ref
+                def fake_rt(cmd, *args, **kwargs):
+                    m = mock.MagicMock(returncode=0, stdout="0	0\n", stderr="")
+                    return m
+                mock_rt.side_effect = fake_rt
+                name, data = sb.check_repo_sync("pkg", stable_branch="factory", unstable_branch="next", workspace_path=tmpdir, known_not_in_pool=set())
+                self.assertEqual(data["status"], "success")
+                self.assertEqual(data["pool_ahead"], 0)
+                self.assertEqual(data["pool_behind"], 0)
 
 if __name__ == '__main__':
 

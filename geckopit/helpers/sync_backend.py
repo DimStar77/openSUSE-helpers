@@ -304,10 +304,19 @@ def has_git_ref(repo_path, ref_name):
         else:
             return False
 
+        ref_candidates = [ref_name]
+        if not ref_name.startswith('refs/'):
+            ref_candidates.extend([
+                f'refs/remotes/{ref_name}',
+                f'refs/heads/{ref_name}',
+                f'refs/{ref_name}'
+            ])
+
         # 1. Check loose ref file
-        loose_path = os.path.join(git_dir, ref_name)
-        if os.path.isfile(loose_path):
-            return True
+        for cand in ref_candidates:
+            loose_path = os.path.join(git_dir, cand)
+            if os.path.isfile(loose_path):
+                return True
 
         # 2. Check packed-refs file
         packed_path = os.path.join(git_dir, 'packed-refs')
@@ -317,19 +326,24 @@ def has_git_ref(repo_path, ref_name):
                     if line.startswith('#') or line.startswith('^'):
                         continue
                     parts = line.split()
-                    if len(parts) == 2 and parts[1] == ref_name:
+                    if len(parts) == 2 and parts[1] in ref_candidates:
                         return True
 
         return False
     except Exception:
-        try:
-            run_tracked(
-                ['git', '-C', repo_path, 'show-ref', '--verify', '--quiet', ref_name],
-                check=True, capture_output=True
-            )
-            return True
-        except subprocess.CalledProcessError:
-            return False
+        ref_candidates = [ref_name]
+        if not ref_name.startswith('refs/'):
+            ref_candidates.extend([f'refs/remotes/{ref_name}', f'refs/heads/{ref_name}'])
+        for cand in ref_candidates:
+            try:
+                run_tracked(
+                    ['git', '-C', repo_path, 'show-ref', '--verify', '--quiet', cand],
+                    check=True, capture_output=True
+                )
+                return True
+            except subprocess.CalledProcessError:
+                pass
+        return False
 
 def get_gitea_token():
     """Reads Gitea personal access token from ~/.config/tea/config.yml if configured."""
@@ -608,9 +622,9 @@ def check_repo_sync(repo_name, stable_branch="factory", unstable_branch="next", 
 
             # Resolve comparison reference (origin/<branch>, upstream/<branch>, tracking @{u}, or HEAD)
             compare_ref = None
-            for r in (f'origin/{stable_branch}', f'refs/remotes/upstream/{stable_branch}'):
+            for r in (f'refs/remotes/origin/{stable_branch}', f'refs/remotes/upstream/{stable_branch}', f'origin/{stable_branch}'):
                 if has_git_ref(repo_path, r):
-                    compare_ref = r
+                    compare_ref = f'origin/{stable_branch}' if r.startswith('refs/remotes/origin/') else r
                     break
             if not compare_ref:
                 try:

@@ -434,7 +434,7 @@ def render_single_package_dashboard(data):
                 actions.append(f"🔀 Catch-up merge from {st_branch}: {sb.BOLD}git merge origin/{st_branch}{sb.RESET}")
             # Only recommend PR if commits are actually on remote (ahead == 0) and not in active PR
             if ahead == 0 and next_ahead > 0 and not pr.get('has_forward_pr'):
-                actions.append(f"📤 Create Gitea Pull Request from {branch} to {st_branch}")
+                actions.append(f"📤 Create Gitea Pull Request from {branch} to {st_branch}: {sb.BOLD}geckopit-cli --submit{sb.RESET}")
         if ver.get('needs_update'):
             target_v = u_latest if branch == 'next' and u_latest != '—' else u_stable
             p_dir = data.get('pkg_dir', '.')

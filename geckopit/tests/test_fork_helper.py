@@ -291,6 +291,79 @@ class TestForkHelper(unittest.TestCase):
                     self.assertTrue(any('pool/vlc:leap-16.0' in l for l in logs))
                     self.assertTrue(any('head: dimstar:leap-16.0' in l for l in logs))
 
+    def test_submit_dual_branch_forward_creates_pr_against_stable_branch(self):
+        """Verifies submitting from unstable branch in a dual-branch workspace targets stable branch on origin."""
+        from unittest.mock import patch, MagicMock
+        with tempfile.TemporaryDirectory() as td:
+            pkg_dir = os.path.join(td, 'sofia-sip')
+            os.makedirs(os.path.join(pkg_dir, '.git'), exist_ok=True)
+
+            def fake_run(cmd, *args, **kwargs):
+                m = MagicMock(returncode=0, stdout='', stderr='')
+                if 'branch' in cmd and '--show-current' in cmd:
+                    m.stdout = 'next\n'
+                elif 'rev-parse' in cmd and '@{u}' in cmd:
+                    m.stdout = 'origin/next\n'
+                elif 'remote' in cmd and 'upstream' in cmd:
+                    m.returncode = 1
+                elif 'remote' in cmd and 'origin' in cmd:
+                    m.stdout = 'gitea@src.opensuse.org:GNOME/sofia-sip.git\n'
+                return m
+
+            mock_prof = {
+                'active_workspace': 'GNOME',
+                'stable_branch': 'factory',
+                'unstable_branch': 'next',
+                'is_scratch': False
+            }
+
+            with patch('subprocess.run', side_effect=fake_run):
+                with patch('helpers.sync_backend.load_geckopit_profile_config', return_value=mock_prof):
+                    with patch('helpers.sync_backend.get_pr_prefill_info', return_value=('Update sofia-sip to version 1.13.19', '- Update to version 1.13.19')):
+                        logs = []
+                        ok, msg = fork_helper.submit_flyby_package(pkg_dir, dry_run=True, on_log=logs.append)
+                        self.assertTrue(ok)
+                        self.assertIn('[DRY-RUN]', msg)
+                        self.assertTrue(any('GNOME/sofia-sip:factory' in l for l in logs))
+                        self.assertTrue(any('head: next' in l for l in logs))
+                        self.assertTrue(any('Title: Update sofia-sip to version 1.13.19' in l for l in logs))
+
+    def test_submit_stable_branch_routes_to_pool_submit(self):
+        """Verifies submitting from stable branch in a registered workspace delegates to pool_submit."""
+        from unittest.mock import patch, MagicMock
+        with tempfile.TemporaryDirectory() as td:
+            pkg_dir = os.path.join(td, 'sofia-sip')
+            os.makedirs(os.path.join(pkg_dir, '.git'), exist_ok=True)
+
+            def fake_run(cmd, *args, **kwargs):
+                m = MagicMock(returncode=0, stdout='', stderr='')
+                if 'branch' in cmd and '--show-current' in cmd:
+                    m.stdout = 'factory\n'
+                elif 'remote' in cmd and 'origin' in cmd:
+                    m.stdout = 'gitea@src.opensuse.org:GNOME/sofia-sip.git\n'
+                elif 'remote' in cmd and 'upstream' in cmd:
+                    m.returncode = 1
+                return m
+
+            mock_prof = {
+                'active_workspace': 'GNOME',
+                'stable_branch': 'factory',
+                'unstable_branch': 'next',
+                'is_scratch': False
+            }
+
+            with patch('subprocess.run', side_effect=fake_run):
+                with patch('helpers.sync_backend.load_geckopit_profile_config', return_value=mock_prof):
+                    with patch('helpers.pool_submit.submit_package_to_pool', return_value=(True, 'Submitted to openSUSE:Factory via osc sr.')) as mock_pool_sub:
+                        ok, msg = fork_helper.submit_flyby_package(pkg_dir, dry_run=False)
+                        self.assertTrue(ok)
+                        self.assertIn('Submitted to openSUSE:Factory', msg)
+                        mock_pool_sub.assert_called_once()
+                        call_kwargs = mock_pool_sub.call_args[1]
+                        self.assertEqual(call_kwargs.get('package_name'), 'sofia-sip')
+                        self.assertEqual(call_kwargs.get('target_project'), 'openSUSE:Factory')
+                        self.assertEqual(call_kwargs.get('stable_branch'), 'factory')
+
 if __name__ == '__main__':
 
     unittest.main()
