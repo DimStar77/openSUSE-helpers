@@ -886,8 +886,8 @@ def get_default_editor(package_dir: Optional[str] = None) -> str:
     if val and val.strip():
         return val.strip()
 
-    # 5. Default fallback: vi (or vim)
-    for cand in ("vi", "vim"):
+    # 5. Default fallback: vim (or vi)
+    for cand in ("vim", "vi"):
         if shutil.which(cand):
             return cand
 
@@ -1174,8 +1174,16 @@ def rebase_patch_cli(
                         print(f"✏️  {CYAN}Opening editor ({editor}) to resolve {YELLOW}{rel_sf}{RESET}...")
                     print(f"   Save changes and close the editor when done.\n")
 
-                    if "vim" in editor_bin and os.path.exists(rf):
+                    is_vim_like = (
+                        editor_bin in ("vi", "vim", "gvim", "nvim", "view")
+                        or editor_bin.startswith("vi")
+                        or "vim" in editor_bin
+                        or "nvim" in editor_bin
+                    )
+                    if is_vim_like and os.path.exists(rf):
                         cmd = editor_parts + ["-O", sf, rf]
+                    elif os.path.exists(rf):
+                        cmd = editor_parts + [sf, rf]
                     else:
                         cmd = editor_parts + [sf]
 

@@ -4,6 +4,7 @@ import sys
 import unittest
 import tempfile
 import tarfile
+import subprocess
 
 import os
 import sys
@@ -767,6 +768,56 @@ for path in sys.argv[1:]:
             # Both files should now apply cleanly in sequence
             res_after = check_patches_sequential(tmpdir)
             self.assertTrue(res_after["success"])
+
+    def test_rebase_patch_editor_command_vim_splits(self):
+        """Verifies that rebase_patch_cli passes -O side-by-side splits for vi, vim, and nvim."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from unittest.mock import patch, MagicMock
+            import patch_checker, tarfile
+
+            src_dir = os.path.join(tmpdir, "pkg-2.0")
+            os.makedirs(src_dir)
+            with open(os.path.join(src_dir, "app.c"), "w") as f:
+                f.write("#include <stdio.h>\n\nvoid execute_task(void) {\n    int mode = 2;\n    run_action();\n}\n")
+            tar_path = os.path.join(tmpdir, "pkg-2.0.tar.xz")
+            with tarfile.open(tar_path, "w:xz") as tf:
+                tf.add(src_dir, arcname="pkg-2.0")
+            orig_patch = """# Disable action for safety
+# bsc#999999
+--- a/app.c
++++ b/app.c
+@@ -3,3 +3,3 @@
+ void execute_task(void) {
+-    run_action();
++    // run_action();
+ }
+"""
+            with open(os.path.join(tmpdir, "pkg.spec"), "w") as f:
+                f.write("Name: pkg\nVersion: 2.0\nSource0: %{name}-%{version}.tar.xz\nPatch0: disable-action.patch\n%prep\n%autosetup -p1\n")
+
+            for ed_name in ["vi", "vim", "/usr/bin/vi", "/usr/bin/nvim"]:
+                with open(os.path.join(tmpdir, "disable-action.patch"), "w") as f:
+                    f.write(orig_patch)
+                with open(os.path.join(tmpdir, "pkg.changes"), "w") as f:
+                    f.write("-------------------------------------------------------------------\nWed Oct 14 12:00:00 UTC 2026 - maint@example.com\n\n- Update to version 2.0.\n")
+
+                captured = []
+                real_run = subprocess.run
+                def spy_run(cmd, *args, **kwargs):
+                    if cmd and (cmd[0] == ed_name or os.path.basename(cmd[0]) in ["vi", "vim", "nvim"]):
+                        captured.extend(cmd)
+                        app_path = cmd[-2] if "-O" in cmd else cmd[-1]
+                        with open(app_path, "w") as af:
+                            af.write("#include <stdio.h>\n\nvoid execute_task(void) {\n    int mode = 2;\n    // run_action();\n}\n")
+                        return MagicMock(returncode=0)
+                    return real_run(cmd, *args, **kwargs)
+
+                with patch("patch_checker.get_default_editor", return_value=ed_name):
+                    with patch("subprocess.run", side_effect=spy_run):
+                        patch_checker.rebase_patch_cli(tmpdir)
+
+                self.assertIn("-O", captured, f"Expected -O side-by-side flag for editor '{ed_name}'")
+                self.assertTrue(any(c.endswith(".rej") for c in captured), f"Expected .rej file in arguments for '{ed_name}'")
 
 if __name__ == '__main__':
     unittest.main()
