@@ -69,7 +69,7 @@ class TestSinglePackageDashboardFormatting(unittest.TestCase):
         out = buf.getvalue()
 
         # 1. Verify Branch Sync states (PR #2 pending) rather than (Ready for PR)
-        self.assertIn("Ahead of factory by 1 commit (PR #2 pending)", out)
+        self.assertIn("next ahead of factory by 1 commit (PR #2 pending)", out)
         self.assertNotIn("Ready for PR", out)
 
         # 2. Verify singular 'commit'
@@ -155,7 +155,7 @@ class TestSinglePackageDashboardFormatting(unittest.TestCase):
             self.cli.render_single_package_dashboard(data)
         out = buf.getvalue()
 
-        self.assertIn("Ahead of factory by 3 commits (Ready for PR)", out)
+        self.assertIn("next ahead of factory by 3 commits (Ready for PR)", out)
         self.assertIn("Create Gitea Pull Request from next to factory:", out)
         self.assertIn("geckopit-cli --submit", out)
         self.assertNotIn("Active PR:", out)
@@ -169,10 +169,10 @@ class TestSinglePackageDashboardFormatting(unittest.TestCase):
         data = {
             'repo_name': 'testpkg',
             'pkg_dir': '/path/to/pkg',
-            'active_branch': 'next',
+            'active_branch': 'factory',
             'stable_branch': 'factory',
             'unstable_branch': 'next',
-            'worktree': {'ahead': 0, 'behind': 0, 'dirty': False, 'untracked': False},
+            'worktree': {'head': 'factory', 'ahead': 0, 'behind': 0, 'dirty': False, 'untracked': False},
             'sync': {'pool_ahead': 3, 'pool_behind': 0, 'pool_status': 'In Sync', 'next_ahead': 0, 'next_behind': 0, 'next_status': 'In Sync'},
             'version': {'factory_ver': '51.0.9', 'upstream_stable': '51.0.9', 'next_ver': '51.0.9', 'upstream_latest': '51.0.9', 'needs_update': False},
             'pr': {'has_pr': False, 'has_forward_pr': False, 'count': 0, 'prs': []}
@@ -386,6 +386,56 @@ class TestSinglePackageDashboardFormatting(unittest.TestCase):
             self.assertIn("Ready to Forward: 1 | In Staging: 1", out)
             self.assertIn("In Staging (PR #1181 on GNOME/_ObsPrj)", out)
             self.assertIn("Ready (Clean Forward)", out)
+
+    def test_dashboard_factory_checkout_does_not_recommend_factory_to_factory_pr(self):
+        """Verifies checking out factory when next is ahead does not recommend self-PR from factory to factory."""
+        import io
+        from unittest.mock import patch
+
+        data = {
+            'repo_name': 'malcontent',
+            'pkg_dir': '/path/to/malcontent',
+            'active_branch': 'factory',
+            'stable_branch': 'factory',
+            'unstable_branch': 'next',
+            'worktree': {
+                'exists': True,
+                'head': 'factory',
+                'upstream': 'origin/factory',
+                'ahead': 0,
+                'behind': 0,
+                'dirty': False,
+                'untracked': False,
+                'has_conflict': False
+            },
+            'sync': {
+                'status': 'success',
+                'pool_status': 'In Sync',
+                'pool_ahead': 0,
+                'pool_behind': 0,
+                'next_status': 'Ahead',
+                'next_ahead': 6,
+                'next_behind': 0
+            },
+            'version': {
+                'status': 'success',
+                'factory_ver': '0.14.0',
+                'next_ver': '0.14.0+8',
+                'upstream_stable': '0.14.0',
+                'upstream_latest': '0.14.0',
+                'needs_update': False
+            },
+            'pr': {'has_pr': False, 'has_forward_pr': False, 'count': 0, 'prs': []}
+        }
+
+        buf = io.StringIO()
+        with patch('sys.stdout', buf):
+            self.cli.render_single_package_dashboard(data)
+        out = buf.getvalue()
+
+        self.assertIn("next ahead of factory by 6 commits (Ready for PR)", out)
+        self.assertIn("Unstable branch 'next' has 6 unforwarded commits ready to forward.", out)
+        self.assertNotIn("Create Gitea Pull Request from factory to factory", out)
 
 if __name__ == '__main__':
 

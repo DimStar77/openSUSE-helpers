@@ -247,18 +247,18 @@ def render_single_package_dashboard(data):
             elif next_behind > 0 and next_ahead > 0:
                 b_s = 's' if next_behind != 1 else ''
                 a_s = 's' if next_ahead != 1 else ''
-                fwd_str = f"{sb.RED}❌ Diverged (Behind {next_behind} commit{b_s}, Ahead {next_ahead} commit{a_s}){sb.RESET}"
+                fwd_str = f"{sb.RED}❌ Diverged ({unst_branch} behind {next_behind} commit{b_s}, ahead {next_ahead} commit{a_s}){sb.RESET}"
             elif next_behind > 0:
                 b_s = 's' if next_behind != 1 else ''
-                fwd_str = f"{sb.YELLOW}⚠️ Behind {st_branch} by {next_behind} commit{b_s} (Catch-up merge needed){sb.RESET}"
+                fwd_str = f"{sb.YELLOW}⚠️ {unst_branch} behind {st_branch} by {next_behind} commit{b_s} (Catch-up merge needed){sb.RESET}"
             elif next_ahead > 0:
                 a_s = 's' if next_ahead != 1 else ''
                 if pr.get('has_forward_pr'):
                     fwd_num = pr.get('number')
                     pr_ref = f"PR #{fwd_num} pending" if fwd_num else "PR pending"
-                    fwd_str = f"{sb.GREEN}🔀 Ahead of {st_branch} by {next_ahead} commit{a_s} ({pr_ref}){sb.RESET}"
+                    fwd_str = f"{sb.GREEN}🔀 {unst_branch} ahead of {st_branch} by {next_ahead} commit{a_s} ({pr_ref}){sb.RESET}"
                 else:
-                    fwd_str = f"{sb.GREEN}🔀 Ahead of {st_branch} by {next_ahead} commit{a_s} (Ready for PR){sb.RESET}"
+                    fwd_str = f"{sb.GREEN}🔀 {unst_branch} ahead of {st_branch} by {next_ahead} commit{a_s} (Ready for PR){sb.RESET}"
             elif ahead > 0:
                 fwd_str = f"{sb.GREEN}✅ In Sync on remote{sb.RESET} {sb.CYAN}(local branch carries {ahead} unpushed commit{'s' if ahead > 1 else ''}){sb.RESET}"
             elif next_status in ('In Sync', 'Ahead (ok)'):
@@ -413,28 +413,33 @@ def render_single_package_dashboard(data):
                     else:
                         actions.append(f"ℹ️  Current branch '{head}' has no OBS submission target. Switch to '{st_branch}' to submit to openSUSE:Factory: {sb.BOLD}git checkout {st_branch}{sb.RESET}")
         else:
-            if pool_behind > 0:
-                actions.append(f"📥 Pull upstream changes from Pool: {sb.BOLD}git fetch https://src.opensuse.org/pool/{repo}.git factory && git merge FETCH_HEAD{sb.RESET}")
-            if pool_ahead > 0:
-                pool_sub = pool_submit.get_package_pool_submission_status(
-                    repo,
-                    target_project="openSUSE:Factory",
-                    pkg_dir=data.get('pkg_dir'),
-                    stable_branch=data.get('stable_branch', 'factory')
-                )
-                if pool_sub["status"] == "pending_outdated":
-                    req = pool_sub["request"]
-                    actions.append(f"📤 Supersede pending SR #{req['id']} with latest sources: {sb.BOLD}geckopit-cli --submit{sb.RESET}")
-                elif pool_sub["status"] in ("pending", "accepted_pending_sync"):
-                    pass
-                else:
-                    actions.append(f"📤 Submit changes to central pool (openSUSE:Factory): {sb.BOLD}geckopit-cli --submit{sb.RESET}")
-        if head in (st_branch, unst_branch):
+            # Central pool submission / catch-up actions only apply when on stable branch or single-branch workspace
+            if head == st_branch or not unst_branch:
+                if pool_behind > 0:
+                    actions.append(f"📥 Pull upstream changes from Pool: {sb.BOLD}git fetch https://src.opensuse.org/pool/{repo}.git {st_branch} && git merge FETCH_HEAD{sb.RESET}")
+                if pool_ahead > 0:
+                    pool_sub = pool_submit.get_package_pool_submission_status(
+                        repo,
+                        target_project="openSUSE:Factory",
+                        pkg_dir=data.get('pkg_dir'),
+                        stable_branch=data.get('stable_branch', 'factory')
+                    )
+                    if pool_sub["status"] == "pending_outdated":
+                        req = pool_sub["request"]
+                        actions.append(f"📤 Supersede pending SR #{req['id']} with latest sources: {sb.BOLD}geckopit-cli --submit{sb.RESET}")
+                    elif pool_sub["status"] in ("pending", "accepted_pending_sync"):
+                        pass
+                    else:
+                        actions.append(f"📤 Submit changes to central pool (openSUSE:Factory): {sb.BOLD}geckopit-cli --submit{sb.RESET}")
+        if head == unst_branch:
             if next_behind > 0:
                 actions.append(f"🔀 Catch-up merge from {st_branch}: {sb.BOLD}git merge origin/{st_branch}{sb.RESET}")
             # Only recommend PR if commits are actually on remote (ahead == 0) and not in active PR
             if ahead == 0 and next_ahead > 0 and not pr.get('has_forward_pr'):
-                actions.append(f"📤 Create Gitea Pull Request from {branch} to {st_branch}: {sb.BOLD}geckopit-cli --submit{sb.RESET}")
+                actions.append(f"📤 Create Gitea Pull Request from {unst_branch} to {st_branch}: {sb.BOLD}geckopit-cli --submit{sb.RESET}")
+        elif head == st_branch and unst_branch:
+            if next_ahead > 0 and not pr.get('has_forward_pr'):
+                actions.append(f"🔀 Unstable branch '{unst_branch}' has {next_ahead} unforwarded commit{'s' if next_ahead != 1 else ''} ready to forward.")
         if ver.get('needs_update'):
             target_v = u_latest if branch == 'next' and u_latest != '—' else u_stable
             p_dir = data.get('pkg_dir', '.')
