@@ -434,6 +434,65 @@ class TestForkHelper(unittest.TestCase):
                 self.assertTrue(any("pool/openldap2_6:slfo-1.3 (head: dimstar:for-leap-16.1)" in l for l in logs))
                 self.assertTrue(any("Title: Fix openldap startup script" in l for l in logs))
 
+    def test_delete_gitea_fork_repository_guards_and_deletes(self):
+        """Verifies delete_gitea_fork_repository protects non-forks, guards open PRs, and deletes clean forks."""
+        from unittest.mock import patch, MagicMock
+
+        with patch('helpers.sync_backend.get_gitea_token', return_value='test-token'):
+            mock_session = MagicMock()
+
+            # 1. Non-fork guard
+            mock_resp_nonfork = MagicMock(status_code=200)
+            mock_resp_nonfork.json.return_value = {'fork': False, 'name': 'repo'}
+            mock_session.get.return_value = mock_resp_nonfork
+            with patch('helpers.sync_backend.get_http_session', return_value=mock_session):
+                ok, msg = fork_helper.delete_gitea_fork_repository('user', 'repo', force=False)
+                self.assertFalse(ok)
+                self.assertIn('not a fork', msg)
+
+            # 2. Open PRs guard (without force)
+            mock_resp_fork = MagicMock(status_code=200)
+            mock_resp_fork.json.return_value = {'fork': True, 'name': 'repo'}
+            mock_resp_pulls = MagicMock(status_code=200)
+            mock_resp_pulls.json.return_value = [{'number': 1}]
+
+            def fake_get(url, *args, **kwargs):
+                if 'pulls' in url:
+                    return mock_resp_pulls
+                return mock_resp_fork
+
+            mock_session.get.side_effect = fake_get
+            with patch('helpers.sync_backend.get_http_session', return_value=mock_session):
+                ok, msg = fork_helper.delete_gitea_fork_repository('user', 'repo', force=False)
+                self.assertFalse(ok)
+                self.assertIn('open Pull Request', msg)
+
+            # 3. Clean fork deletion (no open PRs)
+            mock_resp_no_pulls = MagicMock(status_code=200)
+            mock_resp_no_pulls.json.return_value = []
+            mock_session.get.side_effect = lambda url, *args, **kwargs: mock_resp_no_pulls if 'pulls' in url else mock_resp_fork
+            mock_resp_del = MagicMock(status_code=204)
+            mock_session.delete.return_value = mock_resp_del
+            with patch('helpers.sync_backend.get_http_session', return_value=mock_session):
+                ok, msg = fork_helper.delete_gitea_fork_repository('user', 'repo', force=False)
+                self.assertTrue(ok)
+                self.assertIn('Deleted personal fork', msg)
+                mock_session.delete.assert_called_once()
+
+    def test_prune_package_cleans_remotes_even_if_local_dir_missing(self):
+        """Verifies prune_package deletes OBS and Gitea resources even if local directory was already deleted."""
+        from unittest.mock import patch, MagicMock
+
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout='', stderr='')
+            with patch('helpers.fork_helper.resolve_package_devel_target', return_value={'devel_project': 'openSUSE:Factory'}):
+                with patch('helpers.fork_helper.resolve_target_obs_project', return_value='home:dimstar:Factory'):
+                    with patch('helpers.fork_helper.delete_gitea_fork_repository', return_value=(True, 'Deleted fork')) as mock_del_fork:
+                        ok, msg = fork_helper.prune_package('nonexistent_scratch_pkg', force=True)
+                        self.assertTrue(ok)
+                        self.assertIn('Successfully pruned', msg)
+                        mock_del_fork.assert_called_once()
+
 if __name__ == '__main__':
 
     unittest.main()

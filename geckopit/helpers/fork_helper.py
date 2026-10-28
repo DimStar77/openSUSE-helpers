@@ -382,6 +382,58 @@ def ensure_gitea_fork(owner: str, repo: str) -> Tuple[bool, str]:
         return False, f"Error during fork creation: {str(e)}"
 
 
+def delete_gitea_fork_repository(owner: str, repo: str, force: bool = False, on_log: Optional[Callable[[str], None]] = None) -> Tuple[bool, str]:
+    """
+    Safely deletes a personal Gitea fork repository if it is confirmed to be a fork.
+    Guards against deleting repositories with open PRs unless force=True.
+    """
+    def log(msg: str):
+        if on_log:
+            on_log(msg)
+        else:
+            print(msg)
+
+    token = sync_backend.get_gitea_token()
+    if not token:
+        return False, "No Gitea API token configured."
+
+    headers = {
+        "User-Agent": "geckopit",
+        "Authorization": f"token {token}"
+    }
+    session = sync_backend.get_http_session()
+
+    repo_url = f"https://src.opensuse.org/api/v1/repos/{owner}/{repo}"
+    try:
+        r = session.get(repo_url, headers=headers, timeout=10)
+        if r.status_code == 404:
+            return True, f"Repository '{owner}/{repo}' does not exist on Gitea."
+        if r.status_code != 200:
+            return False, f"HTTP {r.status_code} querying '{owner}/{repo}'"
+
+        data = r.json()
+        if not data.get("fork"):
+            return False, f"Repository '{owner}/{repo}' is not a fork. Refusing to delete non-fork repository."
+
+        if not force:
+            pulls_url = f"{repo_url}/pulls?state=open"
+            r_pulls = session.get(pulls_url, headers=headers, timeout=10)
+            if r_pulls.status_code == 200:
+                open_prs = r_pulls.json()
+                if open_prs:
+                    log(f"   Notice: Fork '{owner}/{repo}' has {len(open_prs)} open Pull Request(s). Preserving fork (use --force to discard).")
+                    return False, f"Fork '{owner}/{repo}' has open Pull Request(s)."
+
+        r_del = session.delete(repo_url, headers=headers, timeout=15)
+        if r_del.status_code in (200, 204):
+            log(f"   🗑️  Deleted personal Gitea fork '{owner}/{repo}'.")
+            return True, f"Deleted personal fork '{owner}/{repo}'"
+        else:
+            return False, f"Failed to delete Gitea fork: HTTP {r_del.status_code} - {r_del.text}"
+    except Exception as e:
+        return False, f"Error deleting Gitea fork '{owner}/{repo}': {e}"
+
+
 def provision_obs_scmsync_package(
     target_project: str,
     package_name: str,
@@ -850,14 +902,16 @@ def prune_package(
     force: bool = False,
     delete_remote_branch: bool = True,
     delete_obs_package: bool = True,
+    delete_gitea_fork: bool = True,
     on_log: Optional[Callable[[str], None]] = None
 ) -> Tuple[bool, str]:
     """
     Retires and cleans up a scratch/fly-by package:
     1. Safety check: verifies working directory is clean and commits are pushed (unless force=True).
-    2. Deletes remote topic branch on Gitea (if Git-managed and branch starts with for-).
-    3. Deletes OBS staging package in target_project (osc rdelete).
-    4. Removes local checkout directory from disk.
+    2. Deletes remote topic branch(es) on Gitea (if Git-managed and branch starts with for-).
+    3. Deletes OBS staging package in target_project, default_target_project, and user branch projects.
+    4. Deletes personal Gitea fork repository if all PRs are closed/merged (or force=True).
+    5. Removes local checkout directory from disk.
     Returns (success, message).
     """
     def log(msg: str):
@@ -866,14 +920,13 @@ def prune_package(
         else:
             print(msg)
 
-    # 1. Resolve local path
+    # 1. Resolve local path and package name
     pkg_dir = None
     package_name = package_target
     if os.path.isdir(package_target):
         pkg_dir = os.path.abspath(package_target)
         package_name = os.path.basename(pkg_dir)
     else:
-        # Check scratch_dir from config
         dest_res, _ = resolve_destination_directory(package_target)
         if dest_res and os.path.isdir(dest_res):
             pkg_dir = dest_res
@@ -882,42 +935,59 @@ def prune_package(
             pkg_dir = os.path.abspath(os.path.join(".", package_target))
             package_name = package_target
 
-    if not pkg_dir or not os.path.exists(pkg_dir):
-        return False, f"Could not locate scratch checkout directory for '{package_target}'."
-
-    log(f"=> Pruning scratchpad package '{package_name}' ({pkg_dir})...")
+    if pkg_dir and os.path.exists(pkg_dir):
+        log(f"=> Pruning scratchpad package '{package_name}' ({pkg_dir})...")
+    else:
+        log(f"=> Pruning scratchpad package '{package_name}' (remote cleanup)...")
 
     # 2. Safety check (unless force)
-    is_git = os.path.isdir(os.path.join(pkg_dir, ".git")) or os.path.isfile(os.path.join(pkg_dir, ".git"))
-    is_osc = os.path.isdir(os.path.join(pkg_dir, ".osc"))
+    is_git = False
+    is_osc = False
+    origin_owner = None
+    origin_repo = package_name
 
-    if not force:
+    if pkg_dir and os.path.exists(pkg_dir):
+        is_git = os.path.isdir(os.path.join(pkg_dir, ".git")) or os.path.isfile(os.path.join(pkg_dir, ".git"))
+        is_osc = os.path.isdir(os.path.join(pkg_dir, ".osc"))
+
+        if not force:
+            if is_git:
+                st_res = subprocess.run(["git", "-C", pkg_dir, "status", "--porcelain"], capture_output=True, text=True)
+                if st_res.stdout.strip():
+                    return False, f"Cannot prune '{package_name}': uncommitted changes detected. Use --force to discard."
+                try:
+                    res_u = subprocess.run(["git", "-C", pkg_dir, "rev-list", "@{u}..HEAD", "--count"], capture_output=True, text=True)
+                    if res_u.returncode == 0 and int(res_u.stdout.strip() or "0") > 0:
+                        return False, f"Cannot prune '{package_name}': unpushed local commits detected. Use --force to discard."
+                except Exception:
+                    pass
+            elif is_osc:
+                env = pool_submit.get_obs_env()
+                st_res = subprocess.run(["osc", "status"], cwd=pkg_dir, capture_output=True, text=True, env=env)
+                if st_res.stdout.strip():
+                    return False, f"Cannot prune '{package_name}': uncommitted changes in OSC checkout. Use --force to discard."
+
         if is_git:
-            st_res = subprocess.run(["git", "-C", pkg_dir, "status", "--porcelain"], capture_output=True, text=True)
-            if st_res.stdout.strip():
-                return False, f"Cannot prune '{package_name}': uncommitted changes detected. Use --force to discard."
-            try:
-                res_u = subprocess.run(["git", "-C", pkg_dir, "rev-list", "@{u}..HEAD", "--count"], capture_output=True, text=True)
-                if res_u.returncode == 0 and int(res_u.stdout.strip() or "0") > 0:
-                    return False, f"Cannot prune '{package_name}': unpushed local commits detected. Use --force to discard."
-            except Exception:
-                pass
-        elif is_osc:
-            env = pool_submit.get_obs_env()
-            st_res = subprocess.run(["osc", "status"], cwd=pkg_dir, capture_output=True, text=True, env=env)
-            if st_res.stdout.strip():
-                return False, f"Cannot prune '{package_name}': uncommitted changes in OSC checkout. Use --force to discard."
+            res_orig = subprocess.run(["git", "-C", pkg_dir, "remote", "get-url", "origin"], capture_output=True, text=True)
+            if res_orig.returncode == 0:
+                _, o_path = pool_submit.parse_git_remote_url(res_orig.stdout.strip())
+                if "/" in o_path:
+                    origin_owner, origin_repo = o_path.split("/", 1)
+                else:
+                    origin_repo = o_path
 
-    # 3. Delete remote topic branch on Gitea (if Git)
-    if is_git and delete_remote_branch:
+    # 3. Delete remote topic branches on Gitea (if Git)
+    if is_git and pkg_dir and os.path.exists(pkg_dir) and delete_remote_branch:
         try:
-            br_res = subprocess.run(["git", "-C", pkg_dir, "branch", "--show-current"], capture_output=True, text=True)
-            curr_br = br_res.stdout.strip()
-            if curr_br and curr_br.startswith("for-"):
-                log(f"   Deleting remote branch '{curr_br}' on origin...")
-                res_del_br = subprocess.run(["git", "-C", pkg_dir, "push", "origin", "--delete", curr_br], env=get_git_env(), capture_output=True, text=True)
-                if res_del_br.returncode == 0:
-                    log(f"   🗑️  Deleted remote topic branch '{curr_br}' on Gitea.")
+            res_br = subprocess.run(["git", "-C", pkg_dir, "branch", "-r"], capture_output=True, text=True)
+            for line in res_br.stdout.splitlines():
+                line = line.strip()
+                if line.startswith("origin/for-"):
+                    r_branch = line.removeprefix("origin/")
+                    log(f"   Deleting remote topic branch '{r_branch}' on origin...")
+                    res_del_br = subprocess.run(["git", "-C", pkg_dir, "push", "origin", "--delete", r_branch], env=get_git_env(), capture_output=True, text=True)
+                    if res_del_br.returncode == 0:
+                        log(f"   🗑️  Deleted remote topic branch '{r_branch}' on Gitea.")
         except Exception as e:
             log(f"   Warning: Could not delete remote topic branch: {e}")
 
@@ -926,32 +996,46 @@ def prune_package(
         target_info = resolve_package_devel_target(package_name)
         devel_prj = target_info.get("devel_project", "openSUSE:Factory")
 
-        projects_to_check = []
+        projects_to_check = set()
         if target_project:
-            projects_to_check.append(target_project)
+            projects_to_check.add(target_project)
         else:
-            def_prj = resolve_target_obs_project(devel_prj, stream="factory")
             obs_user = get_current_obs_user() or "user"
-            branch_prj = f"home:{obs_user}:branches:{devel_prj}"
-            projects_to_check.extend([def_prj, branch_prj])
+            def_prj = resolve_target_obs_project(devel_prj, stream="factory")
+            if def_prj:
+                projects_to_check.add(def_prj)
+            projects_to_check.add(f"home:{obs_user}:Factory")
+            projects_to_check.add(f"home:{obs_user}:branches:{devel_prj}")
+            if devel_prj and ":" in devel_prj:
+                projects_to_check.add(f"home:{obs_user}:branches:{devel_prj.split(':')[-1]}")
 
         env = pool_submit.get_obs_env()
         deleted_any = False
-        for obs_prj in set(projects_to_check):
-            cmd_del = ["osc", "rdelete", "-f", "-m", f"Clean up scratch package {package_name} via Geckopit", obs_prj, package_name]
-            res_del = subprocess.run(cmd_del, capture_output=True, text=True, env=env)
-            if res_del.returncode == 0:
-                log(f"   🗑️  Deleted OBS staging package '{obs_prj}/{package_name}'.")
-                deleted_any = True
+        for obs_prj in sorted(projects_to_check):
+            # Check if package exists in obs_prj before attempting deletion
+            res_meta = subprocess.run(["osc", "meta", "pkg", obs_prj, package_name], capture_output=True, text=True, env=env)
+            if res_meta.returncode == 0:
+                cmd_del = ["osc", "rdelete", "-f", "-m", f"Clean up scratch package {package_name} via Geckopit", obs_prj, package_name]
+                res_del = subprocess.run(cmd_del, capture_output=True, text=True, env=env)
+                if res_del.returncode == 0:
+                    log(f"   🗑️  Deleted OBS staging package '{obs_prj}/{package_name}'.")
+                    deleted_any = True
         if not deleted_any:
             log(f"   Notice: OBS package was not present or already removed.")
 
-    # 5. Remove local directory from disk
-    log(f"   Removing local directory '{pkg_dir}'...")
-    try:
-        shutil.rmtree(pkg_dir)
-        log(f"   🗑️  Removed local checkout '{pkg_dir}'.")
-    except Exception as e:
-        return False, f"Failed to delete local directory '{pkg_dir}': {e}"
+    # 5. Delete personal Gitea fork repository
+    if delete_gitea_fork:
+        fork_owner = origin_owner or get_current_gitea_user()
+        if fork_owner and origin_repo:
+            delete_gitea_fork_repository(fork_owner, origin_repo, force=force, on_log=log)
+
+    # 6. Remove local directory from disk
+    if pkg_dir and os.path.exists(pkg_dir):
+        log(f"   Removing local directory '{pkg_dir}'...")
+        try:
+            shutil.rmtree(pkg_dir)
+            log(f"   🗑️  Removed local checkout '{pkg_dir}'.")
+        except Exception as e:
+            return False, f"Failed to delete local directory '{pkg_dir}': {e}"
 
     return True, f"Successfully pruned '{package_name}'."
